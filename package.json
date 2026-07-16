@@ -1,0 +1,104 @@
+{
+	"name": "rainbowindex",
+	"version": "0.2.0",
+	"description": "CSS-first system for building and maintaining consistent user interfaces",
+	"keywords": [
+		"css",
+		"utility-css",
+		"atomic-css",
+		"design-tokens",
+		"design-system",
+		"theming",
+		"dark-mode",
+		"oklch",
+		"fluid-typography",
+		"google-fonts",
+		"postcss",
+		"postcss-plugin",
+		"vite-plugin",
+		"class-merge",
+		"classnames",
+		"tailwind",
+		"tailwindcss",
+		"cli"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/rainbowindex/rainbowindex.git"
+	},
+	"author": "rainbowindex (https://github.com/rainbowindex)",
+	"homepage": "https://rainbowindex.dev",
+	"bugs": "https://github.com/rainbowindex/rainbowindex/issues",
+	"type": "module",
+	"packageManager": "pnpm@10.12.1",
+	"main": "./dist/index.mjs",
+	"types": "./dist/index.d.ts",
+	"style": "./dist/index.css",
+	"scripts": {
+		"build": "tsup",
+		"prepublishOnly": "pnpm check",
+		"check": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:artifacts",
+		"test": "vitest run --exclude __tests__/cli/** --exclude __tests__/package.test.ts",
+		"test:coverage": "vitest run --coverage --exclude __tests__/cli/** --exclude __tests__/package.test.ts",
+		"test:artifacts": "pnpm build && vitest run __tests__/cli/cli.test.ts __tests__/package.test.ts",
+		"test:watch": "vitest",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome lint .",
+		"lint:fix": "biome lint --write .",
+		"format": "biome format --write .",
+		"format:check": "biome format ."
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"style": "./dist/index.css",
+			"browser": "./dist/browser.mjs",
+			"node": "./dist/index.mjs",
+			"default": "./dist/index.mjs"
+		},
+		"./index.css": "./dist/index.css",
+		"./vite": {
+			"types": "./dist/vite.d.ts",
+			"default": "./dist/vite.mjs"
+		},
+		"./package.json": "./package.json"
+	},
+	"bin": {
+		"rainbowindex": "./dist/cli.mjs"
+	},
+	"files": [
+		"dist",
+		"CHANGELOG.md"
+	],
+	"sideEffects": [
+		"**/*.css"
+	],
+	"engines": {
+		"node": ">=20.19"
+	},
+	"license": "MIT",
+	"dependencies": {
+		"chokidar": "^4.0.3",
+		"lightningcss": "^1.25.0",
+		"tinyglobby": "^0.2.15"
+	},
+	"peerDependencies": {
+		"postcss": "^8.5.0",
+		"vite": "*"
+	},
+	"peerDependenciesMeta": {
+		"vite": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.16",
+		"@types/node": "^25.9.1",
+		"@vitest/coverage-v8": "^4.1.0",
+		"postcss": "^8.5.8",
+		"tsup": "^8.5.1",
+		"typescript": "^6.0.3",
+		"vite": "8.0.0",
+		"vitest": "^4.0.17"
+	}
+}
