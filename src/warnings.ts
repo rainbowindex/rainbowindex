@@ -106,6 +106,7 @@
  *   1603  CLI build produced zero rules (likely missing @source / glob arg)
  *   1604  CLI: rainbowindex-env.d.ts has hand edits — backup written
  *   1605  CLI: explicit --css input file not found
+ *   1606  PostCSS plugin placed in Vite's `plugins: []` — use rainbowindex/vite
  *
  * RI-20xx — CSS functions, ri() runtime & compile() validation
  *   2001  Could not resolve --theme() variable

@@ -1,6 +1,7 @@
 import postcss, {
 	type AtRule,
 	type Declaration,
+	type Plugin,
 	type PluginCreator,
 	type Result,
 	type Root,
@@ -84,7 +85,7 @@ function processCSSFunctions(root: Root, theme: ResolvedTheme, warnings: string[
 }
 
 const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexOptions = {}) => {
-	return {
+	const plugin: Plugin = {
 		postcssPlugin: "rainbowindex",
 		async Once(root: Root, { result }: { result: Result }) {
 			try {
@@ -210,6 +211,27 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 			}
 		},
 	};
+
+	// Guard against the most common misconfiguration: importing the default
+	// (PostCSS) plugin and dropping it into Vite's `plugins: []` array, where it
+	// carries no Vite hooks and would otherwise do nothing — no CSS generated, no
+	// error, just a baffling silent failure. Vite invokes every plugin's `config`
+	// hook during config resolution, so a `config` that throws turns that silent
+	// no-op into an actionable signpost pointing at `rainbowindex/vite`.
+	//
+	// This is safe to carry on a PostCSS plugin object: PostCSS only dispatches
+	// visitor keys derived from node names (`Declaration`, `AtRule-<name>`, …) and
+	// never a bare lowercase `config`, so the hook is inert under PostCSS and only
+	// ever runs when a Vite runtime picks the object up. `name` is likewise ignored
+	// by PostCSS (a non-function, non-object value).
+	return Object.assign(plugin, {
+		name: "rainbowindex",
+		config(): never {
+			throw new Error(
+				"[RI-1606] The default `rainbowindex` export is the PostCSS plugin, but it was placed in Vite's `plugins: []` array where it does nothing. Import the Vite plugin instead: `import rainbowindex from \"rainbowindex/vite\"`. (For a raw PostCSS setup, keep the default import and register it under `css.postcss.plugins` or in postcss.config.*.)",
+			);
+		},
+	});
 };
 
 rainbowindex.postcss = true;
