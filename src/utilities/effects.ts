@@ -230,6 +230,8 @@ const STATIC_EFFECTS: Readonly<Record<string, UtilityResult>> = {
 	"backdrop-blur-none": single("backdrop-filter", "none"),
 };
 deepFreezeUtilityMap(STATIC_EFFECTS);
+// Key list export for editor enumeration — the map itself stays private.
+export const EFFECTS_STATIC_NAMES: readonly string[] = Object.freeze(Object.keys(STATIC_EFFECTS));
 
 // ---------------------------------------------------------------------------
 // Background static utilities (separated for clarity)
@@ -283,6 +285,10 @@ const STATIC_BACKGROUND: Readonly<Record<string, UtilityResult>> = {
 	"bg-blend-luminosity": single("background-blend-mode", "luminosity"),
 };
 deepFreezeUtilityMap(STATIC_BACKGROUND);
+// Key list export for editor enumeration — the map itself stays private.
+export const BACKGROUND_STATIC_NAMES: readonly string[] = Object.freeze(
+	Object.keys(STATIC_BACKGROUND),
+);
 
 // ---------------------------------------------------------------------------
 // Module-scope constants

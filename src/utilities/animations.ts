@@ -67,6 +67,8 @@ const STATIC_ANIM: Readonly<Record<string, UtilityResult>> = {
 	"blur-out": single("--ri-exit-blur", "20px"),
 };
 deepFreezeUtilityMap(STATIC_ANIM);
+// Key list export for editor enumeration — the map itself stays private.
+export const ANIMATION_STATIC_NAMES: readonly string[] = Object.freeze(Object.keys(STATIC_ANIM));
 
 // ---------------------------------------------------------------------------
 // Generator

@@ -89,6 +89,8 @@ const STATIC_SVG: Readonly<Record<string, UtilityResult>> = {
 	"vector-fixed-position": single("vector-effect", "fixed-position"),
 };
 deepFreezeUtilityMap(STATIC_SVG);
+// Key list export for editor enumeration — the map itself stays private.
+export const SVG_STATIC_NAMES: readonly string[] = Object.freeze(Object.keys(STATIC_SVG));
 
 // ---------------------------------------------------------------------------
 // Sub-generators

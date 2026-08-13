@@ -23,9 +23,9 @@ const VARIANT_GROUP = /[\w.@-]+:\{[^}]*\}/.source;
 const ARBITRARY_PROPERTY = /\[[a-z-][^\]]*:[^\]]+\](?:\/(?:[\w.]+|\[[^\]]*\]|\([^)]*--[^)]*\)))?/
 	.source;
 const CLASS_RE_SOURCE = `${BOUNDARY}(${NEGATIVE}${VARIANT_PREFIX}(?:${UTILITY_VALUE}|${VARIANT_GROUP}|${ARBITRARY_PROPERTY})${IMPORTANT_SUFFIX})`;
-// Shared module-level instance: extractClasses resets lastIndex and drains it to
-// null on every call, and never re-enters itself mid-scan, so reuse is safe and
-// avoids recompiling this large alternation once per collected string value.
+// Shared module-level instance: scanClassTokens resets lastIndex and drains it
+// to null on every call, and never re-enters itself mid-scan, so reuse is safe
+// and avoids recompiling this large alternation once per collected string value.
 const CLASS_RE = new RegExp(CLASS_RE_SOURCE, "g");
 const VARIANT_STRIP_RE = new RegExp(`^(?:${VARIANT_SEGMENT})+`);
 
@@ -51,6 +51,14 @@ const CLASS_HELPERS = [
 ] as const;
 
 const VARIANT_HELPERS = ["cva", "tv"] as const;
+
+/** Helper-call names whose string arguments are walked for class literals.
+ *  Exported for editor tooling so completion-context detection can match the
+ *  scanner's own behavior. */
+export const CLASS_HELPER_NAMES: readonly string[] = Object.freeze([...CLASS_HELPERS]);
+
+/** Variant-config helper names (`cva`/`tv`) whose config objects are walked. */
+export const VARIANT_HELPER_NAMES: readonly string[] = Object.freeze([...VARIANT_HELPERS]);
 
 const NON_CLASS_IDENTIFIERS = new Set<string>([...CLASS_HELPERS, ...VARIANT_HELPERS, "classMap"]);
 
@@ -86,25 +94,265 @@ export interface SourceExtractionInput {
 	content: string;
 }
 
-type Extractor = {
-	test: (context: SourceExtractionInput) => boolean;
-	extract: (context: SourceExtractionInput, warnings?: string[]) => Set<string>;
-};
+// ---------------------------------------------------------------------------
+// Candidate sinks — one extraction core, two consumers
+// ---------------------------------------------------------------------------
 
-type ValueVisitor = (target: Set<string>, value: string, warnings?: string[]) => void;
+export type CandidateOrigin = "attribute" | "helper" | "safelist" | "plain";
+
+export interface ClassCandidate {
+	/** The class string in expanded form — for variant-group members this
+	 *  includes the group prefix (`hover:bg-red-500`) even though the span
+	 *  covers only the member token inside the braces. */
+	value: string;
+	/** Absolute [start, end) span of the visible token in the original source.
+	 *  `source.slice(start, end)` is the member token for group members and
+	 *  `value` itself everywhere else. */
+	start: number;
+	end: number;
+	origin: CandidateOrigin;
+	/** The call the class was found in, when origin is "helper"/"safelist". */
+	helperName?: string;
+	/** For variant-group members: span of the group's variant prefix (`hover:`). */
+	groupPrefix?: { start: number; end: number };
+}
+
+/**
+ * Where extracted class tokens land. The build path uses a Set-backed sink
+ * (positions ignored, value dedup); the editor path collects positioned
+ * candidates. Optional methods are editor-only annotations — call sites use
+ * optional chaining, so the build path pays one undefined check, not a call.
+ */
+interface CandidateSink {
+	readonly wantsPositions: boolean;
+	/** start/end are absolute [start, end) offsets in the ORIGINAL source
+	 *  (0,0 when the sink doesn't want positions). prefixStart/prefixEnd
+	 *  delimit the variant-group prefix for group members, or are -1. */
+	add(value: string, start: number, end: number, prefixStart: number, prefixEnd: number): void;
+	/** Remove every candidate with this exact value (post-hoc pruning). */
+	delete(value: string): void;
+	setOrigin?(origin: CandidateOrigin): void;
+	setHelper?(name: string | null): void;
+	/** Record that [start, end) is a class context (attribute value, helper
+	 *  argument list) under the active origin. Origin assignment is by
+	 *  containment, so simple quoted values — which only the whole-file scan
+	 *  tokenizes — still get their context's origin. Never affects values. */
+	markContext?(start: number, end: number): void;
+}
+
+/** Build-path sink: value-dedup into a Set, positions discarded. */
+class SetSink implements CandidateSink {
+	readonly wantsPositions = false;
+	constructor(readonly classes: Set<string>) {}
+	add(value: string): void {
+		this.classes.add(value);
+	}
+	delete(value: string): void {
+		this.classes.delete(value);
+	}
+}
+
+interface CandidateContext {
+	start: number;
+	end: number;
+	origin: CandidateOrigin;
+	helper: string | null;
+}
+
+/**
+ * Editor-path sink: positioned candidates, deduped by span + value
+ * (keep-first). The same span can host two different values — a nested
+ * group's mangled expansion and an object-key collector can both claim one
+ * token — and both must survive to keep value parity with the build path's
+ * Set. Origins are resolved at finish() by context containment: collectors
+ * record every class context they visit (attribute values, helper argument
+ * lists), and each candidate takes the origin of the smallest context that
+ * contains its span — so a class inside a clsx() call inside a className
+ * expression reports "helper", not "attribute". Candidates contained by no
+ * context stay "plain". Contexts never contribute values, so value parity
+ * with the build path is untouched.
+ */
+class CandidateCollector implements CandidateSink {
+	readonly wantsPositions = true;
+	private origin: CandidateOrigin = "plain";
+	private helperName: string | null = null;
+	private readonly byCandidate = new Map<string, ClassCandidate>();
+	private readonly contexts: CandidateContext[] = [];
+
+	setOrigin(origin: CandidateOrigin): void {
+		this.origin = origin;
+		this.helperName = null;
+	}
+
+	setHelper(name: string | null): void {
+		this.helperName = name;
+	}
+
+	markContext(start: number, end: number): void {
+		if (this.origin === "plain" || end <= start) return;
+		this.contexts.push({ start, end, origin: this.origin, helper: this.helperName });
+	}
+
+	add(value: string, start: number, end: number, prefixStart: number, prefixEnd: number): void {
+		const key = `${start}:${end}:${value}`;
+		if (this.byCandidate.has(key)) return;
+		const candidate: ClassCandidate = { value, start, end, origin: "plain" };
+		if (prefixStart >= 0) candidate.groupPrefix = { start: prefixStart, end: prefixEnd };
+		this.byCandidate.set(key, candidate);
+	}
+
+	delete(value: string): void {
+		for (const [key, candidate] of this.byCandidate) {
+			if (candidate.value === value) this.byCandidate.delete(key);
+		}
+	}
+
+	finish(): ClassCandidate[] {
+		const candidates = [...this.byCandidate.values()].sort(
+			(a, b) => a.start - b.start || a.end - b.end,
+		);
+		if (this.contexts.length > 0) {
+			for (const candidate of candidates) {
+				let best: CandidateContext | null = null;
+				for (const context of this.contexts) {
+					if (context.start <= candidate.start && candidate.end <= context.end) {
+						if (!best || context.end - context.start < best.end - best.start) {
+							best = context;
+						}
+					}
+				}
+				if (best) {
+					candidate.origin = best.origin;
+					if (best.helper) candidate.helperName = best.helper;
+				}
+			}
+		}
+		return candidates;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Output → source offset mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Piecewise map from a transformed string's offsets back to source offsets.
+ * Pieces are ascending, non-overlapping identity spans (out length === src
+ * length, identical text); variant-group member pieces also carry the group's
+ * prefix span so candidates matched in expanded groups can be annotated.
+ * Offsets between pieces (join separators, dropped lines) belong to no piece.
+ * Built only when a sink wants positions — the build path never allocates one.
+ */
+class OutputMap {
+	private readonly outStarts: number[] = [];
+	private readonly srcStarts: number[] = [];
+	private readonly lens: number[] = [];
+	private readonly prefixStarts: number[] = [];
+	private readonly prefixEnds: number[] = [];
+
+	push(outStart: number, srcStart: number, len: number, prefixStart = -1, prefixEnd = -1): void {
+		if (len <= 0) return;
+		this.outStarts.push(outStart);
+		this.srcStarts.push(srcStart);
+		this.lens.push(len);
+		this.prefixStarts.push(prefixStart);
+		this.prefixEnds.push(prefixEnd);
+	}
+
+	/** Piece index containing out offset, or -1. */
+	private find(out: number): number {
+		const starts = this.outStarts;
+		let lo = 0;
+		let hi = starts.length - 1;
+		while (lo <= hi) {
+			const mid = (lo + hi) >> 1;
+			if (starts[mid] > out) hi = mid - 1;
+			else if (starts[mid] + this.lens[mid] <= out) lo = mid + 1;
+			else return mid;
+		}
+		return -1;
+	}
+
+	/**
+	 * Translate an [outStart, outEnd) span into `span`: [0] srcStart,
+	 * [1] srcEnd, [2]/[3] group prefix span or -1. Returns false when the span
+	 * maps nowhere. A span ending inside a group-member piece resolves to that
+	 * member's mapping wholesale — the visible token is the member; matches
+	 * that begin in the prefix piece clamp to the member start. The prefix
+	 * annotation is attached only when the match starts exactly at the token
+	 * start (prefix piece start): only then does the match's value contain the
+	 * full prefix chain, keeping the ClassCandidate contract
+	 * `groupPrefix slice + member slice === value`. Matches strictly inside a
+	 * member (or crossing pieces) map to a plain span with no annotation.
+	 */
+	translate(outStart: number, outEnd: number, span: Int32Array): boolean {
+		const j = this.find(outEnd - 1);
+		if (j === -1) return false;
+		const jOut = this.outStarts[j];
+		if (this.prefixStarts[j] >= 0) {
+			const src = this.srcStarts[j];
+			span[0] = src + Math.max(0, outStart - jOut);
+			span[1] = src + (outEnd - jOut);
+			const tokenStart = jOut - (this.prefixEnds[j] - this.prefixStarts[j]);
+			if (outStart === tokenStart) {
+				span[2] = this.prefixStarts[j];
+				span[3] = this.prefixEnds[j];
+			} else {
+				span[2] = -1;
+				span[3] = -1;
+			}
+			return true;
+		}
+		span[1] = this.srcStarts[j] + (outEnd - jOut);
+		let i = j;
+		if (outStart < jOut) {
+			i = this.find(outStart);
+			if (i === -1) return false;
+		}
+		span[0] = this.srcStarts[i] + (outStart - this.outStarts[i]);
+		span[2] = -1;
+		span[3] = -1;
+		return true;
+	}
+}
+
+// Reused across scanClassTokens invocations — safe under the same
+// no-mid-scan-reentry discipline as CLASS_RE.
+const TRANSLATE_SCRATCH = new Int32Array(4);
+
+// Tokenizer for group bodies in mapped mode. Must agree with the
+// `.trim().split(/\s+/).filter(Boolean)` expansion below — \S+ runs of the
+// untrimmed body are exactly those tokens. Same lastIndex-drain discipline as
+// CLASS_RE: reset on entry, drained to null, never re-entered mid-scan.
+const BODY_TOKEN_RE = /\S+/g;
 
 export function expandVariantGroups(input: string, warnings?: string[]): string {
-	if (!input.includes("{")) return input;
+	return expandVariantGroupsCore(input, warnings, null);
+}
+
+function expandVariantGroupsCore(
+	input: string,
+	warnings: string[] | undefined,
+	map: OutputMap | null,
+): string {
+	if (!input.includes("{")) {
+		map?.push(0, 0, input.length);
+		return input;
+	}
 
 	if (input.length > MAX_EXPANSION_INPUT_LENGTH) {
 		warnings?.push(
 			`[RI-1407] Variant group expansion input exceeds ${MAX_EXPANSION_INPUT_LENGTH} character limit — returning verbatim.`,
 		);
+		map?.push(0, 0, input.length);
 		return input;
 	}
 
 	const parts: string[] = [];
 	let partsLen = 0;
+	// Exact output length so far — only consulted for map bookkeeping.
+	// partsLen deliberately keeps its original meaning (the budget check).
+	let outLen = 0;
 	let i = 0;
 	// Start of the pending run of non-group characters. Runs are flushed as one
 	// slice when a group expands (or at the end) instead of pushing one
@@ -116,8 +364,14 @@ export function expandVariantGroups(input: string, warnings?: string[]): string 
 			warnings?.push(
 				`[RI-1408] Variant group expansion output exceeds ${MAX_EXPANDED_LENGTH} character limit — remaining input appended verbatim.`,
 			);
-			if (i > plainStart) parts.push(input.slice(plainStart, i));
+			if (i > plainStart) {
+				map?.push(outLen, plainStart, i - plainStart);
+				outLen += i - plainStart;
+				parts.push(input.slice(plainStart, i));
+			}
 			plainStart = input.length;
+			map?.push(outLen, i, input.length - i);
+			outLen += input.length - i;
 			parts.push(input.slice(i));
 			break;
 		}
@@ -188,16 +442,45 @@ export function expandVariantGroups(input: string, warnings?: string[]): string 
 				if (depth === 0) {
 					if (prefixStart > plainStart) {
 						const run = input.slice(plainStart, prefixStart);
+						map?.push(outLen, plainStart, run.length);
+						outLen += run.length;
 						parts.push(run);
 						partsLen += run.length;
 					}
 					const prefix = input.slice(prefixStart, braceStart);
-					const body = input.slice(braceStart + 1, j).trim();
+					const bodyStart = braceStart + 1;
+					const body = input.slice(bodyStart, j).trim();
 					const expanded = body
 						.split(/\s+/)
 						.filter(Boolean)
 						.map((cls) => prefix + cls)
 						.join(" ");
+					if (map) {
+						// Each expanded token gets two identity pieces: the prefix
+						// (same text as `prefix:` before the braces) and the member
+						// (same text as its body token) — the member piece carries
+						// the prefix span for group annotation.
+						const rawBody = input.slice(bodyStart, j);
+						let outPos = outLen;
+						let first = true;
+						BODY_TOKEN_RE.lastIndex = 0;
+						for (;;) {
+							const token = BODY_TOKEN_RE.exec(rawBody);
+							if (token === null) break;
+							if (!first) outPos += 1;
+							first = false;
+							map.push(outPos, prefixStart, prefix.length);
+							map.push(
+								outPos + prefix.length,
+								bodyStart + token.index,
+								token[0].length,
+								prefixStart,
+								braceStart,
+							);
+							outPos += prefix.length + token[0].length;
+						}
+					}
+					outLen += expanded.length;
 					parts.push(expanded);
 					partsLen += expanded.length;
 					i = j + 1;
@@ -215,7 +498,10 @@ export function expandVariantGroups(input: string, warnings?: string[]): string 
 		}
 	}
 
-	if (plainStart < input.length) parts.push(input.slice(plainStart));
+	if (plainStart < input.length) {
+		map?.push(outLen, plainStart, input.length - plainStart);
+		parts.push(input.slice(plainStart));
+	}
 
 	return parts.join("");
 }
@@ -272,7 +558,7 @@ export function expandApplyGroups(css: string, warnings?: string[]): string {
 	return out.join("");
 }
 
-// Candidate filters for extractClasses' match loop — module-level so the
+// Candidate filters for scanClassTokens' match loop — module-level so the
 // scanner's hottest loop never evaluates a regex literal per matched token.
 // BRACKET_SPAN_RE is g-flagged but used with .replace() only, which ignores
 // and resets lastIndex — never run .test()/.exec() against it.
@@ -282,14 +568,26 @@ const BRACKET_WHITESPACE_RE = /\[[^\]]*\s+[^\]]*\]/;
 const INDEX_ACCESS_RE = /\[\d*\]$/;
 const PROPERTY_ACCESS_RE = /^[\w.@]+\[[^\]]+\]$/;
 
-export function extractClasses(source: string, warnings?: string[]): Set<string> {
-	const classes = new Set<string>();
+/**
+ * Core token scan: long-line filtering, variant-group expansion, CLASS_RE
+ * matching, and candidate filters. `baseOffset` is the absolute offset of
+ * `source` within the original document — position-aware sinks receive spans
+ * translated back through both transforms; the build path skips all mapping.
+ */
+function scanClassTokens(
+	sink: CandidateSink,
+	source: string,
+	baseOffset: number,
+	warnings?: string[],
+): void {
+	const wantsPositions = sink.wantsPositions;
 
 	// Over-long lines are dropped wholesale — including a single-line minified
 	// file, which is just the degenerate one-line case. Helper-call collection
 	// (safelist()/cn()/cva()) runs on the raw content outside this guard, so
 	// library dist scanning is unaffected.
 	let filteredSource = source;
+	let lineMap: OutputMap | null = null;
 	if (source.length > MAX_LINE_LENGTH) {
 		// First pass only measures — the common all-short-lines case must not
 		// rebuild the whole file.
@@ -308,25 +606,35 @@ export function extractClasses(source: string, warnings?: string[]): Set<string>
 
 		if (hasLongLine) {
 			const parts: string[] = [];
+			if (wantsPositions) lineMap = new OutputMap();
+			let outLen = 0;
 			start = 0;
 			idx = source.indexOf("\n", start);
 			while (idx !== -1) {
 				if (idx - start <= MAX_LINE_LENGTH) {
+					if (lineMap) {
+						lineMap.push(outLen, start, idx - start);
+						outLen += idx - start + 1;
+					}
 					parts.push(source.slice(start, idx));
 				}
 				start = idx + 1;
 				idx = source.indexOf("\n", start);
 			}
 			if (source.length - start <= MAX_LINE_LENGTH) {
+				if (lineMap) lineMap.push(outLen, start, source.length - start);
 				parts.push(source.slice(start));
 			}
 			filteredSource = parts.join("\n");
 		}
 	}
 
-	const expanded = filteredSource.includes("{")
-		? expandVariantGroups(filteredSource, warnings)
-		: filteredSource;
+	let expanded = filteredSource;
+	let expansionMap: OutputMap | null = null;
+	if (filteredSource.includes("{")) {
+		if (wantsPositions) expansionMap = new OutputMap();
+		expanded = expandVariantGroupsCore(filteredSource, warnings, expansionMap);
+	}
 
 	CLASS_RE.lastIndex = 0;
 
@@ -346,22 +654,65 @@ export function extractClasses(source: string, warnings?: string[]): Set<string>
 		// must be `-`, and this regex's name part excludes `-`, so anything it
 		// matches is an access expression, never a utility.
 		if (PROPERTY_ACCESS_RE.test(base)) continue;
-		classes.add(cls);
-	}
 
+		if (!wantsPositions) {
+			sink.add(cls, 0, 0, -1, -1);
+			continue;
+		}
+
+		// The boundary consumes at most one char before the candidate.
+		let start = match.index + match[0].length - cls.length;
+		let end = start + cls.length;
+		let prefixStart = -1;
+		let prefixEnd = -1;
+		if (expansionMap) {
+			if (!expansionMap.translate(start, end, TRANSLATE_SCRATCH)) continue;
+			start = TRANSLATE_SCRATCH[0];
+			end = TRANSLATE_SCRATCH[1];
+			prefixStart = TRANSLATE_SCRATCH[2];
+			prefixEnd = TRANSLATE_SCRATCH[3];
+		}
+		if (lineMap) {
+			if (!lineMap.translate(start, end, TRANSLATE_SCRATCH)) continue;
+			start = TRANSLATE_SCRATCH[0];
+			end = TRANSLATE_SCRATCH[1];
+			if (prefixStart >= 0) {
+				if (lineMap.translate(prefixStart, prefixEnd, TRANSLATE_SCRATCH)) {
+					prefixStart = TRANSLATE_SCRATCH[0];
+					prefixEnd = TRANSLATE_SCRATCH[1];
+				} else {
+					prefixStart = -1;
+					prefixEnd = -1;
+				}
+			}
+		}
+		sink.add(
+			cls,
+			baseOffset + start,
+			baseOffset + end,
+			prefixStart < 0 ? -1 : baseOffset + prefixStart,
+			prefixEnd < 0 ? -1 : baseOffset + prefixEnd,
+		);
+	}
+}
+
+export function extractClasses(source: string, warnings?: string[]): Set<string> {
+	const classes = new Set<string>();
+	scanClassTokens(new SetSink(classes), source, 0, warnings);
 	return classes;
 }
 
-function addClasses(target: Set<string>, value: string, warnings?: string[]): void {
-	for (const cls of extractClasses(value, warnings)) {
-		target.add(cls);
-	}
+function addClasses(sink: CandidateSink, value: string, base: number, warnings?: string[]): void {
+	scanClassTokens(sink, value, base, warnings);
 }
 
+type ValueVisitor = (sink: CandidateSink, value: string, base: number, warnings?: string[]) => void;
+
 function collectDirectiveNames(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
 	regex: RegExp,
+	base: number,
 	warnings?: string[],
 ): void {
 	for (;;) {
@@ -369,7 +720,11 @@ function collectDirectiveNames(
 		if (match === null) break;
 		const value = match[1]?.trim();
 		if (!value) continue;
-		addClasses(target, value, warnings);
+		// The capture cannot contain whitespace, so trim is a no-op and the
+		// capture's offset is the match end minus its length.
+		const captureStart = base + match.index + match[0].length - match[1].length;
+		sink.markContext?.(captureStart, captureStart + match[1].length);
+		addClasses(sink, value, captureStart, warnings);
 	}
 }
 
@@ -379,9 +734,10 @@ const OBJECT_KEY_COLON_RE = /(["'`])([^"'`]+)\1\s*:|([A-Za-z_@][\w@-]*)\s*:/g;
 const OBJECT_KEY_ARROW_RE = /(["'`])([^"'`]+)\1\s*=>/g;
 
 function collectObjectKeys(
-	target: Set<string>,
+	sink: CandidateSink,
 	body: string,
 	separator: ":" | "=>",
+	base: number,
 	warnings?: string[],
 ): void {
 	const keyRe = separator === ":" ? OBJECT_KEY_COLON_RE : OBJECT_KEY_ARROW_RE;
@@ -389,16 +745,21 @@ function collectObjectKeys(
 	for (;;) {
 		const match = keyRe.exec(body);
 		if (match === null) break;
-		const value = (match[2] ?? match[3] ?? "").trim();
+		const raw = match[2] ?? match[3] ?? "";
+		const value = raw.trim();
 		if (!value) continue;
-		addClasses(target, value, warnings);
+		// Quoted keys start one char after match.index (the quote); bare keys
+		// start at match.index itself.
+		const rawStart = match[2] !== undefined ? match.index + 1 : match.index;
+		addClasses(sink, value, base + rawStart + (raw.length - raw.trimStart().length), warnings);
 	}
 }
 
 function collectTemplateLiteralClasses(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
 	start: number,
+	base: number,
 	warnings?: string[],
 ): number {
 	let i = start + 1;
@@ -410,13 +771,29 @@ function collectTemplateLiteralClasses(
 			continue;
 		}
 		if (ch === "`") {
-			const value = source.slice(chunkStart, i).trim();
-			if (value) addClasses(target, value, warnings);
+			const raw = source.slice(chunkStart, i);
+			const value = raw.trim();
+			if (value) {
+				addClasses(
+					sink,
+					value,
+					base + chunkStart + (raw.length - raw.trimStart().length),
+					warnings,
+				);
+			}
 			return i;
 		}
 		if (ch === "$" && source[i + 1] === "{") {
-			const value = source.slice(chunkStart, i).trim();
-			if (value) addClasses(target, value, warnings);
+			const raw = source.slice(chunkStart, i);
+			const value = raw.trim();
+			if (value) {
+				addClasses(
+					sink,
+					value,
+					base + chunkStart + (raw.length - raw.trimStart().length),
+					warnings,
+				);
+			}
 			const end = findMatchingBracket(source, i + 1);
 			if (end === -1) return source.length - 1;
 			i = end + 1;
@@ -429,8 +806,9 @@ function collectTemplateLiteralClasses(
 }
 
 function collectStringLiteralClasses(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
+	base: number,
 	warnings?: string[],
 ): void {
 	let i = 0;
@@ -438,13 +816,16 @@ function collectStringLiteralClasses(
 		const ch = source[i];
 		if (ch === "'" || ch === '"') {
 			const end = skipQuoted(source, i, ch);
-			const value = source.slice(i + 1, end).trim();
-			if (value) addClasses(target, value, warnings);
+			const raw = source.slice(i + 1, end);
+			const value = raw.trim();
+			if (value) {
+				addClasses(sink, value, base + i + 1 + (raw.length - raw.trimStart().length), warnings);
+			}
 			i = end + 1;
 			continue;
 		}
 		if (ch === "`") {
-			i = collectTemplateLiteralClasses(target, source, i, warnings) + 1;
+			i = collectTemplateLiteralClasses(sink, source, i, base, warnings) + 1;
 			continue;
 		}
 		i++;
@@ -549,7 +930,10 @@ function isValueTerminatorCode(code: number): boolean {
 	);
 }
 
-function readAssignedValue(source: string, start: number): { value: string; end: number } | null {
+function readAssignedValue(
+	source: string,
+	start: number,
+): { value: string; end: number; valueStart: number } | null {
 	const i = skipWhitespace(source, start);
 	const ch = source[i];
 	if (!ch) return null;
@@ -559,6 +943,7 @@ function readAssignedValue(source: string, start: number): { value: string; end:
 		return {
 			value: source.slice(i + 1, end),
 			end,
+			valueStart: i + 1,
 		};
 	}
 
@@ -567,6 +952,7 @@ function readAssignedValue(source: string, start: number): { value: string; end:
 		return {
 			value: source.slice(i + 1, end),
 			end,
+			valueStart: i + 1,
 		};
 	}
 
@@ -576,6 +962,7 @@ function readAssignedValue(source: string, start: number): { value: string; end:
 		return {
 			value: source.slice(i + 1, end),
 			end,
+			valueStart: i + 1,
 		};
 	}
 
@@ -584,14 +971,16 @@ function readAssignedValue(source: string, start: number): { value: string; end:
 	return {
 		value: source.slice(i, end),
 		end: end - 1,
+		valueStart: i,
 	};
 }
 
 function collectAssignedValues(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
 	regex: RegExp,
 	visitor: ValueVisitor = addClasses,
+	base = 0,
 	warnings?: string[],
 ): void {
 	regex.lastIndex = 0;
@@ -600,28 +989,43 @@ function collectAssignedValues(
 		if (match === null) break;
 		const parsed = readAssignedValue(source, match.index + match[0].length);
 		if (!parsed) continue;
-		const value = parsed.value.trim();
+		const raw = parsed.value;
+		const value = raw.trim();
 		if (!value) continue;
-		visitor(target, value, warnings);
+		sink.markContext?.(base + parsed.valueStart, base + parsed.valueStart + raw.length);
+		visitor(
+			sink,
+			value,
+			base + parsed.valueStart + (raw.length - raw.trimStart().length),
+			warnings,
+		);
 		regex.lastIndex = Math.max(regex.lastIndex, parsed.end + 1);
 	}
 }
 
 function collectClassishExpression(
-	target: Set<string>,
+	sink: CandidateSink,
 	expression: string,
+	base: number,
 	warnings?: string[],
 ): void {
-	collectStringLiteralClasses(target, expression, warnings);
-	collectObjectKeys(target, expression, ":", warnings);
-	collectObjectKeys(target, expression, "=>", warnings);
+	collectStringLiteralClasses(sink, expression, base, warnings);
+	collectObjectKeys(sink, expression, ":", base, warnings);
+	collectObjectKeys(sink, expression, "=>", base, warnings);
+}
+
+/** Helper name from a call-matcher hit — match[0] is `name(` with optional
+ *  interior whitespace. */
+function helperNameFromMatch(matched: string): string {
+	return matched.slice(0, matched.length - 1).trim();
 }
 
 function collectCallArguments(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
 	callRe: RegExp,
 	visitor: ValueVisitor = collectClassishExpression,
+	base = 0,
 	warnings?: string[],
 ): void {
 	callRe.lastIndex = 0;
@@ -632,14 +1036,24 @@ function collectCallArguments(
 		const openIndex = match.index + match[0].length - 1;
 		const end = findMatchingBracket(source, openIndex);
 		if (end === -1) continue;
-		const value = source.slice(openIndex + 1, end).trim();
-		if (value) visitor(target, value, warnings);
+		const raw = source.slice(openIndex + 1, end);
+		const value = raw.trim();
+		if (value) {
+			sink.setHelper?.(helperNameFromMatch(match[0]));
+			sink.markContext?.(base + openIndex + 1, base + end);
+			visitor(sink, value, base + openIndex + 1 + (raw.length - raw.trimStart().length), warnings);
+		}
 		callRe.lastIndex = Math.max(callRe.lastIndex, end + 1);
 	}
 }
 
-function splitTopLevelArgs(source: string): string[] {
-	const parts: string[] = [];
+function splitTopLevelArgs(source: string): Array<{ text: string; start: number }> {
+	const parts: Array<{ text: string; start: number }> = [];
+	const pushPart = (from: number, to: number): void => {
+		const raw = source.slice(from, to);
+		const text = raw.trim();
+		parts.push({ text, start: from + (raw.length - raw.trimStart().length) });
+	};
 	let last = 0;
 	let i = 0;
 	while (i < source.length) {
@@ -661,13 +1075,13 @@ function splitTopLevelArgs(source: string): string[] {
 			continue;
 		}
 		if (ch === ",") {
-			parts.push(source.slice(last, i).trim());
+			pushPart(last, i);
 			last = i + 1;
 		}
 		i++;
 	}
-	const tail = source.slice(last).trim();
-	if (tail) parts.push(tail);
+	const tailRaw = source.slice(last);
+	if (tailRaw.trim()) pushPart(last, source.length);
 	return parts;
 }
 
@@ -684,49 +1098,62 @@ const SLOTS_KEY_RE = /\bslots\s*:/g;
 const SLOT_ENTRY_KEY_RE = /\b[A-Za-z_][\w-]*\s*:/g;
 
 function collectVariantConfigClasses(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
+	base: number,
 	warnings?: string[],
 ): void {
-	collectAssignedValues(target, source, CLASS_BASE_KEY_RE, collectClassishExpression, warnings);
+	collectAssignedValues(sink, source, CLASS_BASE_KEY_RE, collectClassishExpression, base, warnings);
 	collectAssignedValues(
-		target,
+		sink,
 		source,
 		VARIANTS_KEY_RE,
-		(nextTarget, value, w) => {
-			collectStringLiteralClasses(nextTarget, value, w);
+		(nextSink, value, valueBase, w) => {
+			collectStringLiteralClasses(nextSink, value, valueBase, w);
 		},
+		base,
 		warnings,
 	);
 	collectAssignedValues(
-		target,
+		sink,
 		source,
 		COMPOUND_VARIANTS_KEY_RE,
-		(nextTarget, value, w) => {
-			collectAssignedValues(nextTarget, value, CLASS_KEY_RE, addClasses, w);
+		(nextSink, value, valueBase, w) => {
+			collectAssignedValues(nextSink, value, CLASS_KEY_RE, addClasses, valueBase, w);
 		},
+		base,
 		warnings,
 	);
 	collectAssignedValues(
-		target,
+		sink,
 		source,
 		SLOTS_KEY_RE,
-		(nextTarget, value, w) => {
-			collectAssignedValues(nextTarget, value, SLOT_ENTRY_KEY_RE, collectClassishExpression, w);
+		(nextSink, value, valueBase, w) => {
+			collectAssignedValues(
+				nextSink,
+				value,
+				SLOT_ENTRY_KEY_RE,
+				collectClassishExpression,
+				valueBase,
+				w,
+			);
 		},
+		base,
 		warnings,
 	);
 }
 
 type VariantHelperMetadata = {
 	tokens: Set<string>;
-	/** [start, end) spans of each helper call's argument list, ascending. */
+	/** [start, end) spans of each helper call's argument list, ascending,
+	 *  relative to the scanned source. */
 	callRanges: Array<[number, number]>;
 };
 
 function collectVariantHelperArguments(
-	target: Set<string>,
+	sink: CandidateSink,
 	source: string,
+	base: number,
 	warnings?: string[],
 ): VariantHelperMetadata {
 	// Structural keys of cva()/tv() configs that must not survive as class names,
@@ -742,6 +1169,9 @@ function collectVariantHelperArguments(
 		"class",
 		"className",
 	]);
+	// Key collection reuses the class collectors — a Set-backed sink keeps them
+	// position-free regardless of what the outer sink wants.
+	const tokenSink = new SetSink(tokens);
 	const callRanges: Array<[number, number]> = [];
 	VARIANT_HELPERS_CALL_RE.lastIndex = 0;
 	for (;;) {
@@ -751,40 +1181,49 @@ function collectVariantHelperArguments(
 		const end = findMatchingBracket(source, openIndex);
 		if (end === -1) continue;
 		callRanges.push([openIndex + 1, end]);
+		sink.setHelper?.(helperNameFromMatch(match[0]));
+		sink.markContext?.(base + openIndex + 1, base + end);
+		const argsBase = base + openIndex + 1;
 		const args = splitTopLevelArgs(source.slice(openIndex + 1, end));
 		// tv() takes its config object as the FIRST argument; cva() takes base
 		// classes first and the config second. A leading `{` (splitTopLevelArgs
 		// trims) is what tells the two shapes apart.
-		const config = args[0]?.startsWith("{") ? args[0] : args[1];
-		if (args[0] && args[0] !== config) collectClassishExpression(target, args[0], warnings);
+		const first = args[0];
+		const config = first?.text.startsWith("{") ? first : args[1];
+		if (first?.text && first !== config) {
+			collectClassishExpression(sink, first.text, argsBase + first.start, warnings);
+		}
 		if (config) {
-			collectVariantConfigClasses(target, config, warnings);
+			collectVariantConfigClasses(sink, config.text, argsBase + config.start, warnings);
 			collectAssignedValues(
-				tokens,
-				config,
+				tokenSink,
+				config.text,
 				VARIANTS_KEY_RE,
-				(t, v, w) => {
-					collectObjectKeys(t, v, ":", w);
+				(t, v, b, w) => {
+					collectObjectKeys(t, v, ":", b, w);
 				},
+				0,
 				warnings,
 			);
 			collectAssignedValues(
-				tokens,
-				config,
+				tokenSink,
+				config.text,
 				DEFAULT_VARIANTS_KEY_RE,
-				(t, v, w) => {
-					collectObjectKeys(t, v, ":", w);
-					collectStringLiteralClasses(t, v, w);
+				(t, v, b, w) => {
+					collectObjectKeys(t, v, ":", b, w);
+					collectStringLiteralClasses(t, v, b, w);
 				},
+				0,
 				warnings,
 			);
 			collectAssignedValues(
-				tokens,
-				config,
+				tokenSink,
+				config.text,
 				SLOTS_KEY_RE,
-				(t, v, w) => {
-					collectObjectKeys(t, v, ":", w);
+				(t, v, b, w) => {
+					collectObjectKeys(t, v, ":", b, w);
 				},
+				0,
 				warnings,
 			);
 		}
@@ -793,7 +1232,12 @@ function collectVariantHelperArguments(
 	return { tokens, callRanges };
 }
 
-function collectClassMapArguments(target: Set<string>, source: string, warnings?: string[]): void {
+function collectClassMapArguments(
+	sink: CandidateSink,
+	source: string,
+	base: number,
+	warnings?: string[],
+): void {
 	CLASS_MAP_CALL_RE.lastIndex = 0;
 	for (;;) {
 		const match = CLASS_MAP_CALL_RE.exec(source);
@@ -801,18 +1245,22 @@ function collectClassMapArguments(target: Set<string>, source: string, warnings?
 		const openIndex = match.index + match[0].length - 1;
 		const end = findMatchingBracket(source, openIndex);
 		if (end === -1) continue;
-		const value = source.slice(openIndex + 1, end).trim();
+		const raw = source.slice(openIndex + 1, end);
+		const value = raw.trim();
 		if (value) {
-			collectObjectKeys(target, value, ":", warnings);
-			collectObjectKeys(target, value, "=>", warnings);
+			sink.setHelper?.("classMap");
+			sink.markContext?.(base + openIndex + 1, base + end);
+			const valueBase = base + openIndex + 1 + (raw.length - raw.trimStart().length);
+			collectObjectKeys(sink, value, ":", valueBase, warnings);
+			collectObjectKeys(sink, value, "=>", valueBase, warnings);
 		}
 		CLASS_MAP_CALL_RE.lastIndex = Math.max(CLASS_MAP_CALL_RE.lastIndex, end + 1);
 	}
 }
 
-function pruneTokens(target: Set<string>, tokens: Iterable<string>): void {
+function pruneTokens(sink: CandidateSink, tokens: Iterable<string>): void {
 	for (const token of tokens) {
-		target.delete(token);
+		sink.delete(token);
 	}
 }
 
@@ -898,79 +1346,130 @@ function collectTokensInLiteral(
  * stay prunable.
  */
 function pruneVariantMetadata(
-	classes: Set<string>,
+	sink: CandidateSink,
 	metadata: VariantHelperMetadata,
 	source: string,
 ): void {
 	if (metadata.callRanges.length === 0) {
-		pruneTokens(classes, metadata.tokens);
+		pruneTokens(sink, metadata.tokens);
 		return;
 	}
 	const quoted = new Set<string>();
 	collectQuotedTokens(source, metadata.callRanges, quoted);
 	for (const token of metadata.tokens) {
-		if (!quoted.has(token)) classes.delete(token);
+		if (!quoted.has(token)) sink.delete(token);
 	}
 }
 
-function extractHTML(context: SourceExtractionInput, warnings?: string[]): Set<string> {
-	return extractClasses(context.content, warnings);
+// ---------------------------------------------------------------------------
+// Per-filetype extractors
+// ---------------------------------------------------------------------------
+
+type Extractor = {
+	test: (context: SourceExtractionInput) => boolean;
+	extract: (sink: CandidateSink, context: SourceExtractionInput, warnings?: string[]) => void;
+};
+
+/** Adds nothing — used for position-only passes that record class contexts
+ *  (markContext) without contributing values, so build output is untouched. */
+const NOOP_VISITOR: ValueVisitor = () => undefined;
+
+function extractHTML(
+	sink: CandidateSink,
+	context: SourceExtractionInput,
+	warnings?: string[],
+): void {
+	sink.setOrigin?.("plain");
+	scanClassTokens(sink, context.content, 0, warnings);
+	// Quoted class attributes are fully tokenized by the whole-file scan above;
+	// this pass only annotates their spans as attribute contexts.
+	if (sink.wantsPositions) {
+		sink.setOrigin?.("attribute");
+		collectAssignedValues(sink, context.content, /\bclass\s*=/g, NOOP_VISITOR, 0, warnings);
+	}
 }
 
-function extractJSXTSX(context: SourceExtractionInput, warnings?: string[]): Set<string> {
-	const classes = extractClasses(context.content, warnings);
+function extractJSXTSX(
+	sink: CandidateSink,
+	context: SourceExtractionInput,
+	warnings?: string[],
+): void {
+	const content = context.content;
+	sink.setOrigin?.("plain");
+	scanClassTokens(sink, content, 0, warnings);
+	sink.setOrigin?.("attribute");
 	collectAssignedValues(
-		classes,
-		context.content,
+		sink,
+		content,
 		/\b(?:className|class|tw)\s*=/g,
 		collectClassishExpression,
+		0,
 		warnings,
 	);
 	collectAssignedValues(
-		classes,
-		context.content,
+		sink,
+		content,
 		/\b(?:className|class)\s*:/g,
 		collectClassishExpression,
+		0,
 		warnings,
 	);
-	collectAssignedValues(
-		classes,
-		context.content,
-		/\bclassList\s*=/g,
-		collectClassishExpression,
-		warnings,
-	);
-	collectCallArguments(classes, context.content, CLASS_HELPERS_CALL_RE, undefined, warnings);
-	const variantMetadata = collectVariantHelperArguments(classes, context.content, warnings);
-	collectClassMapArguments(classes, context.content, warnings);
-	pruneTokens(classes, NON_CLASS_IDENTIFIERS);
-	pruneVariantMetadata(classes, variantMetadata, context.content);
-	return classes;
+	collectAssignedValues(sink, content, /\bclassList\s*=/g, collectClassishExpression, 0, warnings);
+	sink.setOrigin?.("helper");
+	collectCallArguments(sink, content, CLASS_HELPERS_CALL_RE, undefined, 0, warnings);
+	const variantMetadata = collectVariantHelperArguments(sink, content, 0, warnings);
+	collectClassMapArguments(sink, content, 0, warnings);
+	sink.setHelper?.(null);
+	pruneTokens(sink, NON_CLASS_IDENTIFIERS);
+	pruneVariantMetadata(sink, variantMetadata, content);
 }
 
-function extractVue(context: SourceExtractionInput, warnings?: string[]): Set<string> {
-	const classes = extractClasses(context.content, warnings);
+function extractVue(
+	sink: CandidateSink,
+	context: SourceExtractionInput,
+	warnings?: string[],
+): void {
+	sink.setOrigin?.("plain");
+	scanClassTokens(sink, context.content, 0, warnings);
+	sink.setOrigin?.("attribute");
 	collectAssignedValues(
-		classes,
+		sink,
 		context.content,
 		/(?::class|v-bind:class)\s*=/g,
 		collectClassishExpression,
+		0,
 		warnings,
 	);
-	return classes;
+	// Position-only annotation for static class="…" attributes (see extractHTML).
+	if (sink.wantsPositions) {
+		collectAssignedValues(
+			sink,
+			context.content,
+			/(?<![:\w-])class\s*=/g,
+			NOOP_VISITOR,
+			0,
+			warnings,
+		);
+	}
 }
 
-function extractSvelte(context: SourceExtractionInput, warnings?: string[]): Set<string> {
-	const classes = extractClasses(context.content, warnings);
-	collectDirectiveNames(classes, context.content, /class:([A-Za-z0-9_-]+)/g, warnings);
+function extractSvelte(
+	sink: CandidateSink,
+	context: SourceExtractionInput,
+	warnings?: string[],
+): void {
+	sink.setOrigin?.("plain");
+	scanClassTokens(sink, context.content, 0, warnings);
+	sink.setOrigin?.("attribute");
+	collectDirectiveNames(sink, context.content, /class:([A-Za-z0-9_-]+)/g, 0, warnings);
 	collectAssignedValues(
-		classes,
+		sink,
 		context.content,
 		/\bclass\s*=/g,
 		collectClassishExpression,
+		0,
 		warnings,
 	);
-	return classes;
 }
 
 const EXTRACTORS: readonly Extractor[] = [
@@ -999,31 +1498,63 @@ const EXTRACTORS: readonly Extractor[] = [
 	},
 ];
 
-export function extractClassesFromSource(
-	input: SourceExtractionInput,
-	warnings?: string[],
-): Set<string> {
-	let classes: Set<string> | undefined;
+function extractInto(sink: CandidateSink, input: SourceExtractionInput, warnings?: string[]): void {
+	let handled = false;
 	for (const extractor of EXTRACTORS) {
 		if (extractor.test(input)) {
-			classes = extractor.extract(input, warnings);
+			extractor.extract(sink, input, warnings);
+			handled = true;
 			break;
 		}
 	}
-	if (!classes) classes = extractClasses(input.content, warnings);
+	if (!handled) {
+		sink.setOrigin?.("plain");
+		scanClassTokens(sink, input.content, 0, warnings);
+	}
 
 	// `safelist(...)` — cross-language protocol for libraries that ship class
 	// declarations alongside their bundled code. Detected in every file type
 	// (the bundled JS in node_modules has no JSX); only literal-string
-	// arguments are extracted, so the scan is fast and predictable.
+	// arguments are extracted, so the scan is fast and predictable. Runs after
+	// the extractor's prunes on purpose: a safelisted literal survives even
+	// when it collides with a structural token.
 	if (input.content.includes("safelist")) {
+		sink.setOrigin?.("safelist");
 		collectCallArguments(
-			classes,
+			sink,
 			input.content,
 			SAFELIST_CALL_RE,
 			collectStringLiteralClasses,
+			0,
 			warnings,
 		);
+		sink.setHelper?.(null);
 	}
+}
+
+export function extractClassesFromSource(
+	input: SourceExtractionInput,
+	warnings?: string[],
+): Set<string> {
+	const classes = new Set<string>();
+	extractInto(new SetSink(classes), input, warnings);
 	return classes;
+}
+
+/**
+ * Position-aware variant of `extractClassesFromSource` for editor tooling.
+ * Same extractors, same filters, same pruning — the value set of the result
+ * always equals `extractClassesFromSource(input)`. Each candidate additionally
+ * carries its source span, its collection origin, and (for variant-group
+ * members) the group's prefix span. Candidates are sorted by position and
+ * deduped by span + value; a span found by both the whole-file scan and a
+ * context-aware collector reports the collector's origin.
+ */
+export function extractClassCandidates(
+	input: SourceExtractionInput,
+	warnings?: string[],
+): ClassCandidate[] {
+	const collector = new CandidateCollector();
+	extractInto(collector, input, warnings);
+	return collector.finish();
 }

@@ -75,6 +75,8 @@ const STATIC_BORDER: Readonly<Record<string, UtilityResult>> = {
 	"outline-double": single("outline-style", "double"),
 };
 deepFreezeUtilityMap(STATIC_BORDER);
+// Key list export for editor enumeration — the map itself stays private.
+export const BORDER_STATIC_NAMES: readonly string[] = Object.freeze(Object.keys(STATIC_BORDER));
 
 // ---------------------------------------------------------------------------
 // Border radius map (logical by default)
@@ -105,6 +107,10 @@ const ROUNDED_CORNER: Readonly<Record<string, string>> = Object.freeze({
 	ee: "border-end-end-radius",
 });
 const ROUNDED_CORNER_ENTRIES = Object.entries(ROUNDED_CORNER);
+
+// Key list exports for editor enumeration — the tables stay private.
+export const ROUNDED_SIDE_NAMES: readonly string[] = Object.freeze(Object.keys(ROUNDED_SIDE));
+export const ROUNDED_CORNER_NAMES: readonly string[] = Object.freeze(Object.keys(ROUNDED_CORNER));
 
 // ---------------------------------------------------------------------------
 // Helpers

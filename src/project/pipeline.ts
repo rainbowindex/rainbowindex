@@ -1,10 +1,12 @@
 import {
 	APPLY_LIKE_MATCH_RE,
-	extractDirectives,
-	resolveDirectives,
 	type ParsedDirective,
 	type ResolvedTheme,
 } from "../directives/index.js";
+import type { ProjectAnalysis } from "./analyze.js";
+
+export { analyzeProjectCSS } from "./analyze.js";
+export type { ProjectAnalysis } from "./analyze.js";
 import {
 	createCompiler,
 	compileCSSFunctions,
@@ -15,13 +17,6 @@ import { stripRIDirectives } from "../css/strip.js";
 import { assembleSections } from "../assembly.js";
 import { expandVariantGroups } from "../scanner/index.js";
 import { pushWarningsDeduped } from "../warnings.js";
-
-export interface ProjectAnalysis {
-	directives: ParsedDirective[];
-	theme: ResolvedTheme;
-	warnings: string[];
-	warningSeen: Set<string>;
-}
 
 export type FontResolver = (
 	fonts: ResolvedTheme["fonts"],
@@ -57,16 +52,6 @@ function collectApplyClassNames(css: string, warnings: string[]): string[] {
 	}
 
 	return classes;
-}
-
-export function analyzeProjectCSS(css: string): ProjectAnalysis {
-	const parseWarnings: string[] = [];
-	const directives = extractDirectives(css, parseWarnings);
-	const theme = resolveDirectives(directives);
-	const warningSeen = new Set<string>(theme.warnings);
-	const warnings = [...theme.warnings];
-	pushWarningsDeduped(warnings, parseWarnings, warningSeen);
-	return { directives, theme, warnings, warningSeen };
 }
 
 export async function finalizeProjectCompilation(

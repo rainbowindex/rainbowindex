@@ -536,6 +536,8 @@ const STATIC_LAYOUT: Readonly<Record<string, UtilityResult>> = {
 	"anchor-scope-none": single("anchor-scope", "none"),
 };
 deepFreezeUtilityMap(STATIC_LAYOUT);
+// Key list export for editor enumeration — the map itself stays private.
+export const LAYOUT_STATIC_NAMES: readonly string[] = Object.freeze(Object.keys(STATIC_LAYOUT));
 
 // Auto track values (shared by auto-cols and auto-rows)
 const AUTO_TRACK_MAP: Readonly<Record<string, string>> = Object.freeze({

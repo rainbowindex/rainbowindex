@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Serialize runs so two near-simultaneous pushes can't race to create the same release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Read package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release v$VERSION already exists — nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          notes="$(awk -v ver="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "[" ver "]")) found = 1; next }
+            found && !body && NF == 0 { next }
+            found { body = 1; print }
+          ' CHANGELOG.md)"
+          if [ -z "$notes" ]; then
+            echo "::error file=CHANGELOG.md::No \"## [$VERSION]\" section found in CHANGELOG.md — add one before releasing v$VERSION."
+            exit 1
+          fi
+          printf '%s\n' "$notes" > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          extra_args=()
+          case "$VERSION" in
+            *-*) extra_args+=(--prerelease) ;;
+          esac
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            "${extra_args[@]}"
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+      # Required for npm trusted publishing (OIDC), which also generates
+      # provenance attestation by default.
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      # No registry-url here: it would write an .npmrc that reads an auth token
+      # from the environment, which conflicts with trusted publishing.
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Read package name and version
+        id: pkg
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing npm publication
+        id: existing
+        env:
+          NAME: ${{ steps.pkg.outputs.name }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          # `npm view` exits 0 with empty output when the package exists but the
+          # version doesn't, so test the output rather than the exit code.
+          published="$(npm view "$NAME@$VERSION" version 2>/dev/null || true)"
+          if [ -n "$published" ]; then
+            echo "$NAME@$VERSION is already on npm — nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.existing.outputs.exists == 'false'
+        run: pnpm install --frozen-lockfile
+
+      # Publish with the npm CLI: trusted publishing needs npm >= 11.5.1
+      # (bundled with Node 24), while the pnpm version pinned in packageManager
+      # predates pnpm's OIDC support.
+      - name: Publish to npm
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          extra_args=()
+          case "$VERSION" in
+            *-*) extra_args+=(--tag next) ;;
+          esac
+          npm publish "${extra_args[@]}"

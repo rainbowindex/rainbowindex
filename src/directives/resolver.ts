@@ -231,7 +231,19 @@ function validateColorAliases(theme: WritableTheme): void {
 	}
 }
 
-export function resolveDirectives(directives: ParsedDirective[]): ResolvedTheme {
+/**
+ * Resolve parsed directives into a theme.
+ *
+ * `attribution`, when provided, is filled parallel to `theme.warnings`: entry
+ * i holds the index of the directive whose resolution pushed warning i.
+ * Warnings pushed by the post-loop cross-validations (alias cycles, slot
+ * dedup, …) have no single source directive and leave the array short —
+ * callers treat missing entries as unattributed.
+ */
+export function resolveDirectives(
+	directives: ParsedDirective[],
+	attribution?: number[],
+): ResolvedTheme {
 	const theme: WritableTheme = {
 		colors: { ...DEFAULT_COLORS },
 		darkConfig: { ...DEFAULT_DARK_CONFIG },
@@ -274,7 +286,8 @@ export function resolveDirectives(directives: ParsedDirective[]): ResolvedTheme 
 		warnings: [],
 	};
 
-	for (const directive of directives) {
+	for (let directiveIndex = 0; directiveIndex < directives.length; directiveIndex++) {
+		const directive = directives[directiveIndex];
 		switch (directive.type) {
 			case "color": {
 				// Handle @color dark { mode: auto; chroma-boost: 0.015; hue-shift: 0; }
@@ -578,6 +591,10 @@ export function resolveDirectives(directives: ParsedDirective[]): ResolvedTheme 
 					`[RI-1110] Unknown directive type "${_exhaustive}" — this directive was parsed but has no resolver. This is a bug in RainbowIndex.`,
 				);
 			}
+		}
+		if (attribution) {
+			// Any warning pushed during this iteration came from this directive.
+			while (attribution.length < theme.warnings.length) attribution.push(directiveIndex);
 		}
 	}
 

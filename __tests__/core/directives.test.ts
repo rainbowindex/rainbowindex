@@ -1009,16 +1009,12 @@ describe("parseRoundedModifier", () => {
 		expect(parseRoundedModifier()).toBeNull();
 	});
 
-	it.each([
-		"round",
-		"scoop",
-		"bevel",
-		"notch",
-		"square",
-		"squircle",
-	])("returns keyword for %s", (kw) => {
-		expect(parseRoundedModifier(kw)).toBe(kw);
-	});
+	it.each(["round", "scoop", "bevel", "notch", "square", "squircle"])(
+		"returns keyword for %s",
+		(kw) => {
+			expect(parseRoundedModifier(kw)).toBe(kw);
+		},
+	);
 
 	it("returns superellipse object for superellipse(N)", () => {
 		expect(parseRoundedModifier("superellipse(2.0)")).toEqual({ superellipse: 2.0 });

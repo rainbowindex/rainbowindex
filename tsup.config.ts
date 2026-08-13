@@ -14,6 +14,7 @@ export default defineConfig([
 			index: "src/entries/index.ts",
 			browser: "src/entries/browser.ts",
 			cli: "src/entries/cli.ts",
+			editor: "src/entries/editor.ts",
 			vite: "src/integrations/vite.ts",
 		},
 		format: ["esm"],

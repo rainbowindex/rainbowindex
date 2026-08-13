@@ -23,7 +23,7 @@ import {
 	kindFromProvider,
 	SAFE_FONT_FAMILY_CHARS,
 	SAFE_FONT_FAMILY_RE,
-} from "../integrations/font-providers/index.js";
+} from "../integrations/font-providers/model.js";
 
 import type {
 	PreflightConfig,

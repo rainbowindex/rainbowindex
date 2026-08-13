@@ -147,14 +147,15 @@ describe("effects utilities", () => {
 		expect(r!.declarations[0].value).toBe(value);
 	});
 
-	test.each([
-		["delay-150", "transition-delay", "150ms"],
-	])("%s generates %s", (className, property, value) => {
-		const r = resolveUtility(className, null, false, theme);
-		expect(r).not.toBeNull();
-		expect(r!.declarations[0].property).toBe(property);
-		expect(r!.declarations[0].value).toBe(value);
-	});
+	test.each([["delay-150", "transition-delay", "150ms"]])(
+		"%s generates %s",
+		(className, property, value) => {
+			const r = resolveUtility(className, null, false, theme);
+			expect(r).not.toBeNull();
+			expect(r!.declarations[0].property).toBe(property);
+			expect(r!.declarations[0].value).toBe(value);
+		},
+	);
 
 	test.each([
 		["brightness-150", "--ri-brightness", "brightness(150%)", "filter"],

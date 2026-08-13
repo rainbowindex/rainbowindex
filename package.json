@@ -1,6 +1,6 @@
 {
 	"name": "rainbowindex",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "CSS-first system for building and maintaining consistent user interfaces",
 	"keywords": [
 		"css",
@@ -57,6 +57,10 @@
 			"default": "./dist/index.mjs"
 		},
 		"./index.css": "./dist/index.css",
+		"./editor": {
+			"types": "./dist/editor.d.ts",
+			"default": "./dist/editor.mjs"
+		},
 		"./vite": {
 			"types": "./dist/vite.d.ts",
 			"default": "./dist/vite.mjs"

@@ -9,23 +9,14 @@ import {
 	resolveDirectives,
 } from "../directives/index.js";
 
-export const CSS_CANDIDATES = Object.freeze([
-	"src/index.css",
-	"src/style.css",
-	"src/styles.css",
-	"src/app.css",
-	"src/global.css",
-	"index.css",
-	"style.css",
-	"styles.css",
-	"app.css",
-	"global.css",
-]);
+import { CSS_ENTRY_CANDIDATES } from "../project/css-entry.js";
+
+export { CSS_ENTRY_CANDIDATES as CSS_CANDIDATES } from "../project/css-entry.js";
 
 const MAX_CSS_FILE_SIZE = MAX_DIRECTIVE_INPUT_SIZE;
 
 export async function findCSSFileAsync(cwd: string): Promise<string | null> {
-	const candidates = CSS_CANDIDATES;
+	const candidates = CSS_ENTRY_CANDIDATES;
 	const results = await Promise.all(
 		candidates.map(async (candidate): Promise<string | null> => {
 			const full = resolve(cwd, candidate);

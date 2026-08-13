@@ -9,6 +9,7 @@ import type { ResolvedTheme } from "../directives/foundation.js";
 import {
 	resolveUtilityDeclarations,
 	extractCustomUtilityRootInfo,
+	type CSSDeclaration,
 	type UtilityNestedBlock,
 } from "../utilities/index.js";
 import { buildBreakpointWeights, computeSortKey } from "./ordering.js";
@@ -74,6 +75,21 @@ export interface CompilationResult {
 export { resolveVariant } from "./variants.js";
 export type { VariantWrapper } from "./variants.js";
 
+/**
+ * Optional out-param for compileUtility: when provided, records WHY a class
+ * produced no rule (compile keeps dropping silently — reserved RI-1001) and,
+ * on success, the utility's root declarations. Callers reuse one mutable
+ * instance so the compile hot path never allocates for it.
+ */
+export interface ClassResolutionDetail {
+	/** Failure reason — null after a successful resolve. */
+	reason: "unknown-utility" | "unknown-variant" | null;
+	/** The offending variant when reason is "unknown-variant". */
+	variant: string | null;
+	/** Root declarations (before variant wrapping) on success. */
+	declarations: CSSDeclaration[] | null;
+}
+
 /** Frozen empty map singleton — avoids per-compilation allocation when no custom variants exist. */
 const _emptyVariantMap: ReadonlyMap<string, { name: string; selector: string }> = Object.freeze(
 	new Map(),
@@ -88,8 +104,12 @@ const WS_RE = /\s+/;
 
 /**
  * Compile a single parsed utility into a CSS rule.
+ *
+ * `detail`, when provided, is filled with the failure reason (or the root
+ * declarations on success) — the class inspector's window into the exact
+ * resolution the compile path performs. Omitted on the build path.
  */
-function compileUtility(
+export function compileUtility(
 	parsed: ParsedUtility,
 	theme: ResolvedTheme,
 	result: CompilationResult,
@@ -97,11 +117,21 @@ function compileUtility(
 	warnSeen: Set<string>,
 	breakpointWeights: ReadonlyMap<string, number>,
 	variantMemo: Map<string, VariantWrapper | null>,
+	detail?: ClassResolutionDetail,
 ): CompiledRule | null {
+	if (detail) {
+		detail.reason = null;
+		detail.variant = null;
+		detail.declarations = null;
+	}
 	// Resolve utility to CSS declarations (handles arbitrary properties,
 	// standard utilities, and physical property expansion).
 	const utilResult = resolveUtilityDeclarations(parsed, theme, result.warnings);
-	if (!utilResult) return null;
+	if (!utilResult) {
+		if (detail) detail.reason = "unknown-utility";
+		return null;
+	}
+	if (detail) detail.declarations = utilResult.declarations;
 
 	// Track token references for tree-shaking.
 	for (const decl of utilResult.declarations) {
@@ -144,6 +174,10 @@ function compileUtility(
 	for (const variant of parsed.variants) {
 		const wrapper = resolveVariant(variant, theme, customVariantMap, variantMemo);
 		if (!wrapper) {
+			if (detail) {
+				detail.reason = "unknown-variant";
+				detail.variant = variant;
+			}
 			pushWarningsDeduped(
 				result.warnings,
 				[
@@ -432,6 +466,23 @@ export function scanCSSForTokenUsage(css: string, result: CompilationResult): vo
  *  Derived from merge runtime defaults (single source of truth). */
 const BUILTIN_TEXT_SIZES: ReadonlySet<string> = new Set(DEFAULT_TEXT_SIZES);
 
+/** Fresh, empty CompilationResult — shared by the compile loop and the class
+ *  inspector (which needs a scratch result for warning/token bookkeeping). */
+export function createEmptyCompilationResult(): CompilationResult {
+	return {
+		rules: [],
+		keyframes: [],
+		properties: [],
+		usedColorStops: new Map(),
+		usedTextSizes: new Set(),
+		usedFonts: new Set(),
+		usedRounded: new Set(),
+		usedShadows: new Set(),
+		usedAnimations: new Set(),
+		warnings: [],
+	};
+}
+
 function shouldWarnUnresolvedArbitrary(bracketContent: string): boolean {
 	// Attribute-selector style or wildcard syntax is typically intentional and
 	// not a utility typo (e.g. data-[state=*] extracted from markup).
@@ -451,12 +502,17 @@ function shouldWarnUnresolvedArbitrary(bracketContent: string): boolean {
  * `variantMapCache` is the caller's per-instance WeakMap (keyed by theme) so
  * concurrent compiler instances never share cached custom-variant maps.
  */
-function compileInternal(
-	classNames: Iterable<string>,
+/**
+ * Register a theme's custom tokens and utilities on a compilation context —
+ * the merge-side knowledge (custom text sizes, font slots, color names,
+ * custom utility property claims) that makes ri()/analyzeMerge() resolve
+ * theme-defined classes correctly. Shared by the compile loop and
+ * createThemeSnapshot().
+ */
+export function registerThemeOnContext(
+	ctx: ReturnType<typeof createCompilationContext>,
 	theme: ResolvedTheme,
-	variantMapCache: WeakMap<ResolvedTheme, ReadonlyMap<string, { name: string; selector: string }>>,
-): { result: CompilationResult; ctx: ReturnType<typeof createCompilationContext> } {
-	const ctx = createCompilationContext();
+): void {
 	const customTextSizeNames = Object.keys(theme.text).filter(
 		(name) => !BUILTIN_TEXT_SIZES.has(name),
 	);
@@ -485,6 +541,28 @@ function compileInternal(
 			registerCustomUtility(ctx, cu.name, properties);
 		}
 	}
+}
+
+/**
+ * Build a CompilationSnapshot straight from a resolved theme — no compile
+ * pass, no module-level state. Editor tooling pairs this with
+ * analyzeMerge()/createRi() for theme-accurate merge semantics.
+ */
+export function createThemeSnapshot(
+	theme: ResolvedTheme,
+): import("../merge/index.js").CompilationSnapshot {
+	const ctx = createCompilationContext();
+	registerThemeOnContext(ctx, theme);
+	return snapshotCompilationContext(ctx);
+}
+
+function compileInternal(
+	classNames: Iterable<string>,
+	theme: ResolvedTheme,
+	variantMapCache: WeakMap<ResolvedTheme, ReadonlyMap<string, { name: string; selector: string }>>,
+): { result: CompilationResult; ctx: ReturnType<typeof createCompilationContext> } {
+	const ctx = createCompilationContext();
+	registerThemeOnContext(ctx, theme);
 
 	const customVariantMap =
 		theme.customVariants.length === 0
@@ -496,18 +574,7 @@ function compileInternal(
 					return map;
 				})());
 
-	const result: CompilationResult = {
-		rules: [],
-		keyframes: [],
-		properties: [],
-		usedColorStops: new Map(),
-		usedTextSizes: new Set(),
-		usedFonts: new Set(),
-		usedRounded: new Set(),
-		usedShadows: new Set(),
-		usedAnimations: new Set(),
-		warnings: [],
-	};
+	const result = createEmptyCompilationResult();
 
 	// Per-compilation warning dedup state shared across all pushWarningsDeduped calls.
 	const warnSeen = new Set<string>();

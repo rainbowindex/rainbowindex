@@ -1,8 +1,8 @@
-/** Characters allowed in a font family name — the trust boundary shared by
- *  the @font directive parser (directives/parsers.ts) and the metadata cache
- *  loader (cache.ts). */
-export const SAFE_FONT_FAMILY_CHARS = "a-zA-Z0-9 ._-";
-export const SAFE_FONT_FAMILY_RE = new RegExp(`^[${SAFE_FONT_FAMILY_CHARS}]+$`);
+// The font-family safety constants live in the pure model leaf (model.ts) so
+// directive parsing never imports this mutable cache-state module — the
+// editor/browser graphs must stay structurally free of the Node-touching
+// machinery this state serves. Re-exported for the cache loader's convenience.
+export { SAFE_FONT_FAMILY_CHARS, SAFE_FONT_FAMILY_RE } from "../model.js";
 
 export interface GoogleFontMeta {
 	family: string;

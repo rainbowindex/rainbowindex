@@ -298,6 +298,40 @@ If you call `ri()` while a compilation is still in progress (e.g. inside a
 server-rendering pass that triggers a fresh compile), the runtime emits a
 throttled `[RI-2004]` warning. That's your signal to switch to `createRi()`.
 
+## Editor tooling API
+
+`rainbowindex/editor` is an IO-free toolkit for editor integrations — pure
+computation (strings in, structures out) with no `node:*` imports anywhere in
+its module graph, so it runs in browser-based editor hosts (vscode.dev)
+exactly as it does in Node. The host reads files; the entry supplies the
+semantics. Feature-detect via `editorCapabilities` rather than versions —
+integrations load whatever version the workspace has installed.
+
+```ts
+import { createEditorSession } from "rainbowindex/editor";
+
+const session = createEditorSession({ css: themeCss });
+
+session.diagnostics;                    // positioned problems in the CSS input
+session.inspector.validate("felx");     // { ok: false, reason: "unknown-utility", suggestion: "flex" }
+session.inspector.explain("sm:px-4");   // parsed structure + generated CSS + sort key
+session.enumerate();                    // ~3,400 probe-verified completions + templates
+session.analyzeMerge(["px-2", "px-4"]); // which classes ri() drops, and who overrode them
+session.swatch("brand", 500);           // light/dark oklch + hex for completions
+session.extractCandidates(source, path); // class tokens with exact source spans
+session.setCss(nextCss);                // theme changed → all caches invalidate together
+```
+
+Everything the session wraps is also exported à la carte —
+`analyzeProjectCSS`, `createClassInspector`, `listVariants`,
+`enumerateClassNames`, `analyzeMerge` + `createThemeSnapshot`,
+`resolveColorSwatch` / `listThemeTokens`, `extractClassCandidates`, and the
+CSS-entry detection helpers (`CSS_ENTRY_CANDIDATES`, `hasRIActivation`).
+Guarantees worth knowing: `validate(cls).ok` exactly when the compiler emits
+a rule for `cls`; every enumerated class is probe-verified against the real
+resolver; `analyzeMerge(...).output` is identical to `ri()`'s result; and
+swatches use the same OKLCH math as the emitted CSS variables.
+
 ## Environment variables
 
 | Variable | Effect |

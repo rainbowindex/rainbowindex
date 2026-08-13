@@ -164,6 +164,8 @@ const STATIC_TEXT: Record<string, UtilityResult> = {
 	"content-none": single("content", "none"),
 };
 deepFreezeUtilityMap(STATIC_TEXT);
+// Key list export for editor enumeration — the map itself stays private.
+export const TYPOGRAPHY_STATIC_NAMES: readonly string[] = Object.freeze(Object.keys(STATIC_TEXT));
 
 // ---------------------------------------------------------------------------
 // Fluid Typography
@@ -222,12 +224,23 @@ function buildSortedTextScale(theme: ResolvedTheme): Array<{ name: string; rem: 
 	return entries;
 }
 
-function generateFluidText(size: string, theme: ResolvedTheme): UtilityResult | null {
+function generateFluidText(
+	size: string,
+	theme: ResolvedTheme,
+	warnings?: string[],
+): UtilityResult | null {
 	if (!Object.hasOwn(theme.text, size)) return null;
+
+	// RI-15xx are documented compile warnings — routed to the caller's sink
+	// when one exists (so builds surface them), dev console otherwise.
+	const warn = (message: string): void => {
+		if (warnings) warnings.push(message);
+		else devWarn(message);
+	};
 
 	const maxRaw = parseRemValue(theme.text[size].fontSize);
 	if (maxRaw === null) {
-		devWarn(
+		warn(
 			`[RI-1501] text-fluid-${size} requires a rem-based font size, but "${theme.text[size].fontSize}" is not in rem.`,
 		);
 		return null;
@@ -247,7 +260,7 @@ function generateFluidText(size: string, theme: ResolvedTheme): UtilityResult | 
 	}
 
 	if (!minSize || !Object.hasOwn(theme.text, minSize)) {
-		devWarn(
+		warn(
 			`[RI-1502] text-fluid-${size} has no smaller size to interpolate from — fluid typography requires at least one step below.`,
 		);
 		return null;
@@ -281,7 +294,7 @@ export function typographyGenerator(
 	value: string | null,
 	negative: boolean,
 	theme: ResolvedTheme,
-	_warnings?: string[],
+	warnings?: string[],
 	dataType?: string | null,
 ): UtilityResult | null {
 	const full = fullName(utility, value);
@@ -292,7 +305,7 @@ export function typographyGenerator(
 	// text-fluid-{size}: fluid font-size + line-height
 	if (full.startsWith("text-fluid-")) {
 		const sizeName = full.slice(11);
-		return generateFluidText(sizeName, theme);
+		return generateFluidText(sizeName, theme, warnings);
 	}
 
 	// text-{size}[/{line-height}]: font-size + line-height from theme, with an

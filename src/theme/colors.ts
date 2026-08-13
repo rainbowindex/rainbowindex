@@ -64,8 +64,7 @@ const STOP_STEP = 50;
  * Lightness ramp — absolute OKLCH L per stop, hue/chroma-independent, spaced for
  * EVEN PERCEIVED (APCA) CONTRAST rather than even lightness: the steps are small near
  * white and grow toward black, matching the eye's reduced sensitivity to contrast in
- * dark regions (see `.claude/color-expert` — "evenly distribute APCA contrast … APCA
- * accounts for Stevens' law"). This is what makes the dark-mode luminance mirror read
+ * dark regions. This is what makes the dark-mode luminance mirror read
  * with the SAME perceived contrast as light mode at every stop. Stops 50–500 still
  * match the reference to <0.005; the dark half descends to near-black (~0.045 at 950)
  * so the ramp spans both poles.
@@ -358,8 +357,9 @@ const APCA_LO_WOB_OFFSET = 0.027;
 const APCA_DELTA_Y_MIN = 0.0005;
 const APCA_LO_CLIP = 0.1;
 
-/** sRGB encoding transfer (linear → display). */
-function linearToSrgb(c: number): number {
+/** sRGB encoding transfer (linear → display). Exported for editor swatch hex
+ *  conversion (theme/swatch.ts) — one transfer function, no colorimetric drift. */
+export function linearToSrgb(c: number): number {
 	const x = Math.max(0, Math.min(1, c));
 	return x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
 }
@@ -471,6 +471,39 @@ function computeStop(
 	};
 }
 
+/**
+ * Dark-mode counterpart of a generative stop — same tone, mirrored luminance:
+ * keep the light stop's chroma + hue and take the lightness of the mirror
+ * stop (1000 - suffix). The two modes share ONE luminance ramp —
+ * reverse-aligning the tokens, a dark stop has the exact lightness of its
+ * light counterpart, so neither mode reads lighter than the other (and stop
+ * 500 pivots to itself). gamutSafeChroma re-clamps the (rare) saturated stop
+ * whose chroma will not fit at the mirror L. Shared by CSS variable emission
+ * and editor swatch resolution so the two can never drift.
+ */
+export function computeDarkStop(
+	def: Extract<ColorDefinition, { type: "generative" }>,
+	suffix: number,
+	darkConfig: DarkModeConfig,
+	darkOverride?: ColorDarkOverride,
+): ColorStop {
+	const lightStop = generateStop(def, suffix);
+	const darkL = generateStop(def, 1000 - suffix).l;
+
+	let extraChroma = 0;
+	let extraHue = 0;
+	if (darkOverride?.strategy === "shift") {
+		extraChroma = darkOverride.chromaDelta;
+		extraHue = darkOverride.hueDelta;
+	}
+	const darkH = lightStop.h + darkConfig.hueShift + extraHue;
+	const globalChromaBoost = def.chromaBoost !== false ? darkConfig.chromaBoost : 0;
+	const requestedChroma = lightStop.c + globalChromaBoost + extraChroma;
+
+	const darkC = Math.floor(gamutSafeChroma(darkL, requestedChroma, darkH) * 10000) / 10000;
+	return { stop: suffix, l: darkL, c: darkC, h: darkH };
+}
+
 // ---------------------------------------------------------------------------
 // CSS Generation
 // ---------------------------------------------------------------------------
@@ -523,28 +556,8 @@ export function generateColorVariables(
 				vars.push(`--color-${name}-${suffix}: light-dark(${lightValue}, ${lightValue});`);
 			}
 		} else {
-			// Same tone, mirrored luminance: keep the light stop's chroma + hue and take
-			// the lightness of the mirror stop (1000 - suffix). The two modes share ONE
-			// luminance ramp — reverse-aligning the tokens, a dark stop has the exact
-			// lightness of its light counterpart, so neither mode reads lighter than the
-			// other (and stop 500 pivots to itself).
-			const darkL = generateStop(def, 1000 - suffix).l;
-
-			let extraChroma = 0;
-			let extraHue = 0;
-			if (darkOverride?.strategy === "shift") {
-				extraChroma = darkOverride.chromaDelta;
-				extraHue = darkOverride.hueDelta;
-			}
-			const darkH = lightStop.h + darkConfig.hueShift + extraHue;
-			const globalChromaBoost = def.chromaBoost !== false ? darkConfig.chromaBoost : 0;
-			// gamutSafeChroma re-clamps: the light chroma may not fit at the mirror L for
-			// very saturated stops, where it is reduced to the gamut boundary.
-			const requestedChroma = lightStop.c + globalChromaBoost + extraChroma;
-
-			const darkC = Math.floor(gamutSafeChroma(darkL, requestedChroma, darkH) * 10000) / 10000;
-
-			const darkValue = formatOklch(darkL, darkC, darkH);
+			const darkStop = computeDarkStop(def, suffix, darkConfig, darkOverride);
+			const darkValue = formatOklch(darkStop.l, darkStop.c, darkStop.h);
 			vars.push(`--color-${name}-${suffix}: light-dark(${lightValue}, ${darkValue});`);
 		}
 	}

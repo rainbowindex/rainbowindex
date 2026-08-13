@@ -228,7 +228,7 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 		name: "rainbowindex",
 		config(): never {
 			throw new Error(
-				"[RI-1606] The default `rainbowindex` export is the PostCSS plugin, but it was placed in Vite's `plugins: []` array where it does nothing. Import the Vite plugin instead: `import rainbowindex from \"rainbowindex/vite\"`. (For a raw PostCSS setup, keep the default import and register it under `css.postcss.plugins` or in postcss.config.*.)",
+				'[RI-1606] The default `rainbowindex` export is the PostCSS plugin, but it was placed in Vite\'s `plugins: []` array where it does nothing. Import the Vite plugin instead: `import rainbowindex from "rainbowindex/vite"`. (For a raw PostCSS setup, keep the default import and register it under `css.postcss.plugins` or in postcss.config.*.)',
 			);
 		},
 	});

@@ -5,6 +5,133 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-13
+
+### Added — editor tooling API (phase 1)
+
+- **`rainbowindex/editor` entry** — a new IO-free subpath export for editor
+  integrations (VS Code and beyond). Pure computation only: no filesystem,
+  network, or module-level mutation, so it runs in browser-based editor hosts
+  (vscode.dev) as-is. Ships a version handshake (`version`,
+  `EDITOR_API_VERSION`, `editorCapabilities`) so extensions can
+  feature-detect whatever version the workspace has installed.
+- **`extractClassCandidates()`** — position-aware variant of the source
+  scanner. Returns every class candidate with its absolute source span, its
+  collection origin (`attribute` / `helper` / `safelist` / `plain`, with the
+  helper name when applicable), and — for variant-group members — the span of
+  the group prefix plus the member token inside the braces, so editors can
+  squiggle and edit individual members of `hover:{…}` groups. The value set
+  is guaranteed identical to `extractClassesFromSource()`; build output is
+  byte-for-byte unchanged.
+- **CSS entry detection exports** — `CSS_ENTRY_CANDIDATES` (the CLI/Vite
+  probe order, now a pure shared module) plus re-exported `hasRIActivation()`
+  and `RI_IMPORT_SPECIFIERS`, letting editor hosts locate the project's CSS
+  input with their own file access.
+- **Scanner context exports** — `CLASS_HELPER_NAMES` / `VARIANT_HELPER_NAMES`
+  so completion-context detection in editors matches the scanner's behavior.
+- **`analyzeProjectCSS()`** — the theme-only front half of `compileProject`
+  (CSS input string → `ResolvedTheme` + directives + warnings), now exported
+  for editors. No file IO, no font resolution — cheap enough to re-run on
+  every CSS-entry change.
+- **`createClassInspector(theme)`** — single-class validation and
+  explanation running the exact resolution the compiler performs, giving the
+  intentionally-silent RI-1001 a voice in editors. `validate()` reports
+  `unknown-utility` / `unknown-variant` / `invalid-arbitrary` with the
+  offending fragment and an OSA-distance typo suggestion (`felx` → `flex`,
+  including custom `@utility` and `@custom` names); `explain()` returns the
+  parsed structure, root declarations, escaped selector, full rule CSS, and
+  sort key. Instances cache per-theme state and resolutions, so
+  per-keystroke validation is cheap. Guaranteed: `validate(cls).ok` exactly
+  when `compile([cls])` emits a rule.
+- **`listVariants(theme)`** — enumerates every concrete variant the theme
+  resolves (pseudo-classes, pseudo-elements, media, breakpoints, container
+  queries, special selectors, custom `@custom` variants) plus the open-ended
+  pattern families (`data-`, `aria-`, `group-`, …), each tagged with a kind
+  and what it wraps. Every concrete entry is guaranteed to resolve.
+- **`parseUtility()` / `findClosest()`** — the class parser (structured
+  `ParsedUtility`) and the OSA typo suggester, exported for editor use.
+- **`createEditorSession({ css })`** — the façade an editor holds per
+  workspace: theme analysis, inspector, enumeration, token introspection,
+  merge snapshot, candidate extraction, and swatches behind one object whose
+  caches invalidate together on `setCss()`.
+- **Color swatches** — `resolveColorSwatch(theme, name, stop)` resolves a
+  theme color to concrete light/dark values using the same OKLCH math as the
+  emitted CSS variables (the dark-mirror computation is now shared via
+  `computeDarkStop`), plus `oklchToHex`/`cssColorToHex` conversion for
+  completion swatches; handles generative palettes, explicit values, hex,
+  light/dark pairs, aliases, and the semantic paper/ink colors.
+  `listThemeTokens(theme)` returns one render-ready view of every token
+  namespace for sidebar chips.
+- **Structured diagnostics with source spans** — `analyzeProjectCSS()` now
+  additionally returns `diagnostics`: the same messages as `warnings`, in the
+  same order, each with the parsed `RI-NNNN` code, a severity derived from
+  the documented code-range convention (0xxx/2xxx → error), and a
+  [start, end) span into the CSS input where the emitter knew one. Directive
+  parse problems (`RI-1011/1012/1036/1202`) anchor at their exact site;
+  resolver problems anchor at the directive whose body produced them (via
+  new opt-in attribution in `resolveDirectives`); post-loop validations stay
+  unattributed. `Diagnostic`, `severityForCode()`, `warningCode()`, and
+  `diagnosticFromWarning()` ship from `rainbowindex/editor` so editors can
+  structure any legacy warning stream. The string arrays remain unchanged
+  everywhere.
+- **`analyzeMerge(classes, snapshot?)`** — explains `ri()`'s right-most-wins
+  conflict resolution for a pre-tokenized class list: the merged `output`,
+  which indices survive, and — for every dropped class — the ascending
+  indices of the survivors that claimed its properties (joint domination
+  like `text-lg` overridden by `[font-size:16px]` + `leading-tight` lists
+  both winners). Runs the exact scan `ri()` runs, via an optional trace that
+  costs the hot path one falsy check per property. Powers "this class is
+  overridden" editor diagnostics.
+- **`createThemeSnapshot(theme)`** — builds a `CompilationSnapshot` straight
+  from a resolved theme (custom text sizes, font slots, color names, custom
+  utility property claims) without a compile pass, for theme-accurate
+  `analyzeMerge()`/`createRi()` in editors. The registration logic is now
+  shared with the compile loop (`registerThemeOnContext`).
+- **`enumerateClassNames(theme)`** — the finite completion universe: every
+  static utility, every theme-token expansion (colors × stops, text sizes,
+  rounded, shadows, weights, …), and custom `@utility` entries, ~3,400
+  classes on the default theme in ~12 ms. Candidates come from a generous
+  per-root value-space table (`UTILITY_VALUE_SPACES`) and are then probed
+  through the real utility resolver, so every enumerated class is valid by
+  construction; infinite families (the spacing scale, numeric values,
+  functional custom utilities) are returned as templates. Tests enforce the
+  reverse direction: every dispatch root must declare a value space, and
+  every merge-table static must enumerate.
+
+### Changed
+
+- **`generate-types` rewritten on top of `enumerateClassNames`** — the CLI's
+  generated `rainbowindex-env.d.ts` now covers the full utility surface
+  (previously a hand-maintained subset: 8 color roots, spacing, text, fonts,
+  sizing) and a complete `Variant` union driven by `listVariants`. Plain
+  classes are checked against the enumerated finite union plus
+  spacing/numeric templates; variant-prefixed classes validate the variant
+  name (misspelled variants like `hver:` are now compile errors in strict
+  mode).
+- **Fixed: generated types failed to compile** — the previous
+  `rainbowindex-env.d.ts` defined `RainbowClass` with a circular
+  `Exclude<RainbowClass, …>` self-reference, which TypeScript rejects
+  (TS2456), silently breaking `ri()` autocomplete in strict projects. The
+  new two-tier `RainbowBase`/`RainbowClass` shape compiles cleanly (~0.7 s
+  for a ~3,400-literal union).
+- `[RI-1501]`/`[RI-1502]` (fluid typography) now flow into compile warnings
+  when a warning sink is present instead of only the dev console; the dev
+  console remains the fallback.
+- Internal: activation detection moved from `directives/index.ts` into a pure
+  leaf module (`directives/activation.ts`) so the editor entry and browser
+  bundles don't pull the directive resolver's Node-only font machinery into
+  their module graph. All existing import paths keep working via re-exports.
+- Internal: `analyzeProjectCSS` moved from `project/pipeline.ts` into a pure
+  leaf module (`project/analyze.ts`), and `compileUtility` gained an optional
+  failure-detail out-param — both re-exported/behavior-identical, byte-for-
+  byte identical CSS output.
+- Internal: the pure font model (types + slot/face factories) moved from the
+  `font-providers` barrel into `font-providers/model.ts`; directive parsing
+  now imports it (and the font-family safety constants) from leaf modules,
+  making the editor entry's module graph structurally free of `node:*`
+  imports rather than relying on tree-shaking. The barrel re-exports the
+  model, so existing importers are unaffected.
+
 ## [0.2.1] - 2026-07-28
 
 ### Added — diagnostics

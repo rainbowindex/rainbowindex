@@ -268,6 +268,90 @@ function resolveArbitraryVariant(variant: string): VariantWrapper | null {
 }
 
 // ---------------------------------------------------------------------------
+// Variant enumeration (editor tooling)
+// ---------------------------------------------------------------------------
+
+export type VariantKind =
+	| "pseudo-class"
+	| "pseudo-element"
+	| "media"
+	| "breakpoint"
+	| "container"
+	| "special"
+	| "custom"
+	| "pattern";
+
+export interface VariantInfo {
+	/** The variant as typed before the `:` — for patterns, the family prefix. */
+	name: string;
+	kind: VariantKind;
+	/** What the variant emits — a selector suffix, an at-rule, or (for
+	 *  patterns) a description of the accepted form. */
+	wraps: string;
+}
+
+/** Open-ended variant families that take a payload rather than a fixed name.
+ *  Enumerated for editor completions; resolveVariant is the validator. */
+const VARIANT_PATTERNS: readonly VariantInfo[] = Object.freeze([
+	{ name: "data-", kind: "pattern", wraps: "data-{attr} or data-[attr=value] → [data-…]" },
+	{ name: "aria-", kind: "pattern", wraps: 'aria-{attr} → [aria-…="true"], or aria-[attr=value]' },
+	{ name: "group-", kind: "pattern", wraps: "group-{pseudo} or group-[sel] → .group:… &" },
+	{ name: "peer-", kind: "pattern", wraps: "peer-{pseudo} or peer-[sel] → .peer:… ~ &" },
+	{ name: "in-", kind: "pattern", wraps: "in-[sel] → :where(sel) &" },
+	{ name: "has-", kind: "pattern", wraps: "has-[sel] → :has(sel)" },
+	{ name: "not-", kind: "pattern", wraps: "not-{pseudo} or not-[sel] → :not(…)" },
+	{
+		name: "nth-",
+		kind: "pattern",
+		wraps: "nth-[An+B], nth-last-[…], nth-of-type-[…], nth-last-of-type-[…]",
+	},
+	{ name: "supports-", kind: "pattern", wraps: "supports-[condition] → @supports (…)" },
+	{ name: "min-", kind: "pattern", wraps: "min-[length] → @media (width >= …)" },
+	{ name: "max-", kind: "pattern", wraps: "max-[length] → @media (width < …)" },
+	{ name: "[…]", kind: "pattern", wraps: "[selector], [&_p], [@media(…)] — arbitrary variant" },
+]);
+
+/**
+ * Enumerate every concrete variant the given theme resolves, plus the
+ * open-ended pattern families. Concrete entries (kind ≠ "pattern") are
+ * guaranteed to resolve via resolveVariant — the list mirrors its checks,
+ * including the CSS-length guard on breakpoint values.
+ */
+export function listVariants(theme: ResolvedTheme): VariantInfo[] {
+	const out: VariantInfo[] = [];
+	for (const [name, value] of Object.entries(theme.breakpoints)) {
+		if (!SAFE_CSS_LENGTH_RE.test(value)) continue;
+		out.push({ name, kind: "breakpoint", wraps: `@media (min-width: ${value})` });
+		out.push({ name: `@${name}`, kind: "container", wraps: `@container (min-width: ${value})` });
+	}
+	for (const [name, suffix] of Object.entries(PSEUDO_CLASSES)) {
+		out.push({ name, kind: "pseudo-class", wraps: suffix });
+	}
+	for (const [name, suffix] of Object.entries(PSEUDO_ELEMENTS)) {
+		out.push({ name, kind: "pseudo-element", wraps: suffix });
+	}
+	for (const [name, wrapper] of Object.entries(MEDIA_VARIANTS)) {
+		out.push({ name, kind: "media", wraps: wrapper.atRule ?? "@starting-style" });
+	}
+	for (const [name, wrapper] of Object.entries(SPECIAL_SELECTORS)) {
+		out.push({ name, kind: "special", wraps: wrapper.selectorSuffix ?? "" });
+	}
+	if (theme.customVariants.length > 0) {
+		// The directive parser accepts custom selectors the resolver rejects
+		// (its length cap is 2000 vs the resolver's 500, and the resolver also
+		// nulls sanitize-to-empty selectors and non-allowlisted at-rules) —
+		// only entries that actually resolve keep the "guaranteed" contract.
+		const customVariantMap = new Map(theme.customVariants.map((cv) => [cv.name, cv] as const));
+		for (const cv of theme.customVariants) {
+			if (resolveVariant(cv.name, theme, customVariantMap) === null) continue;
+			out.push({ name: cv.name, kind: "custom", wraps: cv.selector });
+		}
+	}
+	out.push(...VARIANT_PATTERNS);
+	return out;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

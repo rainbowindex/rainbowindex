@@ -459,12 +459,24 @@ function canonicalVariantPrefix(variantPrefix: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Optional trace for mergeUncached — filled only when a caller (analyzeMerge)
+ * provides one, so the ri() hot path pays a single falsy check per property.
+ */
+interface MergeTrace {
+	/** Claim key (namespace + property) → index of the class that claimed it. */
+	claimers: Map<string, number>;
+	/** Dropped classes in scan order with the indices that dominated them. */
+	dropped: Array<{ index: number; overriddenBy: number[] }>;
+}
+
+/**
  * Core merge algorithm shared by ri() and createRi().
  * Right-to-left scan: rightmost class wins conflicts.
  */
 function mergeUncached(
-	classes: string[],
+	classes: readonly string[],
 	resolve: (utility: string) => readonly string[] | null,
+	trace?: MergeTrace,
 ): string {
 	const claimed = new Set<string>();
 	const result: string[] = [];
@@ -505,17 +517,34 @@ function mergeUncached(
 				break;
 			}
 		}
-		if (dominated) continue;
+		if (dominated) {
+			if (trace) {
+				// Attribute the drop: every property was claimed, so each claim
+				// key has a recorded owner. Multiple owners are legitimate —
+				// px-4 + py-4 jointly dominate p-2.
+				const by = new Set<number>();
+				for (const prop of props) {
+					const claimer = trace.claimers.get(ns + prop);
+					if (claimer !== undefined) by.add(claimer);
+				}
+				trace.dropped.push({ index: i, overriddenBy: [...by].sort((a, b) => a - b) });
+			}
+			continue;
+		}
 
 		// Claim this class's CSS properties + expand shorthands
 		for (const prop of props) {
-			claimed.add(ns + prop);
+			const key = ns + prop;
+			if (trace && !claimed.has(key)) trace.claimers.set(key, i);
+			claimed.add(key);
 			// If this is a shorthand, also claim all its longhands.
 			// OVERRIDES is null-prototype, so one bare lookup is own-key safe.
 			const longhands = OVERRIDES[prop];
 			if (longhands !== undefined) {
 				for (const lh of longhands) {
-					claimed.add(ns + lh);
+					const longhandKey = ns + lh;
+					if (trace && !claimed.has(longhandKey)) trace.claimers.set(longhandKey, i);
+					claimed.add(longhandKey);
 				}
 			}
 		}
@@ -710,6 +739,75 @@ export function createRi(snapshot?: CompilationSnapshot): (...inputs: ClassInput
 
 	return function boundRi(...inputs: ClassInput[]): string {
 		return mergeFrom(inputs, resolve, cache);
+	};
+}
+
+export interface MergeDrop {
+	index: number;
+	className: string;
+	/** Ascending indices of the surviving classes that together claimed every
+	 *  CSS property this class sets (px-4 + py-4 jointly dominate p-2). */
+	overriddenBy: number[];
+}
+
+export interface MergeAnalysis {
+	/** The merged output — identical to ri()'s result for this token list. */
+	output: string;
+	/** Indices of surviving classes, ascending. */
+	kept: number[];
+	/** Dropped classes with attribution, ascending by index. */
+	dropped: MergeDrop[];
+}
+
+/**
+ * Explain ri()'s conflict resolution for a list of class tokens — which
+ * classes the right-most-wins scan drops, and which survivors claimed their
+ * properties. Powers "this class is overridden" editor diagnostics.
+ *
+ * Unlike ri(), the input is pre-tokenized: one class per element, no falsy
+ * filtering, no whitespace splitting — exactly the token list an editor
+ * extracts from one class attribute. `snapshot` binds custom utilities, text
+ * sizes, and color names the same way createRi(snapshot) does (editors build
+ * one with createThemeSnapshot()); without it, the module-level state of the
+ * most recent compile applies. Uncached — call sites own their memoization.
+ */
+export function analyzeMerge(
+	classes: readonly string[],
+	snapshot?: CompilationSnapshot,
+): MergeAnalysis {
+	const snap = snapshot ??
+		_latestSnapshot ?? {
+			customStaticProps: _customStaticProps,
+			textSizes: _textSizes,
+			fontFamilies: _fontFamilies,
+			colorNames: _colorNames,
+		};
+	const resolve = (utility: string) =>
+		resolvePropsWith(
+			utility,
+			snap.customStaticProps,
+			snap.textSizes,
+			snap.fontFamilies,
+			snap.colorNames,
+		);
+
+	const trace: MergeTrace = { claimers: new Map(), dropped: [] };
+	const output = mergeUncached(classes, resolve, trace);
+
+	trace.dropped.sort((a, b) => a.index - b.index);
+	const droppedIndexes = new Set(trace.dropped.map((d) => d.index));
+	const kept: number[] = [];
+	for (let i = 0; i < classes.length; i++) {
+		if (!droppedIndexes.has(i)) kept.push(i);
+	}
+	return {
+		output,
+		kept,
+		dropped: trace.dropped.map((d) => ({
+			index: d.index,
+			className: classes[d.index],
+			overriddenBy: d.overriddenBy,
+		})),
 	};
 }
 
