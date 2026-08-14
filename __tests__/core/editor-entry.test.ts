@@ -21,6 +21,7 @@ describe("rainbowindex/editor entry", () => {
 		expect(version).toBe("0.0.0-dev");
 		expect(EDITOR_API_VERSION).toBe(1);
 		expect(editorCapabilities).toContain("class-candidates");
+		expect(editorCapabilities).toContain("candidate-call-ids");
 		expect(editorCapabilities).toContain("css-entry-detection");
 		expect(editorCapabilities).toContain("theme-analysis");
 		expect(editorCapabilities).toContain("class-inspection");

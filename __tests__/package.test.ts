@@ -39,7 +39,8 @@ describe("package entrypoints", () => {
 		expect(existsSync(resolve(process.cwd(), "dist/vite.mjs"))).toBe(true);
 		expect(existsSync(resolve(process.cwd(), "dist/editor.mjs"))).toBe(true);
 
-		expect(pkg.bin.rainbowindex).toBe("./dist/cli.mjs");
+		expect(pkg.bin.rainbowindex).toBe("dist/cli.mjs");
+		expect(existsSync(resolve(process.cwd(), "dist/cli.mjs"))).toBe(true);
 		expect(existsSync(resolve(process.cwd(), "dist/index.css"))).toBe(true);
 	});
 });

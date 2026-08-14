@@ -46,6 +46,7 @@ const CLASS_HELPERS = [
 	"classnames",
 	"classNames",
 	"cx",
+	"ri",
 	"twJoin",
 	"twMerge",
 ] as const;
@@ -113,6 +114,14 @@ export interface ClassCandidate {
 	origin: CandidateOrigin;
 	/** The call the class was found in, when origin is "helper"/"safelist". */
 	helperName?: string;
+	/** Identity of the innermost scanned helper/safelist call context:
+	 *  candidates from the same call share one id, distinct calls get distinct
+	 *  ids. A class helper nested inside another class helper's arguments is
+	 *  not scanned as its own call — its literals belong to the outer call —
+	 *  while a class helper inside a cva/tv config does get its own id. Ids
+	 *  are only comparable within one extraction's result. Absent for
+	 *  attribute/plain candidates. */
+	callId?: number;
 	/** For variant-group members: span of the group's variant prefix (`hover:`). */
 	groupPrefix?: { start: number; end: number };
 }
@@ -157,6 +166,9 @@ interface CandidateContext {
 	end: number;
 	origin: CandidateOrigin;
 	helper: string | null;
+	/** Position in the contexts array — doubles as the call identity that
+	 *  helper/safelist candidates surface as `callId`. */
+	id: number;
 }
 
 /**
@@ -190,7 +202,13 @@ class CandidateCollector implements CandidateSink {
 
 	markContext(start: number, end: number): void {
 		if (this.origin === "plain" || end <= start) return;
-		this.contexts.push({ start, end, origin: this.origin, helper: this.helperName });
+		this.contexts.push({
+			start,
+			end,
+			origin: this.origin,
+			helper: this.helperName,
+			id: this.contexts.length,
+		});
 	}
 
 	add(value: string, start: number, end: number, prefixStart: number, prefixEnd: number): void {
@@ -224,6 +242,11 @@ class CandidateCollector implements CandidateSink {
 				if (best) {
 					candidate.origin = best.origin;
 					if (best.helper) candidate.helperName = best.helper;
+					// A helper/safelist context is one call's argument list, so
+					// its id is the call identity merge tooling groups by.
+					if (best.origin === "helper" || best.origin === "safelist") {
+						candidate.callId = best.id;
+					}
 				}
 			}
 		}

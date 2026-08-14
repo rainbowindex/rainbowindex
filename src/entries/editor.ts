@@ -24,6 +24,7 @@ export const EDITOR_API_VERSION = 1;
 /** Feature-detection roster for this entry. */
 export const editorCapabilities: readonly string[] = Object.freeze([
 	"class-candidates",
+	"candidate-call-ids",
 	"css-entry-detection",
 	"theme-analysis",
 	"class-inspection",

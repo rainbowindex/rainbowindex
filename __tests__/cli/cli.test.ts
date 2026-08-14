@@ -244,6 +244,11 @@ describe("CLI build", () => {
 		expect(output).not.toContain("/* preflight:");
 	});
 
+	test("--optimize is accepted as a --minify alias", () => {
+		const output = runCLI("src/**/*.tsx", "--css", "src/styles.css", "--optimize");
+		expect(output).not.toContain("/* preflight:");
+	});
+
 	test("minify preserves required math whitespace in nested functions", () => {
 		writeFileSync(join(testDir, "src/math.css"), `.calc { width: calc(var(--foo) - 1rem); }`);
 		const output = runCLI("src/**/*.tsx", "--css", "src/math.css", "--minify");

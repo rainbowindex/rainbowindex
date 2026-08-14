@@ -16,6 +16,7 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
+import { enumerateClassNames } from "../utilities/enumerate.js";
 import { STATIC_UTILITIES } from "../utilities/metadata.js";
 import { parseUtility, type ParsedUtility } from "../utilities/parser.js";
 import type { CSSDeclaration } from "../utilities/index.js";
@@ -104,14 +105,18 @@ export function createClassInspector(theme: ResolvedTheme): ClassInspector {
 	}
 
 	/** Whole-name suggestion corpus: built-in statics + custom static
-	 *  utilities. Functional values (bg-blue-500 …) join via enumeration in a
-	 *  later phase — until then value typos simply get no suggestion. */
+	 *  utilities + the enumerated completion universe, so value typos
+	 *  (bg-blu-500) suggest their concrete neighbor. Built lazily on the first
+	 *  unknown-utility miss — enumeration walks the whole value-space table —
+	 *  and kept for the inspector's lifetime, which is one theme by contract. */
 	function utilitySuggestionCorpus(): string[] {
 		if (!utilityCorpus) {
-			utilityCorpus = [
-				...STATIC_UTILITIES,
-				...theme.customUtilities.filter((u) => !u.functional).map((u) => u.name),
-			];
+			const names = new Set<string>(STATIC_UTILITIES);
+			for (const custom of theme.customUtilities) {
+				if (!custom.functional) names.add(custom.name);
+			}
+			for (const entry of enumerateClassNames(theme).classes) names.add(entry.name);
+			utilityCorpus = [...names];
 		}
 		return utilityCorpus;
 	}

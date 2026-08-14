@@ -47,6 +47,15 @@ describe("createClassInspector — validate", () => {
 		expect(result).toMatchObject({ ok: false, reason: "unknown-utility", offender: "felx" });
 	});
 
+	test("functional value typo suggests the enumerated neighbor", () => {
+		expect(inspector.validate("bg-thme-500")).toEqual({
+			ok: false,
+			reason: "unknown-utility",
+			offender: "bg-thme-500",
+			suggestion: "bg-theme-500",
+		});
+	});
+
 	test("unknown utility with no near match gets no suggestion", () => {
 		const result = inspector.validate("definitely-not-a-thing");
 		expect(result).toMatchObject({ ok: false, reason: "unknown-utility" });
@@ -108,6 +117,24 @@ describe("createClassInspector — custom theme", () => {
 			reason: "unknown-utility",
 			offender: "carrd",
 			suggestion: "card",
+		});
+	});
+
+	test("theme-color value typo suggests the enumerated neighbor", () => {
+		expect(inspector.validate("bg-brnd-500")).toEqual({
+			ok: false,
+			reason: "unknown-utility",
+			offender: "bg-brnd-500",
+			suggestion: "bg-brand-500",
+		});
+	});
+
+	test("variant prefix survives a value-typo suggestion lookup", () => {
+		expect(inspector.validate("hover:bg-brnd-500")).toMatchObject({
+			ok: false,
+			reason: "unknown-utility",
+			offender: "bg-brnd-500",
+			suggestion: "bg-brand-500",
 		});
 	});
 });

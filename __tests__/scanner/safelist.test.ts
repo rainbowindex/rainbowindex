@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { safelist } from "../../src/safelist.js";
@@ -118,7 +118,10 @@ describe("discoverPackageSafelistSources", () => {
 	});
 
 	function setupFixture(layout: Record<string, string>): { dir: string; cleanup: () => void } {
-		const dir = join(tmpdir(), `ri-safelist-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const dir = join(
+			realpathSync(tmpdir()),
+			`ri-safelist-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
 		mkdirSync(dir, { recursive: true });
 		for (const [relPath, content] of Object.entries(layout)) {
 			const full = join(dir, relPath);
@@ -350,7 +353,7 @@ describe("discoverPackageSafelistSources", () => {
 		}
 	});
 
-	test("walks up to a parent node_modules (hoisted dep layout)", () => {
+	test("walks up to a parent node_modules (hoisted dep layout)", async () => {
 		// Yarn workspaces / npm workspaces hoist most deps to the workspace
 		// root. The consumer at <root>/app/ has no local node_modules entry
 		// for the hoisted dep — discovery has to walk one level up.
@@ -369,6 +372,12 @@ describe("discoverPackageSafelistSources", () => {
 			const result = discoverPackageSafelistSources(join(dir, "app"));
 			expect(result.sources).toHaveLength(1);
 			expect(result.sources[0]?.pattern).toContain("hoisted/out/*.js");
+			const resolved = await resolveSourceFilesAsync(result.sources, join(dir, "app"));
+			expect(resolved.warnings).toEqual([]);
+			expect(
+				resolved.files.some((f) => f.endsWith("library.js")),
+				`expected hoisted library.js to be scanned — got files: ${resolved.files.join(", ")}`,
+			).toBe(true);
 		} finally {
 			cleanup();
 		}

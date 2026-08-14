@@ -106,7 +106,7 @@ export function parseArgs(
 			i++;
 			continue;
 		}
-		if (arg === "--minify") {
+		if (arg === "--minify" || arg === "--optimize") {
 			opts.minify = true;
 			i++;
 			continue;
@@ -181,7 +181,7 @@ Usage:
 Options:
   -o, --output <file>    Output CSS file path (omit to write to stdout)
   --watch                Re-run on source-file changes (requires --output)
-  --minify               Minify output via LightningCSS
+  --minify               Minify + browser fallbacks via LightningCSS (alias: --optimize)
   --css <file>           CSS input with directives (auto-detected if omitted)
   -h, --help             Show this help
 
@@ -297,7 +297,7 @@ Run \`rainbowindex <subcommand> --help\` for subcommand-specific options.
 Options:
   -o, --output <file>    Output CSS file path
   --watch                Watch for changes
-  --minify               Minify output via LightningCSS
+  --minify               Minify + browser fallbacks via LightningCSS (alias: --optimize)
   --css <file>           CSS file with directives (default: auto-detect)
   --template <name>      Vite template for create (default: react-ts)
   --strict               No string escape hatch in generated types

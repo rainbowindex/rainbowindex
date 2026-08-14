@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildCSS } from "../../src/cli/build.js";
@@ -11,7 +11,7 @@ const tempDirs: string[] = [];
 
 function makeFixture(name: string, layout: Record<string, string>): string {
 	const dir = join(
-		tmpdir(),
+		realpathSync(tmpdir()),
 		`ri-integration-fixes-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 	);
 	mkdirSync(dir, { recursive: true });

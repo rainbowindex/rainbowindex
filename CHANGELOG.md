@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-14
+
+### Added — editor tooling API (phase 2)
+
+- **`ClassCandidate.callId`** — helper/safelist candidates now carry the
+  identity of the call they were collected from: candidates from the same
+  call share one id, distinct calls get distinct ids. This is the grouping
+  key merge tooling needs to run `analyzeMerge()` over one `ri(…)` call's
+  classes without mixing neighbouring calls. Feature-detect via the new
+  `"candidate-call-ids"` entry in `editorCapabilities`.
+- **`ri()` joins the scanned class helpers** — the scanner now walks `ri(…)`
+  calls like `clsx`/`cn`/`twMerge`, so their arguments get `helper` origin,
+  a helper name, and a call id (previously they were only caught by the
+  whole-file literal scan as `plain` candidates). `CLASS_HELPER_NAMES`
+  includes `"ri"` accordingly.
+- **Value typos get suggestions** — the class inspector's suggestion corpus
+  now includes the enumerated completion universe, so `validate()` suggests
+  concrete neighbours for functional-value typos (`bg-blu-500` →
+  `bg-blue-500`, `bg-thme-500` → `bg-theme-500`) instead of staying silent.
+
+### Fixed
+
+- **`--optimize` CLI flag** — the README documented `--optimize` but the CLI
+  rejected it with "Unknown option". It is now accepted as an alias of
+  `--minify` (both run the same LightningCSS minification +
+  browser-fallback pass).
+
 ## [0.2.2] - 2026-08-13
 
 ### Added — editor tooling API (phase 1)

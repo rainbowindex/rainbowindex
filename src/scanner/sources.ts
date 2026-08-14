@@ -75,11 +75,16 @@ function collectPatterns(sources: SourceDirective[]): {
 		}
 		if (src.negated) {
 			excludePatterns.push(src.pattern);
-		} else if (!src.absolute && src.pattern.replace(/^\.\//, "").startsWith("node_modules/")) {
-			// Ignores always beat positives in tinyglobby, so an explicit user
-			// `@source "node_modules/…"` would silently match nothing against
-			// the default node_modules exclude. Resolve these in a second glob
-			// pass that drops only that one exclude.
+		} else if (src.absolute || src.pattern.replace(/^\.\//, "").startsWith("node_modules/")) {
+			// Ignores always beat positives in tinyglobby, so patterns that point
+			// into node_modules would silently match nothing against the default
+			// node_modules exclude. That covers an explicit user
+			// `@source "node_modules/…"` and every auto-discovered dep safelist
+			// (absolute by construction, rooted at the dep's install dir). The
+			// exclude compares paths relative to `cwd`, so it hits whenever the
+			// dep's realpath sits inside the project — the normal npm/yarn/pnpm
+			// layout. Resolve these in a second glob pass that drops only that
+			// one exclude.
 			nodeModulesIncludePatterns.push(src.pattern);
 		} else {
 			includePatterns.push(src.pattern);

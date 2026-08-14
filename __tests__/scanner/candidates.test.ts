@@ -264,6 +264,63 @@ describe("candidate origins", () => {
 	});
 });
 
+describe("candidate call ids", () => {
+	test("tokens in one call share an id; separate calls get distinct ids", () => {
+		const content = `const a = ri("px-2 px-4");\nconst b = clsx("mt-1");`;
+		const candidates = extractClassCandidates({ path: "a.ts", content });
+		const px2 = byValue(candidates, "px-2");
+		const px4 = byValue(candidates, "px-4");
+		const mt1 = byValue(candidates, "mt-1");
+		expect(px2.origin).toBe("helper");
+		expect(px2.helperName).toBe("ri");
+		expect(px2.callId).toBeTypeOf("number");
+		expect(px4.callId).toBe(px2.callId);
+		expect(mt1.callId).toBeTypeOf("number");
+		expect(mt1.callId).not.toBe(px2.callId);
+	});
+
+	test("a class helper nested in another one belongs to the outer call", () => {
+		const content = `<div className={cn("flex", clsx("underline"))} />`;
+		const candidates = extractClassCandidates({ path: "a.tsx", content });
+		const flex = byValue(candidates, "flex");
+		const underline = byValue(candidates, "underline");
+		expect(flex.helperName).toBe("cn");
+		expect(underline.helperName).toBe("cn");
+		expect(flex.callId).toBeTypeOf("number");
+		expect(underline.callId).toBe(flex.callId);
+	});
+
+	test("a class helper inside a cva config gets its own id", () => {
+		const content = `const v = cva("inline-flex", { variants: { s: { sm: cn("px-2") } } });`;
+		const candidates = extractClassCandidates({ path: "a.ts", content });
+		const base = byValue(candidates, "inline-flex");
+		const nested = byValue(candidates, "px-2");
+		expect(base.helperName).toBe("cva");
+		expect(nested.helperName).toBe("cn");
+		expect(nested.callId).toBeTypeOf("number");
+		expect(nested.callId).not.toBe(base.callId);
+	});
+
+	test("attribute candidates carry no call id", () => {
+		const content = `<div class="flex px-2">`;
+		const candidates = extractClassCandidates({ path: "a.html", content });
+		expect(byValue(candidates, "flex").callId).toBeUndefined();
+		expect(byValue(candidates, "px-2").callId).toBeUndefined();
+	});
+
+	test("safelist calls carry per-call ids", () => {
+		const content = `safelist("bg-theme-500 text-theme-50");\nsafelist("mt-2");`;
+		const candidates = extractClassCandidates({ path: "lib.js", content });
+		const bg = byValue(candidates, "bg-theme-500");
+		const text = byValue(candidates, "text-theme-50");
+		const mt = byValue(candidates, "mt-2");
+		expect(bg.callId).toBeTypeOf("number");
+		expect(text.callId).toBe(bg.callId);
+		expect(mt.callId).toBeTypeOf("number");
+		expect(mt.callId).not.toBe(bg.callId);
+	});
+});
+
 // ---------------------------------------------------------------------------
 // Pruning parity
 // ---------------------------------------------------------------------------

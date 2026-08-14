@@ -80,8 +80,7 @@ Common flags:
 | --- | --- |
 | `-o`, `--output <file>` | Output CSS file path. Required with `--watch`. |
 | `--watch` | Re-run on source-file changes (chokidar). |
-| `--minify` | Minify output via LightningCSS. |
-| `--optimize` | Minification + browser-fallback passes. |
+| `--minify` | Minification + browser-fallback passes via LightningCSS. `--optimize` is an accepted alias. |
 | `--css <file>` | CSS input with directives. Auto-detected if omitted. |
 | `--strict` | Drop the string escape hatch in generated types. |
 | `--template <name>` | Vite template to scaffold (default: `react-ts`). |
