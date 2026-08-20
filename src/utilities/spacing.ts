@@ -4,15 +4,19 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import { fluidBoundExprs, fluidInterpolation } from "../shared.js";
+// Direction maps (logical by default) — shared with the merge's claim tables
+// (merge/props.ts) so the properties this generator emits and the properties
+// ri() claims for conflict resolution can never drift apart.
 import {
-	type UtilityResult,
-	single,
-	multi,
-	spacingLookup,
-	parseRemValue,
-	extractArbitrary,
-} from "./index.js";
+	PADDING_MAP,
+	MARGIN_MAP,
+	GAP_MAP,
+	INSET_MAP,
+	SCROLL_MARGIN_MAP,
+	SCROLL_PADDING_MAP,
+} from "../merge/props.js";
+import { fluidBoundExprs, fluidInterpolation, parseRemValue } from "../css/fluid.js";
+import { type UtilityResult, single, multi, spacingLookup, extractArbitrary } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Value resolution
@@ -64,88 +68,6 @@ function resolveInsetValue(
 	}
 	return resolveSpacing(val, negative, warnings, true);
 }
-
-// ---------------------------------------------------------------------------
-// Direction maps (logical by default)
-// ---------------------------------------------------------------------------
-
-const PADDING_MAP: Readonly<Record<string, string[]>> = Object.freeze({
-	p: ["padding"],
-	px: ["padding-inline"],
-	py: ["padding-block"],
-	pt: ["padding-block-start"],
-	pb: ["padding-block-end"],
-	pl: ["padding-inline-start"],
-	pr: ["padding-inline-end"],
-	ps: ["padding-inline-start"],
-	pe: ["padding-inline-end"],
-	pbs: ["padding-block-start"],
-	pbe: ["padding-block-end"],
-});
-
-const MARGIN_MAP: Readonly<Record<string, string[]>> = Object.freeze({
-	m: ["margin"],
-	mx: ["margin-inline"],
-	my: ["margin-block"],
-	mt: ["margin-block-start"],
-	mb: ["margin-block-end"],
-	ml: ["margin-inline-start"],
-	mr: ["margin-inline-end"],
-	ms: ["margin-inline-start"],
-	me: ["margin-inline-end"],
-	mbs: ["margin-block-start"],
-	mbe: ["margin-block-end"],
-});
-
-const GAP_MAP: Readonly<Record<string, string>> = Object.freeze({
-	gap: "gap",
-	"gap-x": "column-gap",
-	"gap-y": "row-gap",
-});
-
-const INSET_MAP: Readonly<Record<string, string[]>> = Object.freeze({
-	inset: ["inset"],
-	"inset-x": ["inset-inline"],
-	"inset-y": ["inset-block"],
-	top: ["inset-block-start"],
-	bottom: ["inset-block-end"],
-	left: ["inset-inline-start"],
-	right: ["inset-inline-end"],
-	start: ["inset-inline-start"],
-	end: ["inset-inline-end"],
-	"inset-s": ["inset-inline-start"],
-	"inset-e": ["inset-inline-end"],
-	"inset-bs": ["inset-block-start"],
-	"inset-be": ["inset-block-end"],
-});
-
-const SCROLL_MARGIN_MAP: Readonly<Record<string, string[]>> = Object.freeze({
-	"scroll-m": ["scroll-margin"],
-	"scroll-mx": ["scroll-margin-inline"],
-	"scroll-my": ["scroll-margin-block"],
-	"scroll-mt": ["scroll-margin-block-start"],
-	"scroll-mb": ["scroll-margin-block-end"],
-	"scroll-ml": ["scroll-margin-inline-start"],
-	"scroll-mr": ["scroll-margin-inline-end"],
-	"scroll-ms": ["scroll-margin-inline-start"],
-	"scroll-me": ["scroll-margin-inline-end"],
-	"scroll-mbs": ["scroll-margin-block-start"],
-	"scroll-mbe": ["scroll-margin-block-end"],
-});
-
-const SCROLL_PADDING_MAP: Readonly<Record<string, string[]>> = Object.freeze({
-	"scroll-p": ["scroll-padding"],
-	"scroll-px": ["scroll-padding-inline"],
-	"scroll-py": ["scroll-padding-block"],
-	"scroll-pt": ["scroll-padding-block-start"],
-	"scroll-pb": ["scroll-padding-block-end"],
-	"scroll-pl": ["scroll-padding-inline-start"],
-	"scroll-pr": ["scroll-padding-inline-end"],
-	"scroll-ps": ["scroll-padding-inline-start"],
-	"scroll-pe": ["scroll-padding-inline-end"],
-	"scroll-pbs": ["scroll-padding-block-start"],
-	"scroll-pbe": ["scroll-padding-block-end"],
-});
 
 // ---------------------------------------------------------------------------
 // Fluid Spacing — `X-fluid-{n}` reuses the base direction maps above, so the
@@ -231,10 +153,11 @@ function resolveFluidSpacing(
 		return multi(...MARGIN_MAP[basePrefix].map((p) => [p, finalValue] as [string, string]));
 	}
 
-	// Gap (negative gap is invalid CSS — reject)
+	// Gap (negative gap is invalid CSS — reject). The shared map is
+	// array-valued; gap families are always single-property.
 	if (Object.hasOwn(GAP_MAP, basePrefix)) {
 		if (negative) return null;
-		return single(GAP_MAP[basePrefix], clampValue);
+		return single(GAP_MAP[basePrefix][0], clampValue);
 	}
 
 	// Inset
@@ -252,6 +175,9 @@ function resolveFluidSpacing(
 export function spacingGenerator(
 	utility: string,
 	value: string | null,
+	// The one generator that wants the split (prefix, value) form, not the
+	// reassembled class name.
+	_full: string,
 	negative: boolean,
 	theme: ResolvedTheme,
 	warnings?: string[],
@@ -332,7 +258,7 @@ export function spacingGenerator(
 		if (negative) return null;
 		const resolved = resolveSpacing(val, negative, warnings, false);
 		if (resolved === null) return null;
-		return single(GAP_MAP[prefix], resolved);
+		return single(GAP_MAP[prefix][0], resolved);
 	}
 
 	// Inset (fraction-aware: inset-1/2 → calc(1/2 * 100%))

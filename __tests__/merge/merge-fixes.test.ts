@@ -6,12 +6,11 @@
  */
 import { afterEach, describe, expect, test } from "vitest";
 import {
-	ri,
-	createRi,
 	createCompilationContext,
 	registerColorNames,
 	finalizeCompilationContext,
-} from "../../src/merge/index.js";
+} from "../../src/merge/context.js";
+import { ri, createRi } from "../../src/merge/index.js";
 import { createCompiler } from "../../src/engine/index.js";
 import { resolveDirectives, type ResolvedTheme } from "../../src/directives/index.js";
 

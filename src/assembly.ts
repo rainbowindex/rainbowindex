@@ -333,8 +333,9 @@ export function assembleSections(
 	compilation: CompilationResult,
 	theme: ResolvedTheme,
 	fontOutputCache: Map<string, FontOutput>,
-): { sections: string[]; fontImports: string[]; warnings: string[] } {
-	const sections: string[] = [];
+): { sections: string[]; warnings: string[] } {
+	/** Everything between imports and utilities, in canonical order. */
+	const baseSections: string[] = [];
 	const fontImports: string[] = [];
 	const fontFaceBlocks: string[] = [];
 	/** Warnings collected during assembly — returned separately to avoid
@@ -364,25 +365,23 @@ export function assembleSections(
 			}
 		}
 	}
-	if (fontImports.length > 0) {
-		sections.push(fontImports.join("\n"));
-	}
+	const importsSection: string | null = fontImports.length > 0 ? fontImports.join("\n") : null;
 
 	// @property declarations — user @register rules merged with engine-generated
 	// blocks, deduped by name.
 	const propertyBlocks = collectPropertyBlocks(theme.registeredProperties, compilation.properties);
 	if (propertyBlocks.length > 0) {
-		sections.push(propertyBlocks.join("\n\n"));
+		baseSections.push(propertyBlocks.join("\n\n"));
 	}
 
 	// @font-face blocks (local/metrics fallbacks only)
 	if (fontFaceBlocks.length > 0) {
-		sections.push(fontFaceBlocks.join("\n\n"));
+		baseSections.push(fontFaceBlocks.join("\n\n"));
 	}
 
 	// Token layer (:root)
 	const tokenLayer = generateTokenLayer(theme, compilation, fontOutputCache);
-	if (tokenLayer) sections.push(tokenLayer);
+	if (tokenLayer) baseSections.push(tokenLayer);
 
 	// APCA contrast warnings — fired for stops that fail the medium-text threshold
 	// against both --color-paper and --color-ink. Catches genuinely-unusable text
@@ -397,7 +396,7 @@ export function assembleSections(
 		compilation.usedColorStops.get("theme"),
 	);
 	if (themeOverrides.length > 0) {
-		sections.push(themeOverrides.join("\n\n"));
+		baseSections.push(themeOverrides.join("\n\n"));
 	}
 
 	// Corner-shape + fallback compensation block. Gated only on whether an @rounded
@@ -408,16 +407,16 @@ export function assembleSections(
 	// shape for numeric/arbitrary radii and for @apply. The block is small and the
 	// directive is an explicit opt-in, so emit it whenever a shape is set.
 	const cornerShape = generateCornerShapeBlock(theme);
-	if (cornerShape) sections.push(cornerShape);
+	if (cornerShape) baseSections.push(cornerShape);
 
 	// @keyframes
 	if (compilation.keyframes.length > 0) {
-		sections.push(compilation.keyframes.join("\n\n"));
+		baseSections.push(compilation.keyframes.join("\n\n"));
 	}
 
 	// Preflight
 	const preflight = generatePreflight(theme.preflight);
-	if (preflight) sections.push(preflight);
+	if (preflight) baseSections.push(preflight);
 
 	// Utility rules
 	const utilityCSS = renderCSS({
@@ -425,19 +424,39 @@ export function assembleSections(
 		properties: [],
 		keyframes: [],
 	});
-	if (utilityCSS) sections.push(utilityCSS);
+	const utilitiesSection: string | null = utilityCSS !== "" ? utilityCSS : null;
 
-	// Apply @layer wrapping if configured
-	if (theme.layer) {
-		applyLayerWrapping(sections, fontImports, theme.layer, utilityCSS !== "");
-	}
+	const parts: SectionParts = {
+		imports: importsSection,
+		base: baseSections,
+		utilities: utilitiesSection,
+	};
+	const sections = theme.layer
+		? applyLayerWrapping(parts, theme.layer)
+		: [
+				...(importsSection !== null ? [importsSection] : []),
+				...baseSections,
+				...(utilitiesSection !== null ? [utilitiesSection] : []),
+			];
 
-	return { sections, fontImports, warnings: assemblyWarnings };
+	return { sections, warnings: assemblyWarnings };
 }
 
 // ---------------------------------------------------------------------------
 // @layer wrapping
 // ---------------------------------------------------------------------------
+
+/**
+ * Assembled output with section identity kept explicit — imports must stay
+ * outside any @layer block (CSS spec) and utilities may be wrapped in their
+ * own layer, so the wrapper receives the named parts instead of inferring
+ * them positionally from a flat section list.
+ */
+interface SectionParts {
+	imports: string | null;
+	base: string[];
+	utilities: string | null;
+}
 
 function wrapInLayer(content: string, layerName: string): string {
 	const indented = content.replace(/^(?=.)/gm, "  ");
@@ -445,61 +464,48 @@ function wrapInLayer(content: string, layerName: string): string {
 }
 
 function applyLayerWrapping(
-	sections: string[],
-	fontImports: string[],
+	parts: SectionParts,
 	layer: NonNullable<ResolvedTheme["layer"]>,
-	hasUtilitySection: boolean,
-): void {
+): string[] {
+	const sections: string[] = [];
 	// @import rules must never be inside @layer blocks (CSS spec).
-	// Font imports are always the first section when present.
-	const hasImportSection = fontImports.length > 0 && sections.length > 0;
-	const importSection = hasImportSection ? sections[0] : null;
-	const contentSections = hasImportSection ? sections.slice(1) : [...sections];
+	if (parts.imports !== null) sections.push(parts.imports);
 
 	if (layer.wrapAll) {
 		// Simple form: wrap all content (except imports) in one layer
-		const joined = contentSections.join("\n\n");
-		sections.length = 0;
-		if (importSection) sections.push(importSection);
 		sections.push(`@layer ${layer.wrapAll};`);
+		const joined = [...parts.base, ...(parts.utilities !== null ? [parts.utilities] : [])].join(
+			"\n\n",
+		);
 		if (joined) sections.push(wrapInLayer(joined, layer.wrapAll));
-		return;
+		return sections;
 	}
 
 	// Configured form: wrap base and/or utilities separately.
-	// The utility section is the last one ONLY when utility CSS was emitted —
-	// popping unconditionally would wrap preflight/tokens in layer.utilities
-	// for zero-rule compilations.
-	const utilitySection = hasUtilitySection ? (contentSections.pop() ?? null) : null;
-	const baseSections = contentSections;
-
-	const finalSections: string[] = [];
-	if (importSection) finalSections.push(importSection);
 
 	// Emit layer order declaration
 	if (layer.order && layer.order.length > 0) {
-		finalSections.push(`@layer ${layer.order.join(", ")};`);
+		sections.push(`@layer ${layer.order.join(", ")};`);
 	}
 
 	// Wrap base sections
-	if (baseSections.length > 0) {
-		const baseJoined = baseSections.join("\n\n");
+	if (parts.base.length > 0) {
+		const baseJoined = parts.base.join("\n\n");
 		if (layer.base) {
-			finalSections.push(wrapInLayer(baseJoined, layer.base));
+			sections.push(wrapInLayer(baseJoined, layer.base));
 		} else {
-			finalSections.push(baseJoined);
+			sections.push(baseJoined);
 		}
 	}
 
 	// Wrap utility section
-	if (utilitySection) {
+	if (parts.utilities !== null) {
 		if (layer.utilities) {
-			finalSections.push(wrapInLayer(utilitySection, layer.utilities));
+			sections.push(wrapInLayer(parts.utilities, layer.utilities));
 		} else {
-			finalSections.push(utilitySection);
+			sections.push(parts.utilities);
 		}
 	}
 
-	sections.length = 0;
-	sections.push(...finalSections);
+	return sections;
 }

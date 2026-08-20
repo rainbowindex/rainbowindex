@@ -6,10 +6,11 @@
  * root), then every candidate is probed through the real utility resolver.
  * The resolver is the single authority — an enumerated class is one that
  * actually compiles, so the table can over-approximate freely and can never
- * emit something `validate()` would reject. Coverage is enforced the other
- * way by tests: every PREFIX_DISPATCH root must appear in the table (an empty
- * spec marks a statics-only root), so adding a generator root without
- * deciding its value space fails CI.
+ * emit something `validate()` would reject. Coverage is structural: the table
+ * derives from ROOT_GROUPS (roots.ts), where `spec` is a required field of
+ * every row — adding a root forces deciding its value space in the same row
+ * (an empty spec marks a statics-only root); the CI check in enumerate.test.ts
+ * stays on as a regression tripwire.
  *
  * Statics come from the merge conflict tables (STATIC_UTILITIES) plus each
  * generator's own static-map keys — probed too, for the same guarantee.
@@ -19,11 +20,13 @@ import type { ResolvedTheme } from "../directives/foundation.js";
 import { codepointCompare } from "../shared.js";
 import { SPECIAL_COLORS } from "../merge/props.js";
 import { parseUtility } from "./parser.js";
+import { ROOT_GROUPS, SPACING_SAMPLES, type ValueSpaceKind, type ValueSpaceSpec } from "./roots.js";
 import { resolveUtilityDeclarations, PREFIX_DISPATCH } from "./index.js";
 import { STATIC_UTILITIES } from "./metadata.js";
 import { ANIMATION_STATIC_NAMES } from "./animations.js";
 import { BORDER_STATIC_NAMES, ROUNDED_CORNER_NAMES, ROUNDED_SIDE_NAMES } from "./borders.js";
-import { BACKGROUND_STATIC_NAMES, EFFECTS_STATIC_NAMES } from "./effects.js";
+import { BACKGROUND_STATIC_NAMES } from "./background.js";
+import { EFFECTS_STATIC_NAMES } from "./effects/index.js";
 import { LAYOUT_STATIC_NAMES } from "./layout.js";
 import { SVG_STATIC_NAMES } from "./svg.js";
 import { TYPOGRAPHY_STATIC_NAMES } from "./typography.js";
@@ -32,36 +35,9 @@ import { TYPOGRAPHY_STATIC_NAMES } from "./typography.js";
 // Value spaces
 // ---------------------------------------------------------------------------
 
-export type ValueSpaceKind =
-	| "color"
-	| "special-color"
-	| "spacing"
-	| "fraction"
-	| "text-size"
-	| "fluid-text-size"
-	| "font-slot"
-	| "weight"
-	| "rounded"
-	| "rounded-side"
-	| "shadow"
-	| "z"
-	| "ease"
-	| "blur"
-	| "animation"
-	| "leading"
-	| "tracking"
-	| "opacity"
-	| "duration"
-	| "breakpoint"
-	| "int"
-	| "percent"
-	| "keywords";
-
-export interface ValueSpaceSpec {
-	kinds: readonly ValueSpaceKind[];
-	/** Extra value parts to try verbatim (for "keywords" and beyond). */
-	keywords?: readonly string[];
-}
+// The kind/spec vocabulary lives with the registration table in roots.ts;
+// re-exported here so the editor entry's public surface is unchanged.
+export type { ValueSpaceKind, ValueSpaceSpec } from "./roots.js";
 
 /** Color stop suffixes — mirrors isValidColorSuffix / the ColorStop type. */
 const COLOR_STOPS = Object.freeze([
@@ -84,27 +60,6 @@ const COLOR_STOPS = Object.freeze([
 	"850",
 	"900",
 	"950",
-]);
-
-/** Common spacing-scale steps to enumerate concretely; the space itself is
- *  infinite (`${number}`, underscores for decimals) — see templates. */
-const SPACING_SAMPLES = Object.freeze([
-	"0",
-	"1",
-	"1_5",
-	"2",
-	"2_5",
-	"3",
-	"4",
-	"5",
-	"6",
-	"8",
-	"10",
-	"12",
-	"16",
-	"20",
-	"24",
-	"px",
 ]);
 
 const FRACTION_SAMPLES = Object.freeze([
@@ -155,443 +110,9 @@ const ROUNDED_SIDES: readonly string[] = Object.freeze([
 	...ROUNDED_CORNER_NAMES,
 ]);
 
-/** Table groups mirror PREFIX_GROUPS' shape: roots sharing one spec. Roots
- *  appearing in several groups get their kinds/keywords merged. */
-const SPEC_GROUPS: ReadonlyArray<readonly [readonly string[], ValueSpaceSpec]> = [
-	// Spacing family — the scale is shared; sides/axes are distinct roots.
-	[
-		[
-			"p",
-			"px",
-			"py",
-			"pt",
-			"pb",
-			"pl",
-			"pr",
-			"ps",
-			"pe",
-			"pbs",
-			"pbe",
-			"m",
-			"mx",
-			"my",
-			"mt",
-			"mb",
-			"ml",
-			"mr",
-			"ms",
-			"me",
-			"mbs",
-			"mbe",
-			"gap",
-			"gap-x",
-			"gap-y",
-			"space",
-			"space-x",
-			"space-y",
-			"scroll",
-			"scroll-m",
-			"scroll-mx",
-			"scroll-my",
-			"scroll-mt",
-			"scroll-mb",
-			"scroll-ml",
-			"scroll-mr",
-			"scroll-ms",
-			"scroll-me",
-			"scroll-p",
-			"scroll-px",
-			"scroll-py",
-			"scroll-pt",
-			"scroll-pb",
-			"scroll-pl",
-			"scroll-pr",
-			"scroll-ps",
-			"scroll-pe",
-			"indent",
-		],
-		{ kinds: ["spacing"] },
-	],
-	[
-		[
-			"inset",
-			"inset-x",
-			"inset-y",
-			"inset-s",
-			"inset-e",
-			"inset-bs",
-			"inset-be",
-			"top",
-			"bottom",
-			"left",
-			"right",
-			"start",
-			"end",
-		],
-		{ kinds: ["spacing", "fraction"], keywords: ["auto", "full"] },
-	],
-	// Sizing
-	[
-		[
-			"w",
-			"h",
-			"size",
-			"min",
-			"max",
-			"min-w",
-			"max-w",
-			"min-h",
-			"max-h",
-			"inline",
-			"block",
-			"basis",
-		],
-		{ kinds: ["spacing", "fraction"] },
-	],
-	[["max-w", "basis", "columns"], { kinds: ["breakpoint"] }],
-	// Typography
-	[["text"], { kinds: ["text-size", "fluid-text-size", "color", "special-color"] }],
-	[["font"], { kinds: ["font-slot", "weight"] }],
-	[["leading"], { kinds: ["leading", "int"] }],
-	[["tracking"], { kinds: ["tracking"] }],
-	[
-		["decoration"],
-		{
-			kinds: ["color", "special-color", "int", "keywords"],
-			keywords: ["auto", "from-font", "solid", "double", "dotted", "dashed", "wavy"],
-		},
-	],
-	[
-		["underline"],
-		{
-			kinds: ["keywords"],
-			keywords: ["offset-auto", "offset-0", "offset-1", "offset-2", "offset-4", "offset-8"],
-		},
-	],
-	[
-		["line"],
-		{
-			kinds: ["keywords"],
-			keywords: ["clamp-none", "clamp-1", "clamp-2", "clamp-3", "clamp-4", "clamp-5", "clamp-6"],
-		},
-	],
-	[["tab"], { kinds: ["int"] }],
-	[
-		["break"],
-		{
-			kinds: ["keywords"],
-			keywords: ["normal", "words", "all", "keep", "after-avoid", "before-avoid", "inside-avoid"],
-		},
-	],
-	[
-		[
-			"whitespace",
-			"italic",
-			"truncate",
-			"uppercase",
-			"lowercase",
-			"capitalize",
-			"normal",
-			"antialiased",
-			"subpixel",
-			"align",
-			"list",
-			"hyphens",
-			"wrap",
-			"ordinal",
-			"slashed",
-			"lining",
-			"oldstyle",
-			"proportional",
-			"tabular",
-			"diagonal",
-			"stacked",
-		],
-		{ kinds: [] },
-	],
-	// Color-bearing families
-	[["bg", "accent", "caret", "fill"], { kinds: ["color", "special-color"] }],
-	[
-		["bg-linear"],
-		{
-			kinds: ["keywords"],
-			keywords: ["to-t", "to-b", "to-l", "to-r", "to-tl", "to-tr", "to-bl", "to-br"],
-		},
-	],
-	[["bg-conic", "bg-radial"], { kinds: ["int"] }],
-	[["border", "divide"], { kinds: ["color", "special-color", "int"] }],
-	[["stroke"], { kinds: ["color", "special-color", "int"] }],
-	[["from", "via", "to"], { kinds: ["color", "special-color"] }],
-	[
-		["outline"],
-		{
-			kinds: ["color", "special-color", "int", "keywords"],
-			keywords: ["offset-0", "offset-1", "offset-2", "offset-4", "offset-8"],
-		},
-	],
-	// SVG
-	[["stroke-cap"], { kinds: ["keywords"], keywords: ["butt", "round", "square"] }],
-	[["stroke-join"], { kinds: ["keywords"], keywords: ["miter", "round", "bevel"] }],
-	[["stroke-dash", "stroke-offset", "stroke-miter"], { kinds: ["int"] }],
-	[["stroke-opacity"], { kinds: ["opacity", "percent"] }],
-	[["paint", "vector"], { kinds: [] }],
-	// Layout — overwhelmingly statics; functional exceptions below.
-	[
-		[
-			"contents",
-			"hidden",
-			"table",
-			"flow",
-			"static",
-			"relative",
-			"absolute",
-			"fixed",
-			"sticky",
-			"items",
-			"justify",
-			"content",
-			"self",
-			"overflow",
-			"overscroll",
-			"visible",
-			"invisible",
-			"collapse",
-			"isolate",
-			"float",
-			"clear",
-			"object",
-			"cursor",
-			"pointer",
-			"select",
-			"touch",
-			"resize",
-			"scrollbar",
-			"snap",
-			"place",
-			"sr",
-			"box",
-			"caption",
-			"field",
-			"forced",
-			"scheme",
-			"backface",
-			"@container",
-			"@anchor",
-			"@anchor-to",
-			"position-area",
-			"anchor-scope",
-		],
-		{ kinds: [] },
-	],
-	[["flex"], { kinds: ["int", "keywords"], keywords: ["auto", "initial", "none"] }],
-	[
-		["grid"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				...Array.from({ length: 12 }, (_, i) => `cols-${i + 1}`),
-				...Array.from({ length: 6 }, (_, i) => `rows-${i + 1}`),
-				"cols-none",
-				"rows-none",
-				"cols-subgrid",
-				"rows-subgrid",
-			],
-		},
-	],
-	[["grow", "shrink"], { kinds: ["int"] }],
-	[["order"], { kinds: ["int"], keywords: ["first", "last", "none"] }],
-	[
-		["col", "row"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"auto",
-				"span-full",
-				...Array.from({ length: 12 }, (_, i) => `span-${i + 1}`),
-				...Array.from({ length: 13 }, (_, i) => `start-${i + 1}`),
-				...Array.from({ length: 13 }, (_, i) => `end-${i + 1}`),
-			],
-		},
-	],
-	[["columns"], { kinds: ["int"] }],
-	[
-		["auto"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"cols-auto",
-				"cols-min",
-				"cols-max",
-				"cols-fr",
-				"rows-auto",
-				"rows-min",
-				"rows-max",
-				"rows-fr",
-			],
-		},
-	],
-	[["aspect"], { kinds: ["keywords"], keywords: ["auto", "square", "video"] }],
-	[["z"], { kinds: ["z", "int"] }],
-	[
-		["contain"],
-		{
-			kinds: ["keywords"],
-			keywords: ["none", "strict", "content", "size", "inline-size", "layout", "style", "paint"],
-		},
-	],
-	// Borders
-	[["rounded"], { kinds: ["rounded", "rounded-side"] }],
-	[
-		["corner"],
-		{ kinds: ["keywords"], keywords: ["round", "scoop", "bevel", "notch", "square", "squircle"] },
-	],
-	// Effects
-	[["shadow", "text-shadow", "inset-shadow"], { kinds: ["shadow", "color", "special-color"] }],
-	[["ring", "inset-ring"], { kinds: ["int", "color", "special-color"] }],
-	[["opacity"], { kinds: ["opacity", "percent"] }],
-	[
-		["transition"],
-		{ kinds: ["keywords"], keywords: ["all", "colors", "opacity", "shadow", "transform", "none"] },
-	],
-	[["duration", "delay"], { kinds: ["duration", "int"] }],
-	[["ease"], { kinds: ["ease", "keywords"], keywords: ["linear", "in", "out", "in-out"] }],
-	[["transform", "filter", "mask", "origin"], { kinds: [] }],
-	[
-		["mix"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"blend-normal",
-				"blend-multiply",
-				"blend-screen",
-				"blend-overlay",
-				"blend-darken",
-				"blend-lighten",
-				"blend-color-dodge",
-				"blend-color-burn",
-				"blend-hard-light",
-				"blend-soft-light",
-				"blend-difference",
-				"blend-exclusion",
-				"blend-hue",
-				"blend-saturation",
-				"blend-color",
-				"blend-luminosity",
-			],
-		},
-	],
-	[["grayscale", "invert", "sepia"], { kinds: ["percent"] }],
-	[["backdrop"], { kinds: ["keywords"], keywords: ["blur-none", "grayscale", "invert", "sepia"] }],
-	[
-		["translate"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				...SPACING_SAMPLES.flatMap((s) => [`x-${s}`, `y-${s}`, `z-${s}`]),
-				"x-full",
-				"y-full",
-				"x-1/2",
-				"y-1/2",
-			],
-		},
-	],
-	[
-		["rotate", "skew"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"0",
-				"1",
-				"2",
-				"3",
-				"6",
-				"12",
-				"45",
-				"90",
-				"180",
-				...["0", "3", "6", "12", "45", "90"].flatMap((v) => [`x-${v}`, `y-${v}`]),
-			],
-		},
-	],
-	[
-		["scale"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"0",
-				"50",
-				"75",
-				"90",
-				"95",
-				"100",
-				"105",
-				"110",
-				"125",
-				"150",
-				...["0", "50", "75", "90", "95", "100", "105", "110", "125", "150"].flatMap((v) => [
-					`x-${v}`,
-					`y-${v}`,
-				]),
-			],
-		},
-	],
-	[
-		["will"],
-		{
-			kinds: ["keywords"],
-			keywords: ["change-auto", "change-scroll", "change-contents", "change-transform"],
-		},
-	],
-	[["perspective"], { kinds: ["int"], keywords: ["none", "normal"] }],
-	// Animation
-	[["animate"], { kinds: ["animation", "keywords"], keywords: ["none", "in", "out"] }],
-	[
-		["fade", "zoom"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"in",
-				"out",
-				"in-0",
-				"in-50",
-				"in-75",
-				"in-95",
-				"out-0",
-				"out-50",
-				"out-75",
-				"out-95",
-			],
-		},
-	],
-	[
-		["spin"],
-		{
-			kinds: ["keywords"],
-			keywords: ["in", "out", "in-45", "in-90", "in-180", "out-45", "out-90", "out-180"],
-		},
-	],
-	[
-		["slide"],
-		{
-			kinds: ["keywords"],
-			keywords: [
-				"in-from-top",
-				"in-from-bottom",
-				"in-from-left",
-				"in-from-right",
-				"out-to-top",
-				"out-to-bottom",
-				"out-to-left",
-				"out-to-right",
-			],
-		},
-	],
-	[["blur"], { kinds: ["blur"], keywords: ["none"] }],
-];
-
 function buildValueSpaces(): ReadonlyMap<string, ValueSpaceSpec> {
 	const table = new Map<string, { kinds: Set<ValueSpaceKind>; keywords: Set<string> }>();
-	for (const [roots, spec] of SPEC_GROUPS) {
+	for (const { roots, spec } of ROOT_GROUPS) {
 		for (const root of roots) {
 			let entry = table.get(root);
 			if (!entry) {
@@ -612,8 +133,9 @@ function buildValueSpaces(): ReadonlyMap<string, ValueSpaceSpec> {
 	return out;
 }
 
-/** Root → value spaces to try. Coverage of every PREFIX_DISPATCH root is
- *  enforced by __tests__/core/enumerate.test.ts. */
+/** Root → value spaces to try, derived from ROOT_GROUPS. Every
+ *  PREFIX_DISPATCH root is present by construction — both maps are built
+ *  from the same rows. */
 export const UTILITY_VALUE_SPACES: ReadonlyMap<string, ValueSpaceSpec> = buildValueSpaces();
 
 // ---------------------------------------------------------------------------
@@ -759,7 +281,7 @@ export function enumerateClassNames(theme: ResolvedTheme): ClassEnumeration {
 
 	for (const root of PREFIX_DISPATCH.keys()) {
 		const spec = UTILITY_VALUE_SPACES.get(root);
-		if (!spec) continue; // coverage enforced by tests, not at runtime
+		if (!spec) continue; // narrowing guard; presence is structural (see roots.ts)
 		let spacingHit = false;
 		let intHit = false;
 		for (const kind of spec.kinds) {

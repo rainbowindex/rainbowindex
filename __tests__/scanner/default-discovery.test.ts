@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { extractClassesFromSource } from "../../src/scanner/class-extraction.js";
+import { isSourceFile } from "../../src/scanner/source-files.js";
 import {
 	DEFAULT_PATTERNS,
-	extractClassesFromSource,
-	isSourceFile,
 	resolveSourceFilesAsync,
 	scanSourceFilesAsync,
-} from "../../src/scanner/index.js";
+} from "../../src/scanner/sources.js";
 import { buildCSS } from "../../src/cli/build.js";
 import { CSS_CANDIDATES, findCSSFileAsync } from "../../src/cli/css-file.js";
 

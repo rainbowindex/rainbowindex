@@ -398,11 +398,16 @@ describe("parseNestedFontBlock — slot cap warns RI-1216", () => {
 // ---------------------------------------------------------------------------
 
 describe("RI-1035 — invalid keys/names are warn-skipped", () => {
-	it("skips a stray-token @color key", () => {
+	it("warn-skips a colon-less @color fragment without eating later entries", () => {
 		const warnings: string[] = [];
 		const { colors } = parseColorBody("brand 0.18 330; accent: 0.2 100;", warnings);
-		expect(Object.keys(colors)).toHaveLength(0);
-		expect(warnings.some((w) => w.includes("[RI-1035]") && w.includes("@color"))).toBe(true);
+		expect(colors["accent"]).toEqual({ type: "generative", chroma: 0.2, hue: 100 });
+		expect(Object.keys(colors)).toHaveLength(1);
+		expect(
+			warnings.some(
+				(w) => w.includes("[RI-1035]") && w.includes("@color") && w.includes("brand 0.18 330"),
+			),
+		).toBe(true);
 	});
 
 	it("skips an invalid key in a key-value directive, naming the directive", () => {

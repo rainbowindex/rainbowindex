@@ -4,7 +4,7 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import { fluidBoundExprs, fluidInterpolation } from "../shared.js";
+import { fluidBoundExprs, fluidInterpolation, parseRemValue } from "../css/fluid.js";
 import { isFontFamilyValue } from "../merge/props.js";
 import { devWarn } from "../runtime.js";
 import { isBracketedColor } from "./color.js";
@@ -13,12 +13,10 @@ import {
 	single,
 	multi,
 	spacingLookup,
-	parseRemValue,
-	fullName,
 	extractArbitrary,
 	deepFreezeUtilityMap,
 	INTEGER_RE,
-} from "./index.js";
+} from "./helpers.js";
 import { decodeArbitraryValue, sanitizeArbitraryValue } from "./parser.js";
 
 // ---------------------------------------------------------------------------
@@ -290,15 +288,14 @@ function generateFluidText(
 // ---------------------------------------------------------------------------
 
 export function typographyGenerator(
-	utility: string,
-	value: string | null,
+	_utility: string,
+	_value: string | null,
+	full: string,
 	negative: boolean,
 	theme: ResolvedTheme,
 	warnings?: string[],
 	dataType?: string | null,
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// Static utilities
 	if (Object.hasOwn(STATIC_TEXT, full)) return STATIC_TEXT[full];
 

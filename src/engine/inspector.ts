@@ -19,7 +19,7 @@ import type { ResolvedTheme } from "../directives/foundation.js";
 import { enumerateClassNames } from "../utilities/enumerate.js";
 import { STATIC_UTILITIES } from "../utilities/metadata.js";
 import { parseUtility, type ParsedUtility } from "../utilities/parser.js";
-import type { CSSDeclaration } from "../utilities/index.js";
+import type { CSSDeclaration } from "../utilities/helpers.js";
 import { buildBreakpointWeights } from "./ordering.js";
 import { findClosest } from "./suggest.js";
 import { listVariants, type VariantInfo, type VariantWrapper } from "./variants.js";
@@ -97,9 +97,11 @@ export function createClassInspector(theme: ResolvedTheme): ClassInspector {
 	/** Concrete variant names — pattern families can't be typo targets. */
 	function variantSuggestionCorpus(): string[] {
 		if (!variantNames) {
-			variantNames = variants()
-				.filter((v) => v.kind !== "pattern")
-				.map((v) => v.name);
+			const names: string[] = [];
+			for (const v of variants()) {
+				if (v.kind !== "pattern") names.push(v.name);
+			}
+			variantNames = names;
 		}
 		return variantNames;
 	}

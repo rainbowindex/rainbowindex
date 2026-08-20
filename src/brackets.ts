@@ -1,29 +1,10 @@
 /**
- * Bracket-aware scanning primitive shared by merge/index.ts and assembly.ts.
+ * Bracket-aware scanning primitive shared by the merge runtime
+ * (merge/index.ts and merge/resolve.ts).
  *
  * This module has NO Node.js dependencies so it can be safely imported
  * by the browser-shipped merge runtime (the `ri()` export of `rainbowindex`).
  */
-
-// ---------------------------------------------------------------------------
-// LRU batch eviction — shared between assembly and merge
-// ---------------------------------------------------------------------------
-
-/**
- * Evict the oldest 25% of entries from a Map when it reaches `maxSize`.
- * ES6 Map iterates in insertion order, so the first entries are the oldest.
- * Call this BEFORE inserting a new entry.
- */
-export function evictLRU<K, V>(cache: Map<K, V>, maxSize: number): void {
-	if (cache.size < maxSize) return;
-	const evictCount = maxSize >> 2; // 25%
-	let count = 0;
-	for (const key of cache.keys()) {
-		if (count >= evictCount) break;
-		cache.delete(key);
-		count++;
-	}
-}
 
 /**
  * Scan a string character-by-character, tracking `[`/`(` bracket depth and

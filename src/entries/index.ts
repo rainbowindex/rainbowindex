@@ -12,16 +12,15 @@ export type {
 
 export {
 	createCompilationContext,
-	createRi,
-	DEFAULT_TEXT_SIZES,
 	finalizeCompilationContext,
 	registerColorNames,
 	registerCustomFontFamilies,
 	registerCustomTextSizes,
 	registerCustomUtility,
-	ri,
-} from "../merge/index.js";
-export type { CompilationContext, CompilationSnapshot } from "../merge/index.js";
+} from "../merge/context.js";
+export type { CompilationContext, CompilationSnapshot } from "../merge/context.js";
+export { createRi, ri } from "../merge/index.js";
+export { DEFAULT_TEXT_SIZES } from "../merge/resolve.js";
 
 export type {
 	CompileProjectOptions,

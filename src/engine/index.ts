@@ -6,12 +6,8 @@
 
 import { parseUtility, type ParsedUtility } from "../utilities/parser.js";
 import type { ResolvedTheme } from "../directives/foundation.js";
-import {
-	resolveUtilityDeclarations,
-	extractCustomUtilityRootInfo,
-	type CSSDeclaration,
-	type UtilityNestedBlock,
-} from "../utilities/index.js";
+import { resolveUtilityDeclarations, extractCustomUtilityRootInfo } from "../utilities/index.js";
+import type { CSSDeclaration, UtilityNestedBlock } from "../utilities/helpers.js";
 import { buildBreakpointWeights, computeSortKey } from "./ordering.js";
 import {
 	createCompilationContext,
@@ -19,10 +15,10 @@ import {
 	registerCustomTextSizes,
 	registerCustomFontFamilies,
 	registerColorNames,
-	createRi,
-	DEFAULT_TEXT_SIZES,
 	snapshotCompilationContext,
-} from "../merge/index.js";
+} from "../merge/context.js";
+import { createRi } from "../merge/index.js";
+import { DEFAULT_TEXT_SIZES } from "../merge/resolve.js";
 import { pushWarningsDeduped } from "../warnings.js";
 import { escapeSelector } from "../css/escape.js";
 import {
@@ -34,7 +30,8 @@ import {
 	TEXT_VAR_REF_RE,
 } from "../css/token-refs.js";
 import { codepointCompare } from "../shared.js";
-import { resolveVariant, type VariantWrapper } from "./variants.js";
+import { applyVariantWrappers, resolveVariant, type VariantWrapper } from "./variants.js";
+import { SUPPORT_BLOCKS } from "./support-blocks.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -167,9 +164,7 @@ export function compileUtility(
 	}
 
 	// Resolve variants
-	let atRuleOpen = "";
-	let atRuleClose = "";
-	let startingStyleWrap = false;
+	let wrappers: VariantWrapper[] | null = null;
 
 	for (const variant of parsed.variants) {
 		const wrapper = resolveVariant(variant, theme, customVariantMap, variantMemo);
@@ -187,21 +182,24 @@ export function compileUtility(
 			);
 			return null;
 		}
+		if (!wrappers) wrappers = [];
+		wrappers.push(wrapper);
+	}
 
-		if (wrapper.selectorSuffix) {
-			if (wrapper.replaceAmpersand) {
-				selector = wrapper.selectorSuffix.replaceAll("&", selector);
-			} else {
-				selector += wrapper.selectorSuffix;
-			}
-		}
-		if (wrapper.atRule) {
-			atRuleOpen += `${wrapper.atRule} {\n`;
+	// Apply the wrappers via the shared cascade model (also used by @apply's
+	// AST emitter). Skipped entirely for variant-less classes so the hot path
+	// stays allocation-free.
+	let atRuleOpen = "";
+	let atRuleClose = "";
+	let startingStyleWrap = false;
+	if (wrappers) {
+		const applied = applyVariantWrappers(selector, wrappers);
+		selector = applied.selector;
+		for (const atRule of applied.atRules) {
+			atRuleOpen += `${atRule} {\n`;
 			atRuleClose = `}\n${atRuleClose}`;
 		}
-		if (wrapper.startingStyle) {
-			startingStyleWrap = true;
-		}
+		startingStyleWrap = applied.startingStyle;
 	}
 
 	// Build final CSS
@@ -228,117 +226,10 @@ export function compileUtility(
 // Keyframes & @property Generation
 // ---------------------------------------------------------------------------
 
-/** Pre-computed @keyframes blocks for the enter/exit animation system. */
-export const ANIMATION_KEYFRAMES: readonly string[] = Object.freeze([
-	`@keyframes enter {
-  from {
-    opacity: var(--ri-enter-opacity, 1);
-    transform: translate(var(--ri-enter-translate-x, 0), var(--ri-enter-translate-y, 0)) scale(var(--ri-enter-scale, 1)) rotate(var(--ri-enter-rotate, 0));
-    filter: blur(var(--ri-enter-blur, 0));
-  }
-}`,
-	`@keyframes exit {
-  to {
-    opacity: var(--ri-exit-opacity, 1);
-    transform: translate(var(--ri-exit-translate-x, 0), var(--ri-exit-translate-y, 0)) scale(var(--ri-exit-scale, 1)) rotate(var(--ri-exit-rotate, 0));
-    filter: blur(var(--ri-exit-blur, 0));
-  }
-}`,
-]);
-
-/** Pre-computed @property declarations for gradient position variables. */
-const GRADIENT_PROPERTIES: readonly string[] = Object.freeze(
-	(
-		[
-			["--ri-gradient-from-position", '"<length-percentage>"', "0%"],
-			["--ri-gradient-via-position", '"<length-percentage>"', "50%"],
-			["--ri-gradient-to-position", '"<length-percentage>"', "100%"],
-		] as const
-	).map(
-		([name, syntax, initial]) =>
-			`@property ${name} {\n  syntax: ${syntax};\n  inherits: false;\n  initial-value: ${initial};\n}`,
-	),
-);
-
-/**
- * Pre-computed @property declarations for mask gradient stop position variables.
- * Registering 0%/100% defaults lets a lone `mask-*-from-*` or `mask-*-to-*`
- * render correctly when the opposite stop var is never set — mirrors
- * GRADIENT_PROPERTIES. Color/direction/shape/size vars use inline var() fallbacks
- * in utilities/effects.ts instead.
- */
-const MASK_PROPERTIES: readonly string[] = Object.freeze(
-	(
-		[
-			["--ri-mask-linear-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-linear-to-position", '"<length-percentage>"', "100%"],
-			["--ri-mask-top-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-top-to-position", '"<length-percentage>"', "100%"],
-			["--ri-mask-right-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-right-to-position", '"<length-percentage>"', "100%"],
-			["--ri-mask-bottom-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-bottom-to-position", '"<length-percentage>"', "100%"],
-			["--ri-mask-left-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-left-to-position", '"<length-percentage>"', "100%"],
-			["--ri-mask-radial-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-radial-to-position", '"<length-percentage>"', "100%"],
-			["--ri-mask-conic-from-position", '"<length-percentage>"', "0%"],
-			["--ri-mask-conic-to-position", '"<length-percentage>"', "100%"],
-		] as const
-	).map(
-		([name, syntax, initial]) =>
-			`@property ${name} {\n  syntax: ${syntax};\n  inherits: false;\n  initial-value: ${initial};\n}`,
-	),
-);
-
-/**
- * Pre-computed @property declarations for the steady-state translate/scale
- * variables. Registering identity defaults (`0px` for translate, `1` for
- * scale) makes a single-axis class like `-translate-x-full` or `scale-y-50`
- * produce a valid shorthand declaration even when the other axes' custom
- * properties are never set. The inline `var(..., 0)` / `var(..., 1)` fallback
- * in `utilities/effects.ts` is the correctness guarantee in browsers without
- * `@property` support; this block additionally makes each axis independently
- * animatable.
- */
-const TRANSFORM_PROPERTIES: readonly string[] = Object.freeze(
-	(
-		[
-			["--ri-translate-x", '"<length-percentage>"', "0px"],
-			["--ri-translate-y", '"<length-percentage>"', "0px"],
-			["--ri-translate-z", '"<length>"', "0px"],
-			["--ri-scale-x", '"<number>"', "1"],
-			["--ri-scale-y", '"<number>"', "1"],
-			["--ri-scale-z", '"<number>"', "1"],
-		] as const
-	).map(
-		([name, syntax, initial]) =>
-			`@property ${name} {\n  syntax: ${syntax};\n  inherits: false;\n  initial-value: ${initial};\n}`,
-	),
-);
-
-/** Pre-computed @property declarations for animation variables. */
-export const ANIMATION_PROPERTIES: readonly string[] = Object.freeze(
-	(
-		[
-			["--ri-enter-opacity", '"<number>"', "1"],
-			["--ri-enter-scale", '"<number>"', "1"],
-			["--ri-enter-rotate", '"<angle>"', "0deg"],
-			["--ri-enter-translate-x", '"<length-percentage>"', "0px"],
-			["--ri-enter-translate-y", '"<length-percentage>"', "0px"],
-			["--ri-enter-blur", '"<length>"', "0px"],
-			["--ri-exit-opacity", '"<number>"', "1"],
-			["--ri-exit-scale", '"<number>"', "1"],
-			["--ri-exit-rotate", '"<angle>"', "0deg"],
-			["--ri-exit-translate-x", '"<length-percentage>"', "0px"],
-			["--ri-exit-translate-y", '"<length-percentage>"', "0px"],
-			["--ri-exit-blur", '"<length>"', "0px"],
-		] as const
-	).map(
-		([name, syntax, initial]) =>
-			`@property ${name} {\n  syntax: ${syntax};\n  inherits: false;\n  initial-value: ${initial};\n}`,
-	),
-);
+// The @property/@keyframes data and the substring tests that trigger it live
+// in support-blocks.ts — one table shared by the compile loop and
+// scanCSSForTokenUsage so the two detection sites can't drift.
+export { ANIMATION_KEYFRAMES, ANIMATION_PROPERTIES } from "./support-blocks.js";
 
 // Re-export compileCSSFunctions from dedicated module
 export { compileCSSFunctions, hasCSSFunctions } from "../css/functions.js";
@@ -428,33 +319,15 @@ function renderNestedBlock(block: UtilityNestedBlock, indent: string, important:
  */
 export function scanCSSForTokenUsage(css: string, result: CompilationResult): void {
 	scanStringForTokenUsage(css, result);
-	// Detect gradient usage in user CSS (e.g. via @apply) so @property
-	// declarations for gradient positions are emitted even when no gradient
-	// utility class names are scanned from source files.
-	if (
-		css.includes("--ri-gradient-") ||
-		css.includes("linear-gradient(") ||
-		css.includes("radial-gradient(") ||
-		css.includes("conic-gradient(")
-	) {
-		if (!result.properties.some((p) => p.includes("--ri-gradient-from-position"))) {
-			result.properties.push(...GRADIENT_PROPERTIES);
-		}
-	}
-	// Mask gradient stop position vars (same idea as gradients above).
-	if (css.includes("--ri-mask-")) {
-		if (!result.properties.some((p) => p.includes("--ri-mask-linear-from-position"))) {
-			result.properties.push(...MASK_PROPERTIES);
-		}
-	}
-	// Same idea for the steady-state translate / scale axes: register them when
-	// user CSS references the vars directly (substring excludes
-	// `--ri-enter-translate-` and `--ri-exit-translate-`, which have their own
-	// @property block).
-	if (css.includes("--ri-translate-") || css.includes("--ri-scale-")) {
-		if (!result.properties.some((p) => p.includes("--ri-translate-x"))) {
-			result.properties.push(...TRANSFORM_PROPERTIES);
-		}
+	// Detect support-block usage in user CSS (e.g. via @apply) so @property
+	// declarations are emitted even when no matching utility class names are
+	// scanned from source files. The sentinel check dedups against blocks the
+	// compile loop already pushed.
+	for (const block of SUPPORT_BLOCKS) {
+		if (block.compileLoopOnly) continue;
+		if (!block.test(css)) continue;
+		if (result.properties.some((p) => p.includes(block.sentinel))) continue;
+		result.properties.push(...block.properties);
 	}
 }
 
@@ -517,9 +390,10 @@ export function registerThemeOnContext(
 		(name) => !BUILTIN_TEXT_SIZES.has(name),
 	);
 	if (customTextSizeNames.length > 0) registerCustomTextSizes(ctx, customTextSizeNames);
-	const customFontSlots = theme.fonts
-		.map((f) => f.slot)
-		.filter((s) => s !== "sans" && s !== "serif" && s !== "mono");
+	const customFontSlots: string[] = [];
+	for (const f of theme.fonts) {
+		if (f.slot !== "sans" && f.slot !== "serif" && f.slot !== "mono") customFontSlots.push(f.slot);
+	}
 	if (customFontSlots.length > 0) registerCustomFontFamilies(ctx, customFontSlots);
 	registerColorNames(ctx, Object.keys(theme.colors));
 	for (const cu of theme.customUtilities) {
@@ -550,7 +424,7 @@ export function registerThemeOnContext(
  */
 export function createThemeSnapshot(
 	theme: ResolvedTheme,
-): import("../merge/index.js").CompilationSnapshot {
+): import("../merge/context.js").CompilationSnapshot {
 	const ctx = createCompilationContext();
 	registerThemeOnContext(ctx, theme);
 	return snapshotCompilationContext(ctx);
@@ -585,10 +459,10 @@ function compileInternal(
 	const variantMemo = new Map<string, VariantWrapper | null>();
 
 	const seen = new Set<string>();
-	let needsAnimationKeyframes = false;
-	let needsGradientProperties = false;
-	let needsTransformProperties = false;
-	let needsMaskProperties = false;
+	// One slot per SUPPORT_BLOCKS row — set once, then short-circuited, so each
+	// row's substring test runs at most until its first match (same behavior as
+	// the former per-family boolean flags).
+	const supportNeeded: boolean[] = new Array(SUPPORT_BLOCKS.length).fill(false);
 
 	for (const raw of classNames) {
 		if (seen.has(raw)) continue;
@@ -623,35 +497,12 @@ function compileInternal(
 
 		result.rules.push(compiled);
 
-		if (
-			!needsAnimationKeyframes &&
-			(parsed.utility === "animate-in" ||
-				parsed.utility === "animate-out" ||
-				compiled.css.includes("--ri-enter-") ||
-				compiled.css.includes("--ri-exit-"))
-		) {
-			needsAnimationKeyframes = true;
-		}
-
-		if (
-			!needsGradientProperties &&
-			(compiled.css.includes("--ri-gradient-") ||
-				compiled.css.includes("linear-gradient(") ||
-				compiled.css.includes("radial-gradient(") ||
-				compiled.css.includes("conic-gradient("))
-		) {
-			needsGradientProperties = true;
-		}
-
-		if (!needsMaskProperties && compiled.css.includes("--ri-mask-")) {
-			needsMaskProperties = true;
-		}
-
-		if (
-			!needsTransformProperties &&
-			(compiled.css.includes("--ri-translate-") || compiled.css.includes("--ri-scale-"))
-		) {
-			needsTransformProperties = true;
+		for (let i = 0; i < SUPPORT_BLOCKS.length; i++) {
+			if (supportNeeded[i]) continue;
+			const block = SUPPORT_BLOCKS[i];
+			if (block.test(compiled.css) || block.utilities?.includes(parsed.utility)) {
+				supportNeeded[i] = true;
+			}
 		}
 	}
 
@@ -664,21 +515,15 @@ function compileInternal(
 			codepointCompare(a.css, b.css),
 	);
 
-	if (needsGradientProperties) {
-		result.properties.push(...GRADIENT_PROPERTIES);
-	}
-
-	if (needsMaskProperties) {
-		result.properties.push(...MASK_PROPERTIES);
-	}
-
-	if (needsTransformProperties) {
-		result.properties.push(...TRANSFORM_PROPERTIES);
-	}
-
-	if (needsAnimationKeyframes) {
-		result.keyframes.push(...ANIMATION_KEYFRAMES);
-		result.properties.push(...ANIMATION_PROPERTIES);
+	// Push matched support blocks in table order — same output byte layout as
+	// the former per-family push blocks.
+	for (let i = 0; i < SUPPORT_BLOCKS.length; i++) {
+		if (!supportNeeded[i]) continue;
+		const block = SUPPORT_BLOCKS[i];
+		if (block.keyframes) {
+			result.keyframes.push(...block.keyframes);
+		}
+		result.properties.push(...block.properties);
 	}
 
 	// Pre-build a set of animation base names from seen classes — O(n) once,
@@ -768,7 +613,7 @@ export function createCompiler(): {
 	 *  `assembleSections()` to avoid sharing module-level font state. */
 	fontOutputCache: Map<string, import("../integrations/font-providers/index.js").FontOutput>;
 } {
-	let latestSnapshot: import("../merge/index.js").CompilationSnapshot | null = null;
+	let latestSnapshot: import("../merge/context.js").CompilationSnapshot | null = null;
 	const fontOutputCache = new Map<
 		string,
 		import("../integrations/font-providers/index.js").FontOutput

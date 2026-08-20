@@ -106,8 +106,9 @@ export type {
 // Merge analysis — explain ri()'s right-most-wins conflict resolution
 // ---------------------------------------------------------------------------
 
-export { analyzeMerge } from "../merge/index.js";
-export type { CompilationSnapshot, MergeAnalysis, MergeDrop } from "../merge/index.js";
+export { analyzeMerge } from "../merge/analyze.js";
+export type { MergeAnalysis, MergeDrop } from "../merge/analyze.js";
+export type { CompilationSnapshot } from "../merge/context.js";
 export { createThemeSnapshot } from "../engine/index.js";
 
 // ---------------------------------------------------------------------------

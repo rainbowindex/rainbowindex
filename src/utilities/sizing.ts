@@ -3,14 +3,7 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import {
-	type UtilityResult,
-	single,
-	multi,
-	spacingLookup,
-	fullName,
-	extractArbitrary,
-} from "./index.js";
+import { type UtilityResult, single, multi, spacingLookup, extractArbitrary } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Named size values
@@ -195,14 +188,13 @@ function resolveConstrainedSize(
 // ---------------------------------------------------------------------------
 
 export function sizingGenerator(
-	utility: string,
-	value: string | null,
+	_utility: string,
+	_value: string | null,
+	full: string,
 	negative: boolean,
 	_theme: ResolvedTheme,
 	_warnings?: string[],
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// size-{n}: both width and height
 	if (full.startsWith("size-")) {
 		const val = full.slice(5);

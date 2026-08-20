@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { createCompiler } from "../../src/engine/index.js";
 import { resolveDirectives } from "../../src/directives/index.js";
-import { spacingLookup } from "../../src/utilities/index.js";
+import { spacingLookup } from "../../src/utilities/helpers.js";
 import { validateGlobPattern } from "../../src/scanner/glob-utils.js";
 import { getCachedFontOutput } from "../../src/assembly.js";
 import {

@@ -9,14 +9,13 @@ import {
 	type UtilityResult,
 	single,
 	multi,
-	fullName,
 	extractArbitrary,
 	INTEGER_RE,
 	DECIMAL_RE,
 	spacingLookup,
 	deepFreezeUtilityMap,
 	normalizeDecimalToken,
-} from "./index.js";
+} from "./helpers.js";
 import { resolveColor } from "./color.js";
 import { CONTAINER_WIDTHS } from "./sizing.js";
 import { CSS_CUSTOM_IDENT_RE } from "../shared.js";
@@ -841,7 +840,7 @@ function resolveScrollbarColor(
 
 /**
  * First-segment dispatch (replacing the former ~35-probe startsWith chain;
- * same shape as EFFECTS_PREFIX_DISPATCH in effects.ts). The `@`-prefixed
+ * same shape as EFFECTS_PREFIX_DISPATCH in effects/index.ts). The `@`-prefixed
  * container/anchor forms use `/` separators, so layoutGenerator checks them
  * directly before consulting this table.
  */
@@ -869,14 +868,19 @@ const LAYOUT_PREFIX_DISPATCH: ReadonlyMap<string, LayoutResolver> = new Map<stri
 	],
 );
 
+/** Dispatch-key list export (same pattern as LAYOUT_STATIC_NAMES) so the
+ *  registration test can assert every key is reachable via PREFIX_DISPATCH. */
+export const LAYOUT_DISPATCH_ROOTS: readonly string[] = Object.freeze([
+	...LAYOUT_PREFIX_DISPATCH.keys(),
+]);
+
 export function layoutGenerator(
-	utility: string,
-	value: string | null,
+	_utility: string,
+	_value: string | null,
+	full: string,
 	negative: boolean,
 	theme: ResolvedTheme,
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// Static utilities
 	if (Object.hasOwn(STATIC_LAYOUT, full)) return STATIC_LAYOUT[full];
 

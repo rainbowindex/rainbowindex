@@ -3,8 +3,8 @@ import {
 	createCompilationContext,
 	registerCustomUtility,
 	finalizeCompilationContext,
-	createRi,
-} from "../../src/merge/index.js";
+} from "../../src/merge/context.js";
+import { createRi } from "../../src/merge/index.js";
 import { BUILTIN_STATIC_KEYS, PREFIX_PROP_KEYS } from "../../src/merge/props.js";
 import {
 	parseUtility,

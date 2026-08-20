@@ -6,6 +6,110 @@
  */
 
 // ---------------------------------------------------------------------------
+// Shared prefix → property family maps
+//
+// Single source of truth for both sides of the pipeline: the generators
+// (utilities/spacing.ts, utilities/borders.ts) emit declarations from these
+// maps, and the merge tables below spread them into their claim entries — so
+// the properties ri() claims can never drift from the CSS the engine emits.
+// Frozen pure data, safe for browser bundles like everything else here.
+// ---------------------------------------------------------------------------
+
+export const PADDING_MAP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	p: ["padding"],
+	px: ["padding-inline"],
+	py: ["padding-block"],
+	pt: ["padding-block-start"],
+	pb: ["padding-block-end"],
+	pl: ["padding-inline-start"],
+	pr: ["padding-inline-end"],
+	ps: ["padding-inline-start"],
+	pe: ["padding-inline-end"],
+	pbs: ["padding-block-start"],
+	pbe: ["padding-block-end"],
+});
+
+export const MARGIN_MAP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	m: ["margin"],
+	mx: ["margin-inline"],
+	my: ["margin-block"],
+	mt: ["margin-block-start"],
+	mb: ["margin-block-end"],
+	ml: ["margin-inline-start"],
+	mr: ["margin-inline-end"],
+	ms: ["margin-inline-start"],
+	me: ["margin-inline-end"],
+	mbs: ["margin-block-start"],
+	mbe: ["margin-block-end"],
+});
+
+export const GAP_MAP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	gap: ["gap"],
+	"gap-x": ["column-gap"],
+	"gap-y": ["row-gap"],
+});
+
+export const INSET_MAP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	inset: ["inset"],
+	"inset-x": ["inset-inline"],
+	"inset-y": ["inset-block"],
+	top: ["inset-block-start"],
+	bottom: ["inset-block-end"],
+	left: ["inset-inline-start"],
+	right: ["inset-inline-end"],
+	start: ["inset-inline-start"],
+	end: ["inset-inline-end"],
+	"inset-s": ["inset-inline-start"],
+	"inset-e": ["inset-inline-end"],
+	"inset-bs": ["inset-block-start"],
+	"inset-be": ["inset-block-end"],
+});
+
+export const SCROLL_MARGIN_MAP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	"scroll-m": ["scroll-margin"],
+	"scroll-mx": ["scroll-margin-inline"],
+	"scroll-my": ["scroll-margin-block"],
+	"scroll-mt": ["scroll-margin-block-start"],
+	"scroll-mb": ["scroll-margin-block-end"],
+	"scroll-ml": ["scroll-margin-inline-start"],
+	"scroll-mr": ["scroll-margin-inline-end"],
+	"scroll-ms": ["scroll-margin-inline-start"],
+	"scroll-me": ["scroll-margin-inline-end"],
+	"scroll-mbs": ["scroll-margin-block-start"],
+	"scroll-mbe": ["scroll-margin-block-end"],
+});
+
+export const SCROLL_PADDING_MAP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	"scroll-p": ["scroll-padding"],
+	"scroll-px": ["scroll-padding-inline"],
+	"scroll-py": ["scroll-padding-block"],
+	"scroll-pt": ["scroll-padding-block-start"],
+	"scroll-pb": ["scroll-padding-block-end"],
+	"scroll-pl": ["scroll-padding-inline-start"],
+	"scroll-pr": ["scroll-padding-inline-end"],
+	"scroll-ps": ["scroll-padding-inline-start"],
+	"scroll-pe": ["scroll-padding-inline-end"],
+	"scroll-pbs": ["scroll-padding-block-start"],
+	"scroll-pbe": ["scroll-padding-block-end"],
+});
+
+/** Directional border-width prefixes → per-side logical width property.
+ *  The generator (utilities/borders.ts) derives its trailing-dash entries
+ *  from this map at module init. */
+export const BORDER_DIR_PROPS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	"border-t": ["border-block-start-width"],
+	"border-b": ["border-block-end-width"],
+	"border-l": ["border-inline-start-width"],
+	"border-r": ["border-inline-end-width"],
+	"border-s": ["border-inline-start-width"],
+	"border-e": ["border-inline-end-width"],
+	"border-bs": ["border-block-start-width"],
+	"border-be": ["border-block-end-width"],
+	"border-x": ["border-inline-width"],
+	"border-y": ["border-block-width"],
+});
+
+// ---------------------------------------------------------------------------
 // Conflict resolution data
 // ---------------------------------------------------------------------------
 
@@ -93,17 +197,9 @@ const BUILTIN_STATIC_PROPS: Record<string, readonly string[]> = Object.assign(Ob
 	// Perspective
 	"perspective-none": ["perspective"],
 
-	// Border width (static, directional — per-side logical props)
-	"border-t": ["border-block-start-width"],
-	"border-b": ["border-block-end-width"],
-	"border-l": ["border-inline-start-width"],
-	"border-r": ["border-inline-end-width"],
-	"border-s": ["border-inline-start-width"],
-	"border-e": ["border-inline-end-width"],
-	"border-bs": ["border-block-start-width"],
-	"border-be": ["border-block-end-width"],
-	"border-x": ["border-inline-width"],
-	"border-y": ["border-block-width"],
+	// Border width (static, directional — per-side logical props; the bare
+	// static forms claim the same properties as the dynamic prefix entries)
+	...BORDER_DIR_PROPS,
 
 	// Border collapse
 	"border-collapse": ["border-collapse"],
@@ -944,86 +1040,42 @@ addAll(
 	["mix-blend-mode"],
 );
 /**
+ * `<base>-fluid` spacing rows, derived at module init from the same shared
+ * family maps the generator resolves against (utilities/spacing.ts) — a fluid
+ * utility claims exactly what its base form claims, so the merge side can
+ * never drift from the plain one.
+ *
+ * The inset-{s,e,bs,be} logical aliases are deliberately excluded: their
+ * -fluid forms have never been registered here, and because PREFIX_PROP_KEYS
+ * feeds the parser's MULTI_SEGMENT_PREFIXES, adding them would enable new
+ * utility classes rather than just merge claims.
+ */
+const FLUID_EXCLUDED_PREFIXES = new Set(["inset-s", "inset-e", "inset-bs", "inset-be"]);
+const FLUID_SPACING_PROPS: Readonly<Record<string, readonly string[]>> = (() => {
+	const rows: Record<string, readonly string[]> = {};
+	for (const map of [PADDING_MAP, MARGIN_MAP, GAP_MAP, INSET_MAP]) {
+		for (const [prefix, props] of Object.entries(map)) {
+			if (FLUID_EXCLUDED_PREFIXES.has(prefix)) continue;
+			rows[`${prefix}-fluid`] = props;
+		}
+	}
+	return Object.freeze(rows);
+})();
+
+/**
  * Prefix-based utility → CSS properties.
  * For dynamic utilities like "p-4", "w-1/2", "text-red-500".
  * Null prototype — see BUILTIN_STATIC_PROPS.
  */
-const PREFIX_PROPS: Record<string, string[]> = Object.assign(Object.create(null), {
-	// Spacing
-	p: ["padding"],
-	px: ["padding-inline"],
-	py: ["padding-block"],
-	pt: ["padding-block-start"],
-	pb: ["padding-block-end"],
-	pl: ["padding-inline-start"],
-	pr: ["padding-inline-end"],
-	ps: ["padding-inline-start"],
-	pe: ["padding-inline-end"],
-	pbs: ["padding-block-start"],
-	pbe: ["padding-block-end"],
-	m: ["margin"],
-	mx: ["margin-inline"],
-	my: ["margin-block"],
-	mt: ["margin-block-start"],
-	mb: ["margin-block-end"],
-	ml: ["margin-inline-start"],
-	mr: ["margin-inline-end"],
-	ms: ["margin-inline-start"],
-	me: ["margin-inline-end"],
-	mbs: ["margin-block-start"],
-	mbe: ["margin-block-end"],
-	gap: ["gap"],
-	"gap-x": ["column-gap"],
-	"gap-y": ["row-gap"],
-	"p-fluid": ["padding"],
-	"px-fluid": ["padding-inline"],
-	"py-fluid": ["padding-block"],
-	"pt-fluid": ["padding-block-start"],
-	"pb-fluid": ["padding-block-end"],
-	"pl-fluid": ["padding-inline-start"],
-	"pr-fluid": ["padding-inline-end"],
-	"ps-fluid": ["padding-inline-start"],
-	"pe-fluid": ["padding-inline-end"],
-	"pbs-fluid": ["padding-block-start"],
-	"pbe-fluid": ["padding-block-end"],
-	"m-fluid": ["margin"],
-	"mx-fluid": ["margin-inline"],
-	"my-fluid": ["margin-block"],
-	"mt-fluid": ["margin-block-start"],
-	"mb-fluid": ["margin-block-end"],
-	"ml-fluid": ["margin-inline-start"],
-	"mr-fluid": ["margin-inline-end"],
-	"ms-fluid": ["margin-inline-start"],
-	"me-fluid": ["margin-inline-end"],
-	"mbs-fluid": ["margin-block-start"],
-	"mbe-fluid": ["margin-block-end"],
-	"gap-fluid": ["gap"],
-	"gap-x-fluid": ["column-gap"],
-	"gap-y-fluid": ["row-gap"],
-	"inset-fluid": ["inset"],
-	"inset-x-fluid": ["inset-inline"],
-	"inset-y-fluid": ["inset-block"],
-	"top-fluid": ["inset-block-start"],
-	"bottom-fluid": ["inset-block-end"],
-	"left-fluid": ["inset-inline-start"],
-	"right-fluid": ["inset-inline-end"],
-	"start-fluid": ["inset-inline-start"],
-	"end-fluid": ["inset-inline-end"],
+const PREFIX_PROPS: Record<string, readonly string[]> = Object.assign(Object.create(null), {
+	// Spacing (family maps shared with utilities/spacing.ts — see header above)
+	...PADDING_MAP,
+	...MARGIN_MAP,
+	...GAP_MAP,
+	...FLUID_SPACING_PROPS,
 	"space-x": ["~space:margin-inline-start", "~space:margin-inline-end"],
 	"space-y": ["~space:margin-block-start", "~space:margin-block-end"],
-	inset: ["inset"],
-	"inset-x": ["inset-inline"],
-	"inset-y": ["inset-block"],
-	"inset-s": ["inset-inline-start"],
-	"inset-e": ["inset-inline-end"],
-	"inset-bs": ["inset-block-start"],
-	"inset-be": ["inset-block-end"],
-	top: ["inset-block-start"],
-	bottom: ["inset-block-end"],
-	left: ["inset-inline-start"],
-	right: ["inset-inline-end"],
-	start: ["inset-inline-start"],
-	end: ["inset-inline-end"],
+	...INSET_MAP,
 
 	// Sizing
 	w: ["width"],
@@ -1135,16 +1187,7 @@ const PREFIX_PROPS: Record<string, string[]> = Object.assign(Object.create(null)
 	// Borders — these also appear in BUILTIN_STATIC_PROPS for the bare static
 	// form (e.g. `border-t` → default 1px width). The prefix entries here handle
 	// the dynamic form (e.g. `border-t-2`, `border-t-red-500`) via resolvePropsWith().
-	"border-t": ["border-block-start-width"],
-	"border-b": ["border-block-end-width"],
-	"border-l": ["border-inline-start-width"],
-	"border-r": ["border-inline-end-width"],
-	"border-s": ["border-inline-start-width"],
-	"border-e": ["border-inline-end-width"],
-	"border-bs": ["border-block-start-width"],
-	"border-be": ["border-block-end-width"],
-	"border-x": ["border-inline-width"],
-	"border-y": ["border-block-width"],
+	...BORDER_DIR_PROPS,
 	// Table border-spacing — composable: shared border-spacing + per-axis slot var.
 	"border-spacing": ["border-spacing", "--ri-border-spacing-x", "--ri-border-spacing-y"],
 	"border-spacing-x": ["border-spacing", "--ri-border-spacing-x"],
@@ -1212,29 +1255,9 @@ const PREFIX_PROPS: Record<string, string[]> = Object.assign(Object.create(null)
 	"slide-out-to-left": ["--ri-exit-translate-x"],
 	"slide-out-to-right": ["--ri-exit-translate-x"],
 
-	// Scroll margin/padding
-	"scroll-m": ["scroll-margin"],
-	"scroll-mx": ["scroll-margin-inline"],
-	"scroll-my": ["scroll-margin-block"],
-	"scroll-mt": ["scroll-margin-block-start"],
-	"scroll-mb": ["scroll-margin-block-end"],
-	"scroll-ml": ["scroll-margin-inline-start"],
-	"scroll-mr": ["scroll-margin-inline-end"],
-	"scroll-ms": ["scroll-margin-inline-start"],
-	"scroll-me": ["scroll-margin-inline-end"],
-	"scroll-mbs": ["scroll-margin-block-start"],
-	"scroll-mbe": ["scroll-margin-block-end"],
-	"scroll-p": ["scroll-padding"],
-	"scroll-px": ["scroll-padding-inline"],
-	"scroll-py": ["scroll-padding-block"],
-	"scroll-pt": ["scroll-padding-block-start"],
-	"scroll-pb": ["scroll-padding-block-end"],
-	"scroll-pl": ["scroll-padding-inline-start"],
-	"scroll-pr": ["scroll-padding-inline-end"],
-	"scroll-ps": ["scroll-padding-inline-start"],
-	"scroll-pe": ["scroll-padding-inline-end"],
-	"scroll-pbs": ["scroll-padding-block-start"],
-	"scroll-pbe": ["scroll-padding-block-end"],
+	// Scroll margin/padding (family maps shared with utilities/spacing.ts)
+	...SCROLL_MARGIN_MAP,
+	...SCROLL_PADDING_MAP,
 
 	// Backdrop filter — each function gets a unique CSS variable so they coexist
 	"backdrop-filter": ["backdrop-filter"],
@@ -1310,82 +1333,30 @@ const PREFIX_PROPS: Record<string, string[]> = Object.assign(Object.create(null)
 	"anchor-scope": ["anchor-scope"],
 });
 
-// Border longhand groups — shared by the border-width/style/color entries and
-// flattened into the full `border` shorthand (claim expansion is single-level).
-const BORDER_WIDTH_LONGHANDS: readonly string[] = Object.freeze([
-	"border-inline-width",
-	"border-block-width",
-	"border-block-start-width",
-	"border-block-end-width",
-	"border-inline-start-width",
-	"border-inline-end-width",
-]);
-const BORDER_STYLE_LONGHANDS: readonly string[] = Object.freeze([
-	"border-inline-style",
-	"border-block-style",
-	"border-block-start-style",
-	"border-block-end-style",
-	"border-inline-start-style",
-	"border-inline-end-style",
-]);
-const BORDER_COLOR_LONGHANDS: readonly string[] = Object.freeze([
-	"border-inline-color",
-	"border-block-color",
-	"border-block-start-color",
-	"border-block-end-color",
-	"border-inline-start-color",
-	"border-inline-end-color",
-]);
-
 /**
- * Shorthand CSS properties → longhand properties they override.
- * Null prototype — see BUILTIN_STATIC_PROPS.
+ * Shorthand CSS properties → the longhand properties they directly decompose
+ * into. Entries list only DIRECT longhands; the exported OVERRIDES below is
+ * this table's transitive closure, computed once at module init — so a
+ * shorthand's claim set can never silently miss a transitive leaf (claim
+ * expansion in merge/index.ts is single-level by design).
  */
-const OVERRIDES: Record<string, readonly string[]> = Object.assign(Object.create(null), {
-	padding: [
-		"padding-inline",
-		"padding-block",
-		"padding-block-start",
-		"padding-block-end",
-		"padding-inline-start",
-		"padding-inline-end",
-	],
+const DIRECT_OVERRIDES: Record<string, readonly string[]> = Object.assign(Object.create(null), {
+	padding: ["padding-inline", "padding-block"],
 	"padding-inline": ["padding-inline-start", "padding-inline-end"],
 	"padding-block": ["padding-block-start", "padding-block-end"],
-	margin: [
-		"margin-inline",
-		"margin-block",
-		"margin-block-start",
-		"margin-block-end",
-		"margin-inline-start",
-		"margin-inline-end",
-	],
+	margin: ["margin-inline", "margin-block"],
 	"margin-inline": ["margin-inline-start", "margin-inline-end"],
 	"margin-block": ["margin-block-start", "margin-block-end"],
 	gap: ["column-gap", "row-gap"],
-	inset: [
-		"inset-inline",
-		"inset-block",
-		"inset-block-start",
-		"inset-block-end",
-		"inset-inline-start",
-		"inset-inline-end",
-	],
+	inset: ["inset-inline", "inset-block"],
 	"inset-inline": ["inset-inline-start", "inset-inline-end"],
 	"inset-block": ["inset-block-start", "inset-block-end"],
-	"border-width": BORDER_WIDTH_LONGHANDS,
+	"border-width": ["border-inline-width", "border-block-width"],
 	"border-inline-width": ["border-inline-start-width", "border-inline-end-width"],
 	"border-block-width": ["border-block-start-width", "border-block-end-width"],
 	// Full `border` shorthand ([border:…] arbitrary properties / custom
-	// utilities) — flattened to leaves like margin/padding above.
-	border: [
-		"border-width",
-		"border-style",
-		"border-color",
-		...BORDER_WIDTH_LONGHANDS,
-		...BORDER_STYLE_LONGHANDS,
-		...BORDER_COLOR_LONGHANDS,
-	],
+	// utilities) — the closure reaches every width/style/color leaf.
+	border: ["border-width", "border-style", "border-color"],
 	"border-radius": [
 		"border-start-start-radius",
 		"border-start-end-radius",
@@ -1394,28 +1365,23 @@ const OVERRIDES: Record<string, readonly string[]> = Object.assign(Object.create
 	],
 	overflow: ["overflow-x", "overflow-y"],
 	"overscroll-behavior": ["overscroll-behavior-x", "overscroll-behavior-y"],
-	"border-color": BORDER_COLOR_LONGHANDS,
+	"border-color": ["border-inline-color", "border-block-color"],
 	"border-inline-color": ["border-inline-start-color", "border-inline-end-color"],
 	"border-block-color": ["border-block-start-color", "border-block-end-color"],
-	"border-style": BORDER_STYLE_LONGHANDS,
-	"scroll-margin": [
-		"scroll-margin-inline",
-		"scroll-margin-block",
-		"scroll-margin-block-start",
-		"scroll-margin-block-end",
-		"scroll-margin-inline-start",
-		"scroll-margin-inline-end",
+	// Unlike width/color, the style intermediates have no OVERRIDES entries of
+	// their own (nothing claims them alone), so this entry stays flat.
+	"border-style": [
+		"border-inline-style",
+		"border-block-style",
+		"border-block-start-style",
+		"border-block-end-style",
+		"border-inline-start-style",
+		"border-inline-end-style",
 	],
+	"scroll-margin": ["scroll-margin-inline", "scroll-margin-block"],
 	"scroll-margin-inline": ["scroll-margin-inline-start", "scroll-margin-inline-end"],
 	"scroll-margin-block": ["scroll-margin-block-start", "scroll-margin-block-end"],
-	"scroll-padding": [
-		"scroll-padding-inline",
-		"scroll-padding-block",
-		"scroll-padding-block-start",
-		"scroll-padding-block-end",
-		"scroll-padding-inline-start",
-		"scroll-padding-inline-end",
-	],
+	"scroll-padding": ["scroll-padding-inline", "scroll-padding-block"],
 	"scroll-padding-inline": ["scroll-padding-inline-start", "scroll-padding-inline-end"],
 	"scroll-padding-block": ["scroll-padding-block-start", "scroll-padding-block-end"],
 	flex: ["flex-grow", "flex-shrink", "flex-basis"],
@@ -1481,6 +1447,29 @@ const OVERRIDES: Record<string, readonly string[]> = Object.assign(Object.create
 		"--ri-backdrop-hue-rotate",
 	],
 });
+
+/**
+ * Shorthand CSS properties → ALL longhand properties they override — the
+ * transitive closure of DIRECT_OVERRIDES (merge/index.ts expands claims one
+ * level, so each entry must carry every reachable leaf). Null prototype —
+ * see BUILTIN_STATIC_PROPS.
+ */
+const OVERRIDES: Record<string, readonly string[]> = (() => {
+	const closed: Record<string, readonly string[]> = Object.create(null);
+	for (const key of Object.keys(DIRECT_OVERRIDES)) {
+		const seen = new Set<string>();
+		const stack = [...DIRECT_OVERRIDES[key]];
+		while (stack.length > 0) {
+			const prop = stack.pop();
+			if (prop === undefined || seen.has(prop)) continue;
+			seen.add(prop);
+			const next = DIRECT_OVERRIDES[prop];
+			if (next !== undefined) stack.push(...next);
+		}
+		closed[key] = Object.freeze([...seen]);
+	}
+	return closed;
+})();
 
 // Freeze all three data maps to prevent accidental mutation.
 Object.freeze(BUILTIN_STATIC_PROPS);
@@ -1549,7 +1538,7 @@ export function isGradientPositionValue(value: string): boolean {
  * is a position rather than a color. Broader than isGradientPositionValue: bare
  * numbers resolve to spacing multiples and `(--custom-prop)` shorthands are
  * treated as positions for mask from/to utilities. Keep this in lockstep with
- * `resolveMaskPosition` in utilities/effects.ts.
+ * `resolveMaskPosition` in utilities/effects/masks.ts.
  */
 const MASK_STOP_NUMBER_RE = /^\d+(?:[._]\d+)?$/;
 const MASK_RADIAL_KEYWORD_RE = /\b(?:at|circle|ellipse|closest|farthest)\b/;
@@ -1577,7 +1566,7 @@ const MASK_RADIAL_SIZE_TOKEN_RE = /^-?(?:\d+\.?\d*|\.\d+)(?:%|[a-z]+)?$/i;
  * `--ri-mask-radial-size`) from `mask-radial-[<value>]` (a full radial-gradient
  * argument → `mask-image`). Shape/position keywords (`circle`, `ellipse`,
  * `at …`, `closest/farthest …`) mark the value as a full image, not a size.
- * Used on both the generate side (utilities/effects.ts) and the merge side.
+ * Used on both the generate side (utilities/effects/masks.ts) and the merge side.
  */
 export function isMaskRadialSizeValue(value: string): boolean {
 	if (!(value.startsWith("[") && value.endsWith("]"))) return false;

@@ -1,0 +1,10 @@
+# Supply-chain hardening. Requires pnpm >= 10.21 (minimumReleaseAge landed in
+# 10.16, trustPolicy in 10.21 — see packageManager in package.json); older
+# pnpm silently ignores these keys.
+#
+# Hold back freshly published dependency versions for 7 days so malware that
+# gets caught and unpublished within hours never reaches an install.
+minimumReleaseAge: 10080
+# Refuse updates whose trust signals (provenance, signatures) are weaker than
+# the version already in the lockfile.
+trustPolicy: no-downgrade

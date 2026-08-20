@@ -13,15 +13,12 @@ import {
 	MAX_DIRECTIVE_INPUT_SIZE,
 	RI_IMPORT_SPECIFIER_ALTERNATION,
 } from "../../directives/index.js";
-import type { ResolvedTheme, SourceDirective } from "../../directives/foundation.js";
-import { collectProjectClasses } from "../../scanner/index.js";
+import type { ResolvedTheme } from "../../directives/foundation.js";
 import { compileCSSFunctions, hasCSSFunctions } from "../../engine/index.js";
 import { pushWarningsDeduped } from "../../warnings.js";
 import { isAbsolute } from "node:path";
-import { validateGlobPattern } from "../../scanner/glob-utils.js";
 import { processApply } from "./apply.js";
-import { resolveGoogleFonts } from "../font-providers/index.js";
-import { analyzeProjectCSS, finalizeProjectCompilation } from "../../project/pipeline.js";
+import { compileScannedProject } from "../../project/scan.js";
 
 export interface RainbowIndexOptions {
 	sources?: string[];
@@ -118,44 +115,20 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 					return;
 				}
 
-				const analysis = analyzeProjectCSS(rawCSS);
-				const compilationWarnings = analysis.warnings;
-				const warningSeen = analysis.warningSeen;
-				const theme = analysis.theme;
-
-				const sourceOverrides: SourceDirective[] = [];
-				if (options.sources) {
-					for (const s of options.sources) {
-						const err = validateGlobPattern(s);
-						if (err) {
-							pushWarningsDeduped(compilationWarnings, [`[RI-1015] ${err}`], warningSeen);
-							continue;
-						}
-						sourceOverrides.push({ pattern: s, negated: false, inline: false });
-					}
-				}
-				// Shared with the CLI (collectProjectClasses): user @source first,
-				// programmatic sources next, auto-discovered dep safelists last.
-				const scannedClasses = await collectProjectClasses(
-					theme.sources,
-					sourceOverrides,
+				const { compiled, warningSeen } = await compileScannedProject({
+					css: rawCSS,
 					cwd,
-					compilationWarnings,
-					warningSeen,
-				);
+					surfacePatterns: options.sources,
+					onInvalidPattern: (err) => `[RI-1015] ${err}`,
+				});
+				// Same array identity the pipeline pushed into — post-finalize warnings
+				// dedupe against everything the compile already emitted.
+				const compilationWarnings = compiled.warnings;
 				const from =
 					root.source?.input?.file ??
 					root.source?.input?.id ??
 					root.source?.input?.from ??
 					"<rainbowindex>";
-				const compiled = await finalizeProjectCompilation({
-					css: rawCSS,
-					classNames: scannedClasses,
-					analysis,
-					// Shared resolver: same fetch-timeout + RI-1213 policy as the CLI and
-					// compileProject, so all surfaces emit identical bytes on slow networks.
-					resolveFonts: resolveGoogleFonts,
-				});
 				// User nodes stay in the AST; `compiled.sections` is generated-only
 				// (user CSS is carried separately in compiled.userCSS).
 				stripRIDirectiveNodes(root);
@@ -169,7 +142,7 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 				pushWarningsDeduped(compilationWarnings, slotWarnings, warningSeen);
 
 				const applyWarnings: string[] = [];
-				processApply(root, compiled.theme, applyWarnings, postcss);
+				processApply(root, compiled.theme, applyWarnings);
 				pushWarningsDeduped(compilationWarnings, applyWarnings, warningSeen);
 
 				const cssFnWarnings: string[] = [];

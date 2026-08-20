@@ -17,7 +17,8 @@ import type { Diagnostic } from "../diagnostics.js";
 import type { ResolvedTheme } from "../directives/foundation.js";
 import { createClassInspector, type ClassInspector } from "../engine/inspector.js";
 import { createThemeSnapshot } from "../engine/index.js";
-import { analyzeMerge, type CompilationSnapshot, type MergeAnalysis } from "../merge/index.js";
+import { analyzeMerge, type MergeAnalysis } from "../merge/analyze.js";
+import type { CompilationSnapshot } from "../merge/context.js";
 import { analyzeProjectCSS, type ProjectAnalysis } from "../project/analyze.js";
 import { extractClassCandidates, type ClassCandidate } from "../scanner/class-extraction.js";
 import {

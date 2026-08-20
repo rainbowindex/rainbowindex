@@ -7,13 +7,12 @@ import type { ResolvedTheme } from "../directives/foundation.js";
 import {
 	type UtilityResult,
 	single,
-	fullName,
 	extractArbitrary,
 	INTEGER_RE,
 	DECIMAL_RE,
 	deepFreezeUtilityMap,
 	spacingLookup,
-} from "./index.js";
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Static utilities
@@ -75,13 +74,12 @@ export const ANIMATION_STATIC_NAMES: readonly string[] = Object.freeze(Object.ke
 // ---------------------------------------------------------------------------
 
 export function animationGenerator(
-	utility: string,
-	value: string | null,
+	_utility: string,
+	_value: string | null,
+	full: string,
 	negative: boolean,
 	theme: ResolvedTheme,
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// Static spin — sign-sensitive, so resolve ahead of the STATIC_ANIM table
 	// (which has no notion of the negative prefix). `-spin-in` reverses to -30deg.
 	if (full === "spin-in") return single("--ri-enter-rotate", negative ? "-30deg" : "30deg");

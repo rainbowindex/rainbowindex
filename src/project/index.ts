@@ -1,4 +1,4 @@
-import { extractClassesFromSource } from "../scanner/index.js";
+import { extractClassesFromSource } from "../scanner/class-extraction.js";
 import { resolveGoogleFonts } from "../integrations/font-providers/index.js";
 import { pushWarningsDeduped } from "../warnings.js";
 import {

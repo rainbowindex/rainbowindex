@@ -4,17 +4,17 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
+import { BORDER_DIR_PROPS } from "../merge/props.js";
 import {
 	type UtilityResult,
 	single,
 	multi,
-	fullName,
 	extractArbitrary,
 	INTEGER_RE,
 	DECIMAL_RE,
 	deepFreezeUtilityMap,
 	normalizeDecimalToken,
-} from "./index.js";
+} from "./helpers.js";
 import { isBracketedColor } from "./color.js";
 
 // ---------------------------------------------------------------------------
@@ -180,34 +180,26 @@ function resolveDivide(full: string, axis: "x" | "y"): UtilityResult | null {
 // Directional border-width map
 // ---------------------------------------------------------------------------
 
-const BORDER_DIR_PROPS: Readonly<Record<string, string>> = Object.freeze({
-	"border-t-": "border-block-start-width",
-	"border-b-": "border-block-end-width",
-	"border-l-": "border-inline-start-width",
-	"border-r-": "border-inline-end-width",
-	"border-s-": "border-inline-start-width",
-	"border-e-": "border-inline-end-width",
-	"border-bs-": "border-block-start-width",
-	"border-be-": "border-block-end-width",
-	"border-x-": "border-inline-width",
-	"border-y-": "border-block-width",
-});
-const BORDER_DIR_PROPS_ENTRIES = Object.entries(BORDER_DIR_PROPS);
+// Trailing-dash entries derived at module init from the merge's shared map
+// (merge/props.ts) so the width property this generator emits and the property
+// ri() claims for conflict resolution can never drift apart.
+const BORDER_DIR_PROPS_ENTRIES: ReadonlyArray<readonly [string, string]> = Object.entries(
+	BORDER_DIR_PROPS,
+).map(([prefix, props]) => [`${prefix}-`, props[0]] as const);
 
 // ---------------------------------------------------------------------------
 // Generator
 // ---------------------------------------------------------------------------
 
 export function borderGenerator(
-	utility: string,
-	value: string | null,
+	_utility: string,
+	_value: string | null,
+	full: string,
 	negative: boolean,
 	theme: ResolvedTheme,
 	_warnings?: string[],
 	dataType?: string | null,
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// A `color` hint routes to colorGenerator — this generator handles widths,
 	// styles, and radii. Bail early so borderGenerator never emits a width for
 	// values the user explicitly marked as a color.

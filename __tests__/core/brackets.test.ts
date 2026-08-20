@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { evictLRU, scanBracketAware } from "../../src/brackets.js";
+import { scanBracketAware } from "../../src/brackets.js";
+// evictLRU is the merge runtime's cache-eviction policy — it lives with the
+// ri() cache it serves, not with the bracket scanner it used to share a file with.
+import { evictLRU } from "../../src/merge/index.js";
 
 describe("evictLRU", () => {
 	it("does nothing while the cache is still below max size", () => {

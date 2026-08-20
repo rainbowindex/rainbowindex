@@ -28,6 +28,28 @@ pnpm add rainbowindex
 
 Requires Node `>=20.19`. The package is **ESM-only** — there is no CommonJS build, so `require("rainbowindex")` is only supported on runtimes that can `require()` ES modules (Node 20.19+); use `import` otherwise (e.g. an ESM `postcss.config.js`/`.mjs`). `postcss` is a required peer dependency, `vite` an optional one; `lightningcss`, `chokidar`, and `tinyglobby` are bundled as direct deps.
 
+### From GitHub Packages
+
+Every release is also published to [GitHub Packages](https://github.com/rainbowindex/rainbowindex/pkgs/npm/rainbowindex) as `@rainbowindex/rainbowindex` — the same build under an owner-scoped name, which that registry requires. Point the scope at the registry in your project's `.npmrc`:
+
+```ini
+@rainbowindex:registry=https://npm.pkg.github.com
+```
+
+GitHub Packages authenticates every read, including public ones, so put a [personal access token (classic)](https://github.com/settings/tokens) with the `read:packages` scope in your `~/.npmrc`:
+
+```ini
+//npm.pkg.github.com/:_authToken=YOUR_TOKEN
+```
+
+Then install under the alias `rainbowindex`, so every import, `@import`, and CLI invocation in the docs below works unchanged:
+
+```sh
+pnpm add rainbowindex@npm:@rainbowindex/rainbowindex
+```
+
+Without the alias — `pnpm add @rainbowindex/rainbowindex` — the package resolves under its scoped name, and specifiers become `@rainbowindex/rainbowindex`, `@rainbowindex/rainbowindex/vite`, and so on.
+
 ## Quick start (Vite)
 
 The fastest path is the Vite plugin, which auto-injects PostCSS config and discovers your CSS entry on first dev-server listen.

@@ -271,6 +271,48 @@ describe("variant metadata pruning provenance", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Unterminated template literals — the two walkers' tail contracts
+// ---------------------------------------------------------------------------
+
+describe("unterminated template literals", () => {
+	test("template-class collection ignores the unterminated tail chunk", () => {
+		// The template inside the quoted attribute value never closes: the chunk
+		// after the interpolation is dropped by the template collector, and the
+		// whole-file scan cannot see `p-4` either (preceded by `}`, which is not
+		// a token boundary).
+		const classes = extractClassesFromSource({
+			path: "/tmp/src/tail.tsx",
+			content: `<div className="a\`\${y}p-4" />`,
+		});
+		expect(classes).not.toContain("p-4");
+	});
+
+	test("terminated templates still collect post-interpolation chunks", () => {
+		// Counterpart to the test above: with the closing backtick present, the
+		// chunk after `${y}` is flushed and tokenized.
+		const classes = extractClassesFromSource({
+			path: "/tmp/src/tail.tsx",
+			content: `<div className="a\`\${y}p-4\`" />`,
+		});
+		expect(classes).toContain("p-4");
+	});
+
+	test("quoted-provenance collection keeps the unterminated tail", () => {
+		// The unterminated template's tail still counts as a quoted occurrence
+		// of `rounded`, so the variant key keeps its provenance and survives
+		// metadata pruning.
+		const classes = extractClassesFromSource({
+			path: "/tmp/src/chip.tsx",
+			content:
+				'const chip = tv({ variants: { rounded: { true: "rounded-full" } } });\nconst s = `rounded',
+		});
+		expect(classes).toContain("rounded");
+		expect(classes).toContain("rounded-full");
+		expect(classes).not.toContain("variants");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Single-line minified sources
 // ---------------------------------------------------------------------------
 

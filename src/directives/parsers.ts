@@ -34,7 +34,7 @@ import type {
 	PropertyRegistration,
 } from "./foundation.js";
 
-import { findClosingBrace } from "./foundation.js";
+import { findClosingBrace, REMOVAL_KEY, scanEntries } from "./foundation.js";
 import { stripCSSComments } from "../shared.js";
 
 // ---------------------------------------------------------------------------
@@ -69,23 +69,7 @@ const IDENT_KEY_RE = /^[\w-]+$/;
 const WS_CHAR_RE = /\s/;
 
 // isValidColorSuffix is imported from theme/colors.js
-
-/** PostCSS-safe removal entry key — the Vite transform rewrites `!name;` to
- *  `--ri-rm: name;`. Shared by every body parser that supports removals. */
-const REMOVAL_KEY = "--ri-rm";
-
-/**
- * Read a `!name` removal token whose `!` sits at `i`. Pushes the name (when
- * non-empty) and returns the index just past it. Shared by the positional
- * body scanners (@color, @animate).
- */
-function readRemovalToken(src: string, i: number, removals: string[]): number {
-	let end = i + 1;
-	while (end < src.length && /[\w-]/.test(src[end])) end++;
-	const name = src.slice(i + 1, end);
-	if (name) removals.push(name);
-	return end;
-}
+// REMOVAL_KEY and the shared entry scanner live in foundation.ts (scanEntries).
 
 /**
  * Index of the first `char` at paren/bracket depth 0 outside quotes, or -1.
@@ -385,66 +369,21 @@ export function parseColorBody(
 	// exists for adversarial inputs, so the check itself must stay O(1).
 	let colorCount = 0;
 
-	let i = 0;
-	while (i < cleanedBody.length) {
-		// Skip whitespace
-		while (i < cleanedBody.length && /\s/.test(cleanedBody[i])) i++;
-		if (i >= cleanedBody.length) break;
-
-		// Check for removal: !name
-		if (cleanedBody[i] === "!") {
-			i = readRemovalToken(cleanedBody, i, removals);
-			while (i < cleanedBody.length && /[\s;]/.test(cleanedBody[i])) i++;
+	// @color entries end at depth-0 newlines (a trailing comma continues) —
+	// the same boundary rule parseKeyValueBody uses for key-value directives.
+	for (const entry of scanEntries(cleanedBody, { newlineTerminates: true })) {
+		if (entry.removal) {
+			removals.push(entry.key);
 			continue;
 		}
-
-		// Find colon for key: value
-		const colonIdx = cleanedBody.indexOf(":", i);
-		if (colonIdx === -1) break;
-
-		const key = cleanedBody.slice(i, colonIdx).trim();
-		i = colonIdx + 1;
-
-		// Scan value, looking for ; or { (end of entry) while respecting parens
-		const valueStart = i;
-		let depth = 0;
-		let braceStart = -1;
-
-		let braceClosePos = -1;
-		while (i < cleanedBody.length) {
-			if (cleanedBody[i] === "(") depth++;
-			else if (cleanedBody[i] === ")") depth--;
-			else if (cleanedBody[i] === "{" && depth === 0) {
-				braceStart = i;
-				braceClosePos = findClosingBrace(cleanedBody, i);
-				i = braceClosePos === -1 ? cleanedBody.length : braceClosePos + 1;
-				break;
-			} else if ((cleanedBody[i] === ";" || cleanedBody[i] === "\n") && depth === 0) {
-				break;
-			}
-			i++;
+		if (entry.fragment) {
+			warnings?.push(
+				`[RI-1035] Invalid @color key "${entry.value}" — color names may only contain letters, numbers, hyphens, and underscores. The entry was skipped.`,
+			);
+			continue;
 		}
-
-		let value: string;
-		let darkBlock: string | null = null;
-
-		if (braceStart !== -1) {
-			value = cleanedBody.slice(valueStart, braceStart).trim();
-			if (braceClosePos !== -1) {
-				darkBlock = cleanedBody.slice(braceStart + 1, braceClosePos).trim();
-			}
-		} else {
-			value = cleanedBody.slice(valueStart, i).trim();
-		}
-
-		if (i < cleanedBody.length && (cleanedBody[i] === ";" || cleanedBody[i] === "\n")) i++;
-
+		const { key, value } = entry;
 		if (!key || !value) continue;
-
-		if (key === REMOVAL_KEY) {
-			removals.push(value);
-			continue;
-		}
 
 		// Guard against pathological input with excessive color entries.
 		if (colorCount >= MAX_COLOR_ENTRIES) {
@@ -460,6 +399,8 @@ export function parseColorBody(
 			);
 			continue;
 		}
+
+		const darkBlock = entry.block ?? null;
 
 		// Parse the options block if present. It is a `;`-separated list of bare
 		// flags (`inline`, `parabolic`/`no-parabolic`), their Vite-rewritten
@@ -487,7 +428,7 @@ export function parseColorBody(
 				const optKey = stmt.slice(0, colonIdx).trim();
 				const optVal = stmt.slice(colonIdx + 1).trim();
 				if (optKey === "dark") {
-					darkOverride = parseDarkOverrideBlock(`dark: ${optVal}`);
+					darkOverride = parseDarkOverrideValue(optVal);
 				} else if (optKey === "--ri-inline") {
 					if (optVal === "true") hasInline = true;
 				} else if (optKey === "--ri-parabolic") {
@@ -598,27 +539,24 @@ function parseColorValue(key: string, value: string, warnings?: string[]): Color
 }
 
 /**
- * Parse a dark override block from within a color entry.
- * e.g. "dark: fixed;" or "dark: mirror;" or "dark: shift chroma +0.02 hue +10;"
+ * Parse the value of a `dark: …` override from within a color entry's options
+ * block — e.g. "fixed", "mirror", or "shift chroma +0.02 hue +10". The caller
+ * has already isolated the `dark` key, so this works on the bare value.
  */
-function parseDarkOverrideBlock(block: string): ColorDarkOverride | undefined {
-	const { entries } = parseKeyValueBody(block);
-	for (const [k, v] of entries) {
-		if (k !== "dark") continue;
-		const val = v.trim();
-		if (val === "mirror") return { strategy: "mirror" };
-		if (val === "fixed") return { strategy: "fixed" };
-		if (val.startsWith("shift")) {
-			const chromaMatch = val.match(/chroma\s+([+-]?\d+(?:\.\d+)?)/);
-			const hueMatch = val.match(/hue\s+([+-]?\d+(?:\.\d+)?)/);
-			const chromaDelta = chromaMatch ? Number.parseFloat(chromaMatch[1]) : 0;
-			const hueDelta = hueMatch ? Number.parseFloat(hueMatch[1]) : 0;
-			return {
-				strategy: "shift",
-				chromaDelta: Number.isNaN(chromaDelta) ? 0 : chromaDelta,
-				hueDelta: Number.isNaN(hueDelta) ? 0 : hueDelta,
-			};
-		}
+function parseDarkOverrideValue(value: string): ColorDarkOverride | undefined {
+	const val = value.trim();
+	if (val === "mirror") return { strategy: "mirror" };
+	if (val === "fixed") return { strategy: "fixed" };
+	if (val.startsWith("shift")) {
+		const chromaMatch = val.match(/chroma\s+([+-]?\d+(?:\.\d+)?)/);
+		const hueMatch = val.match(/hue\s+([+-]?\d+(?:\.\d+)?)/);
+		const chromaDelta = chromaMatch ? Number.parseFloat(chromaMatch[1]) : 0;
+		const hueDelta = hueMatch ? Number.parseFloat(hueMatch[1]) : 0;
+		return {
+			strategy: "shift",
+			chromaDelta: Number.isNaN(chromaDelta) ? 0 : chromaDelta,
+			hueDelta: Number.isNaN(hueDelta) ? 0 : hueDelta,
+		};
 	}
 	return undefined;
 }
@@ -731,62 +669,22 @@ export function parseAnimateBody(body: string): {
 	const removals: string[] = [];
 	const cleaned = stripCSSComments(body);
 
-	// Positional scan over `name: shorthand { keyframes }` entries. Removals
-	// (`!name;` / `--ri-rm: name;`) are only recognized at the top level of the
-	// body — never inside keyframe blocks, where `!important` must survive.
-	// This mirrors the Vite transform, which only rewrites depth-0 spans.
-	let i = 0;
-	while (i < cleaned.length) {
-		// Skip whitespace and stray semicolons between entries
-		while (i < cleaned.length && /[\s;]/.test(cleaned[i])) i++;
-		if (i >= cleaned.length) break;
-
-		// Top-level removal: !name;
-		if (cleaned[i] === "!") {
-			i = readRemovalToken(cleaned, i, removals);
+	// `name: shorthand { keyframes }` entries. Removals (`!name;` /
+	// `--ri-rm: name;`) are only recognized at the top level of the body —
+	// never inside keyframe blocks, where `!important` must survive — which
+	// scanEntries guarantees by capturing blocks opaquely. Shorthands legally
+	// wrap across newlines to their `{`, so newlines never end an entry.
+	for (const entry of scanEntries(cleaned, { newlineTerminates: false })) {
+		if (entry.removal) {
+			removals.push(entry.key);
 			continue;
 		}
-
-		// Find name
-		let nameEnd = i;
-		while (nameEnd < cleaned.length && /[\w-]/.test(cleaned[nameEnd])) nameEnd++;
-		const name = cleaned.slice(i, nameEnd);
-		if (!name) {
-			i++;
-			continue;
-		}
-
-		// Skip whitespace and colon
-		let j = nameEnd;
-		while (j < cleaned.length && /\s/.test(cleaned[j])) j++;
-		if (cleaned[j] !== ":") {
-			i = j + 1;
-			continue;
-		}
-		j++; // skip colon
-		while (j < cleaned.length && /\s/.test(cleaned[j])) j++;
-
-		// Read the value until the keyframes brace or a top-level terminator.
-		let k = j;
-		while (k < cleaned.length && cleaned[k] !== "{" && cleaned[k] !== ";") k++;
-
-		if (k >= cleaned.length || cleaned[k] === ";") {
-			// Terminated without a keyframes block — PostCSS-safe removal or a stray entry.
-			const value = cleaned.slice(j, k).trim();
-			if (name === REMOVAL_KEY && value) removals.push(value);
-			i = k < cleaned.length ? k + 1 : k;
-			continue;
-		}
-
-		const shorthand = cleaned.slice(j, k).trim();
-
-		// Find matching close brace for keyframes block
-		const closePos = findClosingBrace(cleaned, k);
-		if (closePos === -1) break;
-
-		const keyframes = cleaned.slice(k + 1, closePos).trim();
-		animations[name] = { shorthand, keyframes };
-		i = closePos + 1;
+		// Entries without a keyframes block (colon-less fragments, stray
+		// `name: value;` lines, unterminated blocks) are dropped, as before.
+		if (entry.block === undefined) continue;
+		// Names that would emit broken keyframe selectors never parse.
+		if (!IDENT_KEY_RE.test(entry.key)) continue;
+		animations[entry.key] = { shorthand: entry.value, keyframes: entry.block };
 	}
 
 	return { animations, removals };
@@ -1109,16 +1007,19 @@ export function parseFontBody(body: string, slot: string, warnings?: string[]): 
 export function parseNestedFontBlock(body: string, warnings?: string[]): FontSlot[] {
 	const cleanedBody = stripCSSComments(body);
 	const configs: FontSlot[] = [];
-	let i = 0;
 
-	while (i < cleanedBody.length) {
-		// Skip whitespace
-		while (i < cleanedBody.length && /\s/.test(cleanedBody[i])) i++;
-		if (i >= cleanedBody.length) break;
+	// Slot values (`"Inter",\n  ui-sans-serif`) legally wrap across newlines
+	// to their `;`/`{`, so newlines never end an entry.
+	for (const entry of scanEntries(cleanedBody, { newlineTerminates: false })) {
+		// @font blocks support no removals; colon-less fragments are dropped.
+		if (entry.removal || entry.fragment) continue;
+		// An unterminated `{ … }` block yields no usable slot — stop, as before.
+		if (entry.unclosedBlock) break;
+		if (!entry.key) continue;
 
 		// Guard against pathological input with excessive font slot definitions.
-		// Checked after the whitespace skip so the warning only fires when real
-		// content was actually truncated.
+		// Checked per scanned entry so the warning only fires when real content
+		// was actually truncated.
 		if (configs.length >= MAX_FONT_CONFIGS) {
 			warnings?.push(
 				`[RI-1216] @font block exceeds ${MAX_FONT_CONFIGS} slot definitions — the remaining slots were skipped. Split rarely-used slots into a separate stylesheet or remove unused ones.`,
@@ -1126,66 +1027,12 @@ export function parseNestedFontBlock(body: string, warnings?: string[]): FontSlo
 			break;
 		}
 
-		// Find slot name (up to the colon)
-		const colonIdx = cleanedBody.indexOf(":", i);
-		if (colonIdx === -1) break;
-		const slot = cleanedBody.slice(i, colonIdx).trim();
-		if (!slot) break;
-		i = colonIdx + 1;
-
-		// Skip whitespace after colon
-		while (i < cleanedBody.length && /\s/.test(cleanedBody[i])) i++;
-
-		// Scan the font value — look for ; or { (respecting quotes)
-		let bracePos = -1;
-		let semiPos = -1;
-		let inQuote = false;
-		let quoteChar = "";
-		for (let j = i; j < cleanedBody.length; j++) {
-			if (inQuote) {
-				if (cleanedBody[j] === quoteChar) {
-					let bs = 0;
-					while (j - 1 - bs >= i && cleanedBody[j - 1 - bs] === "\\") bs++;
-					if (bs % 2 === 0) inQuote = false;
-				}
-				continue;
-			}
-			if (cleanedBody[j] === '"' || cleanedBody[j] === "'") {
-				inQuote = true;
-				quoteChar = cleanedBody[j];
-				continue;
-			}
-			if (cleanedBody[j] === "{") {
-				bracePos = j;
-				break;
-			}
-			if (cleanedBody[j] === ";") {
-				semiPos = j;
-				break;
-			}
-		}
-
-		if (bracePos !== -1) {
+		if (entry.block !== undefined) {
 			// Has body block: slot: "Inter" from google { weight: 100 900; }
-			const preamble = cleanedBody.slice(i, bracePos).trim();
-			const closePos = findClosingBrace(cleanedBody, bracePos);
-			if (closePos === -1) break;
-			const innerBody = cleanedBody.slice(bracePos + 1, closePos).trim();
-			const combined = `${preamble} { ${innerBody} }`;
-			configs.push(parseFontBody(combined, slot, warnings));
-			i = closePos + 1;
-			// Skip optional trailing semicolon
-			while (i < cleanedBody.length && /[\s;]/.test(cleanedBody[i])) i++;
-		} else if (semiPos !== -1) {
+			configs.push(parseFontBody(`${entry.value} { ${entry.block} }`, entry.key, warnings));
+		} else if (entry.value) {
 			// Simple: slot: "Inter" from google;
-			const value = cleanedBody.slice(i, semiPos).trim();
-			configs.push(parseFontBody(value, slot, warnings));
-			i = semiPos + 1;
-		} else {
-			// End of body without terminator
-			const value = cleanedBody.slice(i).trim();
-			if (value) configs.push(parseFontBody(value, slot, warnings));
-			break;
+			configs.push(parseFontBody(entry.value, entry.key, warnings));
 		}
 	}
 

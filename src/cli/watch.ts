@@ -3,7 +3,7 @@ import { resolve, dirname } from "node:path";
 import { writeFileAtomic } from "./atomic-write.js";
 import type { CLIOptions } from "./args.js";
 import { buildCSS, type BuildResult } from "./build.js";
-import { DEFAULT_EXCLUDES, DEFAULT_PATTERNS } from "../scanner/index.js";
+import { DEFAULT_EXCLUDES, DEFAULT_PATTERNS } from "../scanner/sources.js";
 
 /** Minify when requested. Lazy: loading lightningcss pulls in a native
  *  binding — only pay for it (and only risk its platform-support failure
@@ -57,10 +57,11 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 	});
 
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-	let building = false;
-	let pendingRebuild = false;
-	let buildDoneResolve: (() => void) | null = null;
-	let buildDonePromise: Promise<void> | null = null;
+	/** In-flight rebuild; null when idle. Doubles as the "building" flag and as
+	 *  the promise cleanup awaits (it never rejects — runBuild catches). */
+	let currentBuild: Promise<void> | null = null;
+	/** A change arrived while a build was in flight — run exactly once more. */
+	let dirty = false;
 	let consecutiveErrors = 0;
 	let errorsPaused = false;
 	const MAX_CONSECUTIVE_ERRORS = 5;
@@ -95,11 +96,34 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 	};
 	syncSourceWatchPaths(initialBuild.theme);
 
-	const rebuild = () => {
+	const runBuild = async (): Promise<void> => {
+		lastBuildStart = Date.now();
+		try {
+			const result = await buildAndWrite(opts, cwd, outputFile);
+			console.log(`[rainbowindex] Rebuilt: ${outputFile}`);
+			consecutiveErrors = 0;
+			errorsPaused = false;
+			syncSourceWatchPaths(result.theme);
+		} catch (err) {
+			consecutiveErrors++;
+			console.error("[rainbowindex] Build error:", err);
+		} finally {
+			currentBuild = null;
+			if (dirty) {
+				dirty = false;
+				scheduleRebuild();
+			}
+		}
+	};
+
+	const scheduleRebuild = () => {
 		if (debounceTimer) clearTimeout(debounceTimer);
-		debounceTimer = setTimeout(async () => {
-			if (building) {
-				pendingRebuild = true;
+		// Debounce and rate-limit share the one timer: wait out the debounce
+		// window, or longer so build starts stay MIN_REBUILD_INTERVAL_MS apart.
+		const delay = Math.max(100, MIN_REBUILD_INTERVAL_MS - (Date.now() - lastBuildStart));
+		debounceTimer = setTimeout(() => {
+			if (currentBuild) {
+				dirty = true;
 				return;
 			}
 			if (errorsPaused) {
@@ -114,43 +138,13 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 				errorsPaused = true;
 				return;
 			}
-			const now = Date.now();
-			const elapsed = now - lastBuildStart;
-			if (lastBuildStart > 0 && elapsed < MIN_REBUILD_INTERVAL_MS) {
-				pendingRebuild = true;
-				setTimeout(rebuild, MIN_REBUILD_INTERVAL_MS - elapsed);
-				return;
-			}
-			lastBuildStart = now;
-			building = true;
-			buildDonePromise = new Promise<void>((resolveBuild) => {
-				buildDoneResolve = resolveBuild;
-			});
-			try {
-				const result = await buildAndWrite(opts, cwd, outputFile);
-				console.log(`[rainbowindex] Rebuilt: ${outputFile}`);
-				consecutiveErrors = 0;
-				errorsPaused = false;
-				syncSourceWatchPaths(result.theme);
-			} catch (err) {
-				consecutiveErrors++;
-				console.error("[rainbowindex] Build error:", err);
-			} finally {
-				building = false;
-				buildDoneResolve?.();
-				buildDoneResolve = null;
-				buildDonePromise = null;
-				if (pendingRebuild) {
-					pendingRebuild = false;
-					rebuild();
-				}
-			}
-		}, 100);
+			currentBuild = runBuild();
+		}, delay);
 	};
 
-	watcher.on("change", rebuild);
-	watcher.on("add", rebuild);
-	watcher.on("unlink", rebuild);
+	watcher.on("change", scheduleRebuild);
+	watcher.on("add", scheduleRebuild);
+	watcher.on("unlink", scheduleRebuild);
 	watcher.on("error", (err: unknown) => {
 		console.error("[rainbowindex] Watcher error:", err);
 	});
@@ -160,7 +154,7 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 		if (cleanupCalled) return;
 		cleanupCalled = true;
 		if (debounceTimer) clearTimeout(debounceTimer);
-		pendingRebuild = false;
+		dirty = false;
 
 		const doExit = () => {
 			watcher
@@ -174,9 +168,9 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 				});
 		};
 
-		if (building && buildDonePromise) {
+		if (currentBuild) {
 			const timeout = new Promise<void>((r) => setTimeout(r, 5000));
-			Promise.race([buildDonePromise, timeout]).then(doExit);
+			Promise.race([currentBuild, timeout]).then(doExit);
 		} else {
 			doExit();
 		}

@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-20
+
+### Added
+
+- **GitHub Packages publishing** — every release is now also published to
+  GitHub Packages as `@rainbowindex/rainbowindex` (that registry requires an
+  owner-scoped name). The README documents installing it under the usual
+  name via `pnpm add rainbowindex@npm:@rainbowindex/rainbowindex`, so all
+  documented imports and CLI invocations work unchanged.
+
+### Changed
+
+- **Stricter CLI argument validation** — the CLI is now driven by a
+  declarative command table that knows which flags and positionals each
+  command accepts. Flags used under the wrong command, stray positional
+  arguments, and flags missing their value are rejected with an error
+  instead of being silently ignored.
+- **Internal restructuring** (behavior-preserving, net ≈ −4,500 lines) —
+  the merge, scanner, and effects modules were split into focused modules;
+  the spacing/border prefix→property maps are now single-sourced from the
+  merge conflict table with a machine-checked parity test; `@apply` reuses
+  the engine's cascade ordering; the CLI and PostCSS builds share one
+  orchestration path with parallelized font fetches; and all internal
+  import cycles were broken. Public entry points are unchanged.
+
+### Fixed
+
+- **`ri()` stroke-width vs stroke-color conflict** — width-shaped `stroke-*`
+  classes (`stroke-2`, `stroke-1.5`, `stroke-[3px]`) were claiming the
+  `stroke` color property in the merge conflict table, so
+  `ri("stroke-2 stroke-red-500")` dropped `stroke-2` even though the two
+  classes set different CSS properties. The `stroke` prefix is now
+  width-vs-color dual-mode (mirroring `border`/`outline`): decimal and
+  non-color arbitrary values claim `stroke-width`, color values claim
+  `stroke`. Same-property conflicts (`stroke-2` vs `stroke-4`,
+  `stroke-red-500` vs `stroke-blue-500`) still merge as before.
+- **Watch mode double rebuild** — debouncing and rate-limiting now share a
+  single timer, so a burst of file changes landing inside the rate-limit
+  window schedules one rebuild instead of a redundant second one.
+- **`@color` entries without a colon** — a colon-less fragment in an
+  `@color` block now produces a warning and is skipped on its own; it no
+  longer swallowed the entry that followed it.
+
 ## [0.3.0] - 2026-08-14
 
 ### Added — editor tooling API (phase 2)

@@ -1,15 +1,15 @@
-import type { AtRule, ChildNode, Root, Rule } from "postcss";
+import postcss, { type AtRule, type ChildNode, type Node, type Root, type Rule } from "postcss";
 import { parseUtility } from "../../utilities/parser.js";
 import {
 	resolveUtilityDeclarations,
 	forEachApplyClass,
 	getCustomUtility,
-	type CSSDeclaration,
-	type UtilityNestedBlock,
 } from "../../utilities/index.js";
+import type { CSSDeclaration, UtilityNestedBlock } from "../../utilities/helpers.js";
 import { resolveVariant, type VariantWrapper } from "../../engine/index.js";
-import { DEFAULT_PROPERTY_GROUP, PROPERTY_GROUPS } from "../../engine/ordering.js";
-import { expandVariantGroups } from "../../scanner/index.js";
+import { computeSortKey } from "../../engine/ordering.js";
+import { applyVariantWrappers, splitSelectorList } from "../../engine/variants.js";
+import { expandVariantGroups } from "../../scanner/class-extraction.js";
 import type { ResolvedTheme } from "../../directives/foundation.js";
 
 interface ResolvedDecl {
@@ -39,11 +39,10 @@ interface DeclGroup {
 }
 
 function makeDeclGroup(r: ResolvedDecl): DeclGroup {
-	// Mirror engine/index.ts: sortKey is derived from the first declaration's
-	// property only. Variants are handled by bucket key, so the variant weight
-	// component of the engine's sortKey is not needed here.
-	const firstProp = r.declarations[0]?.property ?? "";
-	const sortKey = PROPERTY_GROUPS[firstProp] ?? DEFAULT_PROPERTY_GROUP;
+	// Variants are handled by bucket key, so computeSortKey is called with no
+	// variants and the key is the property group alone — the same value the
+	// engine assigns the utility as a standalone rule.
+	const sortKey = computeSortKey(r.declarations[0]?.property ?? "");
 	return {
 		sortKey,
 		decls: r.declarations.map((d) => ({ decl: d, important: r.important })),
@@ -64,17 +63,9 @@ import { APPLY_ALIASES, hasApplyLikeDirective } from "../../directives/index.js"
 const MAX_APPLY_DEPTH = 5;
 const MAX_APPLY_CLASSES = 500;
 
-interface PostCSSApi {
-	rule(opts: { selector: string }): Rule;
-	decl(opts: { prop: string; value: string; important?: boolean }): ChildNode;
-	atRule(opts: { name: string; params?: string }): AtRule;
-}
-
-function applySource<T extends { source?: unknown }>(node: T, source: unknown): T {
-	if (source && typeof source === "object" && "source" in source) {
-		const sourceNode = source as { source?: unknown };
-		if (sourceNode.source) node.source = sourceNode.source;
-	}
+/** Copy `from`'s source position onto a freshly built node, when it has one. */
+function applySource<T extends Node>(node: T, from: Node): T {
+	if (from.source) node.source = from.source;
 	return node;
 }
 
@@ -115,26 +106,6 @@ function findGroupAncestor(
 		current = current.parent;
 	}
 	return null;
-}
-
-/**
- * Split a selector list on top-level commas (not inside parentheses or brackets).
- */
-function splitSelectorList(selector: string): string[] {
-	const results: string[] = [];
-	let depth = 0;
-	let start = 0;
-	for (let i = 0; i < selector.length; i++) {
-		const ch = selector[i];
-		if (ch === "(" || ch === "[") depth++;
-		else if (ch === ")" || ch === "]") depth--;
-		else if (ch === "," && depth === 0) {
-			results.push(selector.slice(start, i).trim());
-			start = i + 1;
-		}
-	}
-	results.push(selector.slice(start).trim());
-	return results.filter(Boolean);
 }
 
 /**
@@ -187,30 +158,11 @@ function resolveFullNestingSelector(rule: Rule): string {
 	return composeNestedSelectors(parts);
 }
 
-/** Walk up to the document root node. */
-function findDocRoot(node: { parent?: unknown }): Root {
-	let current = node as { parent?: unknown; type?: string };
-	while (current.parent) {
-		current = current.parent as { parent?: unknown; type?: string };
-	}
-	return current as unknown as Root;
-}
-
 // ---------------------------------------------------------------------------
 // Main entry
 // ---------------------------------------------------------------------------
 
-export function processApply(
-	root: Root,
-	theme: ResolvedTheme,
-	warnings: string[],
-	postcss?: PostCSSApi,
-): void {
-	if (!postcss) {
-		warnings.push("[RI-1006] @apply requires postcss but it was not provided.");
-		return;
-	}
-
+export function processApply(root: Root, theme: ResolvedTheme, warnings: string[]): void {
 	// Normalize @apply aliases before processing.
 	for (const alias of APPLY_ALIASES) {
 		root.walkAtRules(alias, (atRule) => {
@@ -252,7 +204,6 @@ export function processApply(
 				theme,
 				warnings,
 				customVariantMap,
-				postcss,
 				groupRoots,
 				checkedApplyRoots,
 			);
@@ -280,7 +231,6 @@ function expandApply(
 	theme: ResolvedTheme,
 	warnings: string[],
 	customVariantMap: ReadonlyMap<string, { name: string; selector: string }>,
-	postcss: PostCSSApi,
 	groupRoots: ReadonlySet<Rule>,
 	checkedApplyRoots: Set<string>,
 ): void {
@@ -386,7 +336,7 @@ function expandApply(
 	// Custom-utility nested blocks land inside the parent rule as native CSS
 	// nesting, at the @apply position — after the flat declarations above.
 	for (const { block, important } of baseNestedBlocks) {
-		atRule.before(buildNestedBlockNode(block, postcss, atRule, important));
+		atRule.before(buildNestedBlockNode(block, atRule, important));
 	}
 
 	let insertAfter: ChildNode = parentRule as Rule;
@@ -423,7 +373,7 @@ function expandApply(
 	};
 	let docRootMemo: Root | null = null;
 	const docRoot = () => {
-		if (docRootMemo === null) docRootMemo = findDocRoot(parentContainer);
+		if (docRootMemo === null) docRootMemo = parentContainer.root();
 		return docRootMemo;
 	};
 
@@ -464,7 +414,6 @@ function expandApply(
 				effectiveBase,
 				groupVariantInfo.rewrittenWrappers,
 				bucketDecls,
-				postcss,
 				atRule,
 				bucket.nestedSelector,
 				bucket.nestedBlocks,
@@ -480,7 +429,6 @@ function expandApply(
 				fullNestingSelector(),
 				bucket.wrappers,
 				bucketDecls,
-				postcss,
 				atRule,
 				bucket.nestedSelector,
 				bucket.nestedBlocks,
@@ -494,7 +442,6 @@ function expandApply(
 				baseSelector,
 				bucket.wrappers,
 				bucketDecls,
-				postcss,
 				atRule,
 				bucket.nestedSelector,
 				bucket.nestedBlocks,
@@ -703,8 +650,7 @@ function variantKey(wrappers: VariantWrapper[], nestedSelector?: string): string
  */
 function buildNestedBlockNode(
 	block: UtilityNestedBlock,
-	postcss: PostCSSApi,
-	sourceNode: { source?: unknown },
+	sourceNode: Node,
 	important: boolean,
 ): ChildNode {
 	let node: Rule | AtRule;
@@ -722,7 +668,7 @@ function buildNestedBlockNode(
 		);
 	}
 	for (const child of block.nested) {
-		node.append(buildNestedBlockNode(child, postcss, sourceNode, important));
+		node.append(buildNestedBlockNode(child, sourceNode, important));
 	}
 	return node;
 }
@@ -731,34 +677,16 @@ function buildVariantNode(
 	baseSelector: string,
 	wrappers: VariantWrapper[],
 	decls: Array<{ decl: CSSDeclaration; important: boolean }>,
-	postcss: PostCSSApi,
-	sourceNode: { source?: unknown },
+	sourceNode: Node,
 	nestedSelector: string | undefined,
 	nestedBlocks: NestedBlockEntry[],
 ): ChildNode | null {
 	if (decls.length === 0 && nestedBlocks.length === 0) return null;
 
-	let selector = baseSelector;
-	const atRules: string[] = [];
-	let startingStyle = false;
-
-	for (const w of wrappers) {
-		if (w.selectorSuffix) {
-			const branches = splitSelectorList(selector);
-			const suffix = w.selectorSuffix;
-			if (w.replaceAmpersand) {
-				selector = branches.map((b) => suffix.replace(/&/g, b)).join(", ");
-			} else {
-				selector = branches.map((b) => b + suffix).join(", ");
-			}
-		}
-		if (w.atRule) {
-			atRules.push(w.atRule);
-		}
-		if (w.startingStyle) {
-			startingStyle = true;
-		}
-	}
+	// Wrapper folding (suffix per branch, at-rule order, starting-style) is the
+	// engine's cascade model — shared so @apply output can't diverge from the
+	// same utility compiled standalone.
+	const { selector, atRules, startingStyle } = applyVariantWrappers(baseSelector, wrappers);
 
 	const rule = applySource(postcss.rule({ selector }), sourceNode);
 	let declTarget = rule;
@@ -790,7 +718,7 @@ function buildVariantNode(
 	}
 
 	for (const { block, important } of nestedBlocks) {
-		declTarget.append(buildNestedBlockNode(block, postcss, sourceNode, important));
+		declTarget.append(buildNestedBlockNode(block, sourceNode, important));
 	}
 
 	if (atRules.length === 0) return rule;

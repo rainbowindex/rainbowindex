@@ -25,7 +25,7 @@ import {
 import type { CornerShape, FluidConfig, FluidUnit } from "../theme/index.js";
 
 import { DEFAULT_DARK_CONFIG } from "../theme/colors.js";
-import { parseRemValue } from "../shared.js";
+import { parseRemValue } from "../css/fluid.js";
 
 import type { ParsedDirective, ResolvedTheme, WritableTheme } from "./foundation.js";
 
@@ -231,6 +231,22 @@ function validateColorAliases(theme: WritableTheme): void {
 	}
 }
 
+/** The scale directives all resolve identically — merge the directive's
+ *  key/value body into one string-keyed theme record. One table entry per
+ *  directive keeps them to a single switch branch; the directive type doubles
+ *  as the warning label, so warning text is unchanged from the per-case form. */
+const SCALE_DIRECTIVE_FIELDS = {
+	breakpoint: "breakpoints",
+	shadow: "shadows",
+	ease: "easing",
+	blur: "blur",
+	z: "z",
+	leading: "leading",
+	tracking: "tracking",
+	opacity: "opacity",
+	duration: "duration",
+} as const;
+
 /**
  * Resolve parsed directives into a theme.
  *
@@ -351,12 +367,21 @@ export function resolveDirectives(
 				}
 				break;
 			}
-			case "breakpoint": {
-				theme.breakpoints = resolveKeyValueDirective(
+			case "breakpoint":
+			case "shadow":
+			case "ease":
+			case "blur":
+			case "z":
+			case "leading":
+			case "tracking":
+			case "opacity":
+			case "duration": {
+				const field = SCALE_DIRECTIVE_FIELDS[directive.type];
+				theme[field] = resolveKeyValueDirective(
 					directive,
-					theme.breakpoints,
+					theme[field],
 					theme.warnings,
-					"breakpoint",
+					directive.type,
 				);
 				break;
 			}
@@ -403,15 +428,6 @@ export function resolveDirectives(
 				}
 				break;
 			}
-			case "shadow": {
-				theme.shadows = resolveKeyValueDirective(
-					directive,
-					theme.shadows,
-					theme.warnings,
-					"shadow",
-				);
-				break;
-			}
 			case "weight": {
 				warnIgnoredModifier("weight", directive.modifier, theme.warnings);
 				const { entries, removals } = parseKeyValueBody(directive.body, theme.warnings, "weight");
@@ -433,18 +449,6 @@ export function resolveDirectives(
 					theme.warnings,
 					"weight",
 				);
-				break;
-			}
-			case "ease": {
-				theme.easing = resolveKeyValueDirective(directive, theme.easing, theme.warnings, "ease");
-				break;
-			}
-			case "blur": {
-				theme.blur = resolveKeyValueDirective(directive, theme.blur, theme.warnings, "blur");
-				break;
-			}
-			case "z": {
-				theme.z = resolveKeyValueDirective(directive, theme.z, theme.warnings, "z");
 				break;
 			}
 			case "animate": {
@@ -534,42 +538,6 @@ export function resolveDirectives(
 			case "source": {
 				const source = parseSourceDirective(directive.body, directive.modifier);
 				if (source) theme.sources.push(source);
-				break;
-			}
-			case "leading": {
-				theme.leading = resolveKeyValueDirective(
-					directive,
-					theme.leading,
-					theme.warnings,
-					"leading",
-				);
-				break;
-			}
-			case "tracking": {
-				theme.tracking = resolveKeyValueDirective(
-					directive,
-					theme.tracking,
-					theme.warnings,
-					"tracking",
-				);
-				break;
-			}
-			case "opacity": {
-				theme.opacity = resolveKeyValueDirective(
-					directive,
-					theme.opacity,
-					theme.warnings,
-					"opacity",
-				);
-				break;
-			}
-			case "duration": {
-				theme.duration = resolveKeyValueDirective(
-					directive,
-					theme.duration,
-					theme.warnings,
-					"duration",
-				);
 				break;
 			}
 			case "layer": {

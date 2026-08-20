@@ -53,7 +53,7 @@ describe("custom utility resolution", () => {
 		const theme = resolveDirectives(dirs);
 		const root = postcss.parse(".btn { @apply card; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const css = root.toString();
 		expect(warnings.filter((w) => w.includes("Unknown utility"))).toEqual([]);
 		expect(css).toContain("background: red");
@@ -65,7 +65,7 @@ describe("custom utility resolution", () => {
 		const theme = resolveDirectives(dirs);
 		const root = postcss.parse(".section { @apply pg-mg; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const css = root.toString();
 		expect(warnings.filter((w) => w.includes("Unknown utility"))).toEqual([]);
 		expect(css).toContain("padding-inline");
@@ -80,7 +80,7 @@ describe("custom utility resolution", () => {
 		const theme = resolveDirectives(dirs);
 		const root = postcss.parse(".box { @apply card; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const css = root.toString();
 		expect(warnings.filter((w) => w.includes("Unknown utility"))).toEqual([]);
 		expect(css).toContain("background: white");
@@ -143,7 +143,7 @@ describe("custom utility resolution", () => {
 		const theme = resolveDirectives(dirs);
 		const root = postcss.parse(".x { @apply a; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		// Circular @apply is caught at the resolution level — the utility
 		// resolves to null (no declarations) and processApply reports it
 		// as an unknown utility.
@@ -174,7 +174,7 @@ describe("custom utility resolution", () => {
 		const theme = resolveDirectives(dirs);
 		const root = postcss.parse("header { @apply fixed glass; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		expect(warnings.some((w) => w.includes('Unknown utility "glass"'))).toBe(false);
 		const css = root.toString();
 		expect(css).toContain("backdrop-filter");
@@ -192,7 +192,7 @@ describe("custom utility resolution", () => {
 		const theme = resolveDirectives(extractDirectives("", []));
 		const root = postcss.parse("a, button { @apply hover:text-white; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const css = root.toString();
 		expect(css).toMatch(/a:hover\s*,\s*button:hover\s*\{/);
 		expect(css).not.toMatch(/(^|\n)\s*a\s*,\s*button:hover\s*\{/);
@@ -204,7 +204,7 @@ describe("custom utility resolution", () => {
 		);
 		const root = postcss.parse("a, button { @apply hocus:text-white; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const css = root.toString();
 		expect(css).toMatch(/a:hover/);
 		expect(css).toMatch(/button:hover/);
@@ -265,7 +265,7 @@ describe("custom utility / built-in coexistence (value-gated lookup)", () => {
 		);
 		const root = postcss.parse(".app { @apply min-h; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		expect(warnings.some((w) => w.includes("[RI-1005]"))).toBe(false);
 		expect(root.toString()).toContain("min-height: calc(var(--ri-vh) - env(safe-area-inset-top))");
 	});
@@ -294,7 +294,7 @@ describe("custom utility — leading dot tolerated (@utility .foo ≡ @utility f
 		// And it applies cleanly via @apply with the dotless class name.
 		const root = postcss.parse(".x { @apply min-h-safe; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		expect(warnings.some((w) => w.includes("Unknown utility"))).toBe(false);
 		expect(root.toString()).toContain("color: red");
 	});
@@ -327,7 +327,7 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 		);
 		const root = postcss.parse(".app { @apply min-h; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		// resolveUtilityDeclarations already expands the body; the apply path must
 		// not re-expand it. Exactly one min-height declaration, with the right value.
 		const values: string[] = [];
@@ -339,7 +339,7 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 		const theme = resolveDirectives(extractDirectives("@utility pad { @apply px-8 py-7; }", []));
 		const root = postcss.parse(".section { @apply pad; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const props: string[] = [];
 		root.walkDecls((d) => props.push(d.prop));
 		expect(props.filter((p) => p === "padding-inline")).toHaveLength(1);
@@ -352,7 +352,7 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 		);
 		const root = postcss.parse(".box { @apply card; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const props: string[] = [];
 		root.walkDecls((d) => props.push(d.prop));
 		expect(props.filter((p) => p === "background")).toHaveLength(1);
@@ -436,7 +436,7 @@ describe("custom utility nested rules", () => {
 	it("inlines nested blocks into the target rule via processApply", () => {
 		const root = postcss.parse(".btn { @apply route-focus-inner; }");
 		const warnings: string[] = [];
-		processApply(root, focusTheme(), warnings, postcss);
+		processApply(root, focusTheme(), warnings);
 		expect(warnings.filter((w) => w.includes("Unknown utility"))).toEqual([]);
 		const btn = root.first as Rule;
 		const directProps = btn.nodes
@@ -454,7 +454,7 @@ describe("custom utility nested rules", () => {
 	it("nests blocks inside the variant rule for variant-prefixed custom utilities", () => {
 		const root = postcss.parse(".btn { @apply hover:route-focus-inner; }");
 		const warnings: string[] = [];
-		processApply(root, focusTheme(), warnings, postcss);
+		processApply(root, focusTheme(), warnings);
 		expect(warnings.filter((w) => w.includes("Unknown utility"))).toEqual([]);
 		const hoverRule = root.nodes.find(
 			(n) => n.type === "rule" && (n as Rule).selector === ".btn:hover",
@@ -490,7 +490,7 @@ describe("custom utility nested rules", () => {
 		);
 		const root = postcss.parse(".box { @apply resp-pad; }");
 		const warnings: string[] = [];
-		processApply(root, theme, warnings, postcss);
+		processApply(root, theme, warnings);
 		const box = root.first as Rule;
 		const media = box.nodes.find((n) => n.type === "atrule") as AtRule;
 		expect(media.name).toBe("media");

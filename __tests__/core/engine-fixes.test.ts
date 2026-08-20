@@ -116,6 +116,23 @@ describe("custom breakpoint cascade order", () => {
 // Variant fixes
 // ---------------------------------------------------------------------------
 
+describe("comma-bearing variant stacking", () => {
+	it("applies a stacked suffix variant to every branch of a comma-bearing custom variant", () => {
+		// Previously the engine appended a stacked suffix only after the last
+		// branch of a comma-bearing variant selector (".x:hover, .x:focus:hover"),
+		// diverging from @apply's per-branch semantics. Both surfaces now share
+		// applyVariantWrappers, which lands the suffix on every branch.
+		const custom = resolveDirectives([
+			{ type: "custom", body: "", modifier: "hocus (&:hover, &:focus)" },
+		]);
+		const result = compile(["hocus:hover:underline"], custom);
+		expect(result.rules).toHaveLength(1);
+		expect(result.rules[0].selector).toBe(
+			".hocus\\:hover\\:underline:hover:hover, .hocus\\:hover\\:underline:focus:hover",
+		);
+	});
+});
+
 describe("plain arbitrary variant self-match", () => {
 	it("[p] emits a self-match :is() with no descendant space", () => {
 		const result = compile(["[p]:p-4"]);

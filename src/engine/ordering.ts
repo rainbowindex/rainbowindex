@@ -9,6 +9,7 @@
 
 import { devWarn, IS_DEV } from "../runtime.js";
 import { codepointCompare } from "../shared.js";
+import { FIXED_VARIANT_WEIGHTS } from "./variants.js";
 
 // ---------------------------------------------------------------------------
 // Property Groups
@@ -471,114 +472,47 @@ Object.freeze(PROPERTY_GROUPS);
  *   - focus    = 401             (tier 4 only)
  *   - No collision possible between different tier combinations.
  *
+ * Fixed-variant weights are defined next to their selectors in
+ * engine/variants.ts (FIXED_VARIANT_WEIGHTS) so name and weight can never
+ * drift; only the theme-default breakpoint statics (mirrored by
+ * buildBreakpointWeights below) and the group-/peer- relational composites
+ * live here.
+ *
  * Null prototype for the same reason as PROPERTY_GROUPS: variant names are
  * user input, and a prototype-chain hit would yield a non-numeric weight.
  */
-export const VARIANT_WEIGHTS: Record<string, number> = Object.assign(Object.create(null), {
-	// Tier 0: Dark mode — no cascade boost (dark: is like base styles)
-	dark: 0,
+export const VARIANT_WEIGHTS: Record<string, number> = Object.assign(
+	Object.create(null),
+	FIXED_VARIANT_WEIGHTS,
+	{
+		// Tier 1: Responsive (base 100) — theme-default breakpoint statics
+		sm: 101,
+		md: 102,
+		lg: 103,
+		xl: 104,
 
-	// Tier 1: Responsive (base 100)
-	sm: 101,
-	md: 102,
-	lg: 103,
-	xl: 104,
+		// Tier 2: Container query variants (base 200)
+		"@sm": 206,
+		"@md": 207,
+		"@lg": 208,
+		"@xl": 209,
 
-	// Tier 2: Container query variants (base 200)
-	"@sm": 206,
-	"@md": 207,
-	"@lg": 208,
-	"@xl": 209,
-
-	// Tier 3: Orientation / Accessibility media (base 300)
-	portrait: 310,
-	landscape: 311,
-	"motion-safe": 312,
-	"motion-reduce": 313,
-	print: 314,
-	light: 315,
-	"contrast-more": 316,
-	"contrast-less": 317,
-	"forced-colors": 318,
-	"inverted-colors": 319,
-	"pointer-fine": 320,
-	"pointer-coarse": 321,
-	"pointer-none": 322,
-	"any-pointer-fine": 323,
-	"any-pointer-coarse": 324,
-	"any-pointer-none": 325,
-	noscript: 326,
-
-	// Tier 4: State pseudo-classes (base 400)
-	hover: 420,
-	focus: 421,
-	active: 422,
-	visited: 423,
-	"focus-visible": 424,
-	"focus-within": 425,
-	"group-hover": 426,
-	"group-focus": 427,
-	"group-active": 428,
-	"group-focus-visible": 429,
-	"group-focus-within": 430,
-	"peer-hover": 431,
-	"peer-focus": 432,
-	"peer-active": 433,
-	"peer-focus-visible": 434,
-	"peer-focus-within": 435,
-	target: 436,
-	open: 437,
-
-	// Tier 5: Form (base 500)
-	disabled: 550,
-	enabled: 551,
-	checked: 552,
-	indeterminate: 553,
-	required: 554,
-	invalid: 555,
-	valid: 556,
-	default: 557,
-	optional: 558,
-	"user-valid": 559,
-	"user-invalid": 560,
-	"in-range": 561,
-	"out-of-range": 562,
-	"placeholder-shown": 563,
-	autofill: 564,
-	"read-only": 565,
-
-	// Tier 6: Structural (base 600)
-	first: 660,
-	last: 661,
-	odd: 662,
-	even: 663,
-	"first-of-type": 664,
-	"last-of-type": 665,
-	only: 666,
-	empty: 667,
-	"only-of-type": 668,
-	"details-content": 669,
-	inert: 670,
-	rtl: 671,
-	ltr: 672,
-	"*": 673,
-	"**": 674,
-
-	// Tier 7: Entry transitions (base 700)
-	starting: 770,
-
-	// Tier 8: Pseudo-elements (base 800)
-	// Each pseudo-element gets a distinct weight for deterministic CSS ordering.
-	placeholder: 889,
-	selection: 890,
-	file: 891,
-	"first-line": 892,
-	"first-letter": 893,
-	marker: 894,
-	before: 895,
-	after: 896,
-	backdrop: 897,
-});
+		// Tier 4: State pseudo-classes (base 400) — group-*/peer-* relational
+		// composites: a deliberately weighted 5-name subset of the open family.
+		// All other group-{pseudo}/peer-{pseudo} forms intentionally fall to the
+		// custom tier (900).
+		"group-hover": 426,
+		"group-focus": 427,
+		"group-active": 428,
+		"group-focus-visible": 429,
+		"group-focus-within": 430,
+		"peer-hover": 431,
+		"peer-focus": 432,
+		"peer-active": 433,
+		"peer-focus-visible": 434,
+		"peer-focus-within": 435,
+	},
+);
 Object.freeze(VARIANT_WEIGHTS);
 
 /**
@@ -647,7 +581,7 @@ export function buildBreakpointWeights(
 /** Default property group for unknown CSS properties. Placed above all defined
  *  groups (max ~232) so unknown properties sort after known utility properties
  *  but before the variant multiplier boundary. */
-export const DEFAULT_PROPERTY_GROUP = 500;
+const DEFAULT_PROPERTY_GROUP = 500;
 
 /**
  * Multiplier that separates variant weight from property group in the sort key.

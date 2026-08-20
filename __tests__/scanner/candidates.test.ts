@@ -4,7 +4,7 @@ import {
 	extractClassesFromSource,
 	type ClassCandidate,
 	type SourceExtractionInput,
-} from "../../src/scanner/index.js";
+} from "../../src/scanner/class-extraction.js";
 
 // ---------------------------------------------------------------------------
 // Invariant helpers

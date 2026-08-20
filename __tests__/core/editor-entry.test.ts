@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
 	analyzeProjectCSS,
+	CLASS_HELPER_NAMES,
 	createClassInspector,
 	CSS_ENTRY_CANDIDATES,
 	EDITOR_API_VERSION,
@@ -11,6 +12,7 @@ import {
 	isSourceFile,
 	listVariants,
 	parseUtility,
+	VARIANT_HELPER_NAMES,
 	version,
 } from "../../src/entries/editor.js";
 import { CSS_CANDIDATES } from "../../src/cli/css-file.js";
@@ -32,6 +34,24 @@ describe("rainbowindex/editor entry", () => {
 		expect(editorCapabilities).toContain("color-swatches");
 		expect(editorCapabilities).toContain("editor-session");
 		expect(Object.isFrozen(editorCapabilities)).toBe(true);
+	});
+
+	test("scanner helper-name contract is exposed for completion tooling", () => {
+		// Editor completion-context detection must match the scanner's own
+		// helper-call matching, so these name lists are public API.
+		expect(CLASS_HELPER_NAMES).toEqual([
+			"clsx",
+			"cn",
+			"classnames",
+			"classNames",
+			"cx",
+			"ri",
+			"twJoin",
+			"twMerge",
+		]);
+		expect(VARIANT_HELPER_NAMES).toEqual(["cva", "tv"]);
+		expect(Object.isFrozen(CLASS_HELPER_NAMES)).toBe(true);
+		expect(Object.isFrozen(VARIANT_HELPER_NAMES)).toBe(true);
 	});
 
 	test("inspection surface works end to end through the entry", () => {

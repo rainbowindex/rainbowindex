@@ -3,9 +3,8 @@ import {
 	expandApplyGroups,
 	expandVariantGroups,
 	extractClasses,
-	resolveSourceFilesAsync,
-	scanSourceFilesAsync,
-} from "../../src/scanner/index.js";
+} from "../../src/scanner/class-extraction.js";
+import { resolveSourceFilesAsync, scanSourceFilesAsync } from "../../src/scanner/sources.js";
 import { writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

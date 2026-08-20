@@ -131,3 +131,73 @@ jobs:
             *-*) extra_args+=(--tag next) ;;
           esac
           npm publish "${extra_args[@]}"
+
+  publish-github-packages:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+      # Required to push a package to this repository's GitHub Packages registry.
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      # registry-url + scope write an .npmrc that points @rainbowindex at
+      # GitHub Packages and reads its token from NODE_AUTH_TOKEN. Unlike the
+      # npm job, this registry has no OIDC/trusted publishing, so a token is
+      # the only way in.
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "@rainbowindex"
+
+      - name: Read package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing GitHub Packages publication
+        id: existing
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          # As on npm, `npm view` exits 0 with empty output when the package
+          # exists but the version doesn't, so test the output, not the code.
+          published="$(npm view "@rainbowindex/rainbowindex@$VERSION" version 2>/dev/null || true)"
+          if [ -n "$published" ]; then
+            echo "@rainbowindex/rainbowindex@$VERSION is already on GitHub Packages — nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.existing.outputs.exists == 'false'
+        run: pnpm install --frozen-lockfile
+
+      # GitHub Packages only accepts names scoped to the repository owner, so
+      # the tarball goes out as @rainbowindex/rainbowindex while npm keeps the
+      # unscoped name. Renaming after install keeps --frozen-lockfile honest;
+      # nothing in the build or test suite reads the package's own name.
+      - name: Scope the package name for GitHub Packages
+        if: steps.existing.outputs.exists == 'false'
+        run: npm pkg set name="@rainbowindex/rainbowindex"
+
+      - name: Publish to GitHub Packages
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          extra_args=()
+          case "$VERSION" in
+            *-*) extra_args+=(--tag next) ;;
+          esac
+          npm publish "${extra_args[@]}"

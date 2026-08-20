@@ -36,62 +36,80 @@ export interface VariantWrapper {
 // Variant maps
 // ---------------------------------------------------------------------------
 
-const PSEUDO_CLASSES: Readonly<Record<string, string>> = Object.freeze({
-	hover: ":hover",
-	focus: ":focus",
-	"focus-visible": ":focus-visible",
-	"focus-within": ":focus-within",
-	active: ":active",
-	visited: ":visited",
-	disabled: ":disabled",
-	enabled: ":enabled",
-	checked: ":checked",
-	indeterminate: ":indeterminate",
-	required: ":required",
-	valid: ":valid",
-	invalid: ":invalid",
-	empty: ":empty",
-	first: ":first-child",
-	last: ":last-child",
-	odd: ":nth-child(odd)",
-	even: ":nth-child(even)",
-	only: ":only-child",
-	"first-of-type": ":first-of-type",
-	"last-of-type": ":last-of-type",
-	"only-of-type": ":only-of-type",
-	target: ":target",
-	default: ":default",
-	optional: ":optional",
-	"user-valid": ":user-valid",
-	"user-invalid": ":user-invalid",
-	"in-range": ":in-range",
-	"out-of-range": ":out-of-range",
-	"placeholder-shown": ":placeholder-shown",
-	"details-content": ":details-content",
-	autofill: ":autofill",
-	"read-only": ":read-only",
+/**
+ * A selector suffix paired with its cascade weight. Weights use the tier
+ * encoding documented above VARIANT_WEIGHTS in engine/ordering.ts (the
+ * hundreds digit is the tier). Keeping each variant's weight next to its
+ * selector means a variant added here is weighted by construction instead of
+ * silently falling into ordering.ts' unknown-variant tier (900).
+ */
+interface WeightedSuffix {
+	suffix: string;
+	weight: number;
+}
+
+/** A full VariantWrapper paired with its cascade weight (same tier encoding). */
+interface WeightedWrapper {
+	wrapper: VariantWrapper;
+	weight: number;
+}
+
+const PSEUDO_CLASSES: Readonly<Record<string, WeightedSuffix>> = Object.freeze({
+	hover: { suffix: ":hover", weight: 420 },
+	focus: { suffix: ":focus", weight: 421 },
+	"focus-visible": { suffix: ":focus-visible", weight: 424 },
+	"focus-within": { suffix: ":focus-within", weight: 425 },
+	active: { suffix: ":active", weight: 422 },
+	visited: { suffix: ":visited", weight: 423 },
+	disabled: { suffix: ":disabled", weight: 550 },
+	enabled: { suffix: ":enabled", weight: 551 },
+	checked: { suffix: ":checked", weight: 552 },
+	indeterminate: { suffix: ":indeterminate", weight: 553 },
+	required: { suffix: ":required", weight: 554 },
+	valid: { suffix: ":valid", weight: 556 },
+	invalid: { suffix: ":invalid", weight: 555 },
+	empty: { suffix: ":empty", weight: 667 },
+	first: { suffix: ":first-child", weight: 660 },
+	last: { suffix: ":last-child", weight: 661 },
+	odd: { suffix: ":nth-child(odd)", weight: 662 },
+	even: { suffix: ":nth-child(even)", weight: 663 },
+	only: { suffix: ":only-child", weight: 666 },
+	"first-of-type": { suffix: ":first-of-type", weight: 664 },
+	"last-of-type": { suffix: ":last-of-type", weight: 665 },
+	"only-of-type": { suffix: ":only-of-type", weight: 668 },
+	target: { suffix: ":target", weight: 436 },
+	default: { suffix: ":default", weight: 557 },
+	optional: { suffix: ":optional", weight: 558 },
+	"user-valid": { suffix: ":user-valid", weight: 559 },
+	"user-invalid": { suffix: ":user-invalid", weight: 560 },
+	"in-range": { suffix: ":in-range", weight: 561 },
+	"out-of-range": { suffix: ":out-of-range", weight: 562 },
+	"placeholder-shown": { suffix: ":placeholder-shown", weight: 563 },
+	"details-content": { suffix: ":details-content", weight: 669 },
+	autofill: { suffix: ":autofill", weight: 564 },
+	"read-only": { suffix: ":read-only", weight: 565 },
 });
 
-const PSEUDO_ELEMENTS: Readonly<Record<string, string>> = Object.freeze({
-	before: "::before",
-	after: "::after",
-	placeholder: "::placeholder",
-	file: "::file-selector-button",
-	marker: "::marker",
-	selection: "::selection",
-	"first-line": "::first-line",
-	"first-letter": "::first-letter",
-	backdrop: "::backdrop",
+const PSEUDO_ELEMENTS: Readonly<Record<string, WeightedSuffix>> = Object.freeze({
+	before: { suffix: "::before", weight: 895 },
+	after: { suffix: "::after", weight: 896 },
+	placeholder: { suffix: "::placeholder", weight: 889 },
+	file: { suffix: "::file-selector-button", weight: 891 },
+	marker: { suffix: "::marker", weight: 894 },
+	selection: { suffix: "::selection", weight: 890 },
+	"first-line": { suffix: "::first-line", weight: 892 },
+	"first-letter": { suffix: "::first-letter", weight: 893 },
+	backdrop: { suffix: "::backdrop", weight: 897 },
 });
 
 /** Build frozen singleton wrappers so resolveVariant returns shared objects for
  *  static lookups instead of allocating per call (same pattern as MEDIA_VARIANTS). */
 function freezeSuffixWrappers(
-	source: Readonly<Record<string, string>>,
+	source: Readonly<Record<string, WeightedSuffix>>,
 ): Readonly<Record<string, VariantWrapper>> {
 	const out: Record<string, VariantWrapper> = {};
-	for (const [name, selectorSuffix] of Object.entries(source)) {
-		out[name] = Object.freeze({ selectorSuffix });
+	for (const [name, { suffix }] of Object.entries(source)) {
+		out[name] = Object.freeze({ selectorSuffix: suffix });
 	}
 	return Object.freeze(out);
 }
@@ -99,37 +117,67 @@ function freezeSuffixWrappers(
 const PSEUDO_CLASS_WRAPPERS = freezeSuffixWrappers(PSEUDO_CLASSES);
 const PSEUDO_ELEMENT_WRAPPERS = freezeSuffixWrappers(PSEUDO_ELEMENTS);
 
-const MEDIA_VARIANTS: Readonly<Record<string, VariantWrapper>> = Object.freeze({
-	dark: { atRule: "@media (prefers-color-scheme: dark)" },
-	portrait: { atRule: "@media (orientation: portrait)" },
-	landscape: { atRule: "@media (orientation: landscape)" },
-	print: { atRule: "@media print" },
-	"motion-safe": { atRule: "@media (prefers-reduced-motion: no-preference)" },
-	"motion-reduce": { atRule: "@media (prefers-reduced-motion: reduce)" },
-	light: { atRule: "@media (prefers-color-scheme: light)" },
-	"contrast-more": { atRule: "@media (prefers-contrast: more)" },
-	"contrast-less": { atRule: "@media (prefers-contrast: less)" },
-	"forced-colors": { atRule: "@media (forced-colors: active)" },
-	"inverted-colors": { atRule: "@media (inverted-colors: inverted)" },
-	"pointer-fine": { atRule: "@media (pointer: fine)" },
-	"pointer-coarse": { atRule: "@media (pointer: coarse)" },
-	"pointer-none": { atRule: "@media (pointer: none)" },
-	"any-pointer-fine": { atRule: "@media (any-pointer: fine)" },
-	"any-pointer-coarse": { atRule: "@media (any-pointer: coarse)" },
-	"any-pointer-none": { atRule: "@media (any-pointer: none)" },
-	noscript: { atRule: "@media (scripting: none)" },
-	starting: { startingStyle: true },
+/** Pair a frozen singleton wrapper with its cascade weight — the freeze keeps
+ *  the shared-object contract resolveVariant's static lookups rely on. */
+function weighted(wrapper: VariantWrapper, weight: number): WeightedWrapper {
+	return { wrapper: Object.freeze(wrapper), weight };
+}
+
+const MEDIA_VARIANTS: Readonly<Record<string, WeightedWrapper>> = Object.freeze({
+	dark: weighted({ atRule: "@media (prefers-color-scheme: dark)" }, 0),
+	portrait: weighted({ atRule: "@media (orientation: portrait)" }, 310),
+	landscape: weighted({ atRule: "@media (orientation: landscape)" }, 311),
+	print: weighted({ atRule: "@media print" }, 314),
+	"motion-safe": weighted({ atRule: "@media (prefers-reduced-motion: no-preference)" }, 312),
+	"motion-reduce": weighted({ atRule: "@media (prefers-reduced-motion: reduce)" }, 313),
+	light: weighted({ atRule: "@media (prefers-color-scheme: light)" }, 315),
+	"contrast-more": weighted({ atRule: "@media (prefers-contrast: more)" }, 316),
+	"contrast-less": weighted({ atRule: "@media (prefers-contrast: less)" }, 317),
+	"forced-colors": weighted({ atRule: "@media (forced-colors: active)" }, 318),
+	"inverted-colors": weighted({ atRule: "@media (inverted-colors: inverted)" }, 319),
+	"pointer-fine": weighted({ atRule: "@media (pointer: fine)" }, 320),
+	"pointer-coarse": weighted({ atRule: "@media (pointer: coarse)" }, 321),
+	"pointer-none": weighted({ atRule: "@media (pointer: none)" }, 322),
+	"any-pointer-fine": weighted({ atRule: "@media (any-pointer: fine)" }, 323),
+	"any-pointer-coarse": weighted({ atRule: "@media (any-pointer: coarse)" }, 324),
+	"any-pointer-none": weighted({ atRule: "@media (any-pointer: none)" }, 325),
+	noscript: weighted({ atRule: "@media (scripting: none)" }, 326),
+	starting: weighted({ startingStyle: true }, 770),
 });
 
 // Special selectors that embed `&` or use complex :is()/:where() forms.
-const SPECIAL_SELECTORS: Readonly<Record<string, VariantWrapper>> = Object.freeze({
-	inert: { selectorSuffix: "&:is([inert], [inert] *)", replaceAmpersand: true },
-	rtl: { selectorSuffix: '&:where(:dir(rtl), [dir="rtl"], [dir="rtl"] *)', replaceAmpersand: true },
-	ltr: { selectorSuffix: '&:where(:dir(ltr), [dir="ltr"], [dir="ltr"] *)', replaceAmpersand: true },
-	open: { selectorSuffix: "&:is([open], :popover-open, :open)", replaceAmpersand: true },
-	"*": { selectorSuffix: ":is(& > *)", replaceAmpersand: true },
-	"**": { selectorSuffix: ":is(& *)", replaceAmpersand: true },
+const SPECIAL_SELECTORS: Readonly<Record<string, WeightedWrapper>> = Object.freeze({
+	inert: weighted({ selectorSuffix: "&:is([inert], [inert] *)", replaceAmpersand: true }, 670),
+	rtl: weighted(
+		{ selectorSuffix: '&:where(:dir(rtl), [dir="rtl"], [dir="rtl"] *)', replaceAmpersand: true },
+		671,
+	),
+	ltr: weighted(
+		{ selectorSuffix: '&:where(:dir(ltr), [dir="ltr"], [dir="ltr"] *)', replaceAmpersand: true },
+		672,
+	),
+	open: weighted(
+		{ selectorSuffix: "&:is([open], :popover-open, :open)", replaceAmpersand: true },
+		437,
+	),
+	"*": weighted({ selectorSuffix: ":is(& > *)", replaceAmpersand: true }, 673),
+	"**": weighted({ selectorSuffix: ":is(& *)", replaceAmpersand: true }, 674),
 });
+
+/**
+ * name → cascade weight for every fixed variant defined above, folded from the
+ * four tables. Consumed only by engine/ordering.ts, which assembles
+ * VARIANT_WEIGHTS from this plus the residual entries the tables cannot supply
+ * (theme-default breakpoint statics and the group-/peer- composites).
+ */
+export const FIXED_VARIANT_WEIGHTS: Readonly<Record<string, number>> = (() => {
+	const out: Record<string, number> = {};
+	for (const [name, { weight }] of Object.entries(PSEUDO_CLASSES)) out[name] = weight;
+	for (const [name, { weight }] of Object.entries(PSEUDO_ELEMENTS)) out[name] = weight;
+	for (const [name, { weight }] of Object.entries(MEDIA_VARIANTS)) out[name] = weight;
+	for (const [name, { weight }] of Object.entries(SPECIAL_SELECTORS)) out[name] = weight;
+	return Object.freeze(out);
+})();
 
 // nth-* families — checked longest-first so nth-[…] doesn't shadow nth-of-type-[…].
 const NTH_VARIANTS: ReadonlyArray<readonly [string, string]> = [
@@ -200,7 +248,7 @@ function resolveRelationalVariant(
 	}
 	if (Object.hasOwn(PSEUDO_CLASSES, inner)) {
 		return {
-			selectorSuffix: `${anchor}${PSEUDO_CLASSES[inner]}${combinator}`,
+			selectorSuffix: `${anchor}${PSEUDO_CLASSES[inner].suffix}${combinator}`,
 			replaceAmpersand: true,
 		};
 	}
@@ -324,16 +372,16 @@ export function listVariants(theme: ResolvedTheme): VariantInfo[] {
 		out.push({ name, kind: "breakpoint", wraps: `@media (min-width: ${value})` });
 		out.push({ name: `@${name}`, kind: "container", wraps: `@container (min-width: ${value})` });
 	}
-	for (const [name, suffix] of Object.entries(PSEUDO_CLASSES)) {
+	for (const [name, { suffix }] of Object.entries(PSEUDO_CLASSES)) {
 		out.push({ name, kind: "pseudo-class", wraps: suffix });
 	}
-	for (const [name, suffix] of Object.entries(PSEUDO_ELEMENTS)) {
+	for (const [name, { suffix }] of Object.entries(PSEUDO_ELEMENTS)) {
 		out.push({ name, kind: "pseudo-element", wraps: suffix });
 	}
-	for (const [name, wrapper] of Object.entries(MEDIA_VARIANTS)) {
+	for (const [name, { wrapper }] of Object.entries(MEDIA_VARIANTS)) {
 		out.push({ name, kind: "media", wraps: wrapper.atRule ?? "@starting-style" });
 	}
-	for (const [name, wrapper] of Object.entries(SPECIAL_SELECTORS)) {
+	for (const [name, { wrapper }] of Object.entries(SPECIAL_SELECTORS)) {
 		out.push({ name, kind: "special", wraps: wrapper.selectorSuffix ?? "" });
 	}
 	if (theme.customVariants.length > 0) {
@@ -452,10 +500,10 @@ function resolveVariantUncached(
 	}
 
 	// Media query variants and starting style — O(1) lookup
-	if (Object.hasOwn(MEDIA_VARIANTS, variant)) return MEDIA_VARIANTS[variant];
+	if (Object.hasOwn(MEDIA_VARIANTS, variant)) return MEDIA_VARIANTS[variant].wrapper;
 
 	// Special selectors: inert, rtl, ltr, open, *, **
-	if (Object.hasOwn(SPECIAL_SELECTORS, variant)) return SPECIAL_SELECTORS[variant];
+	if (Object.hasOwn(SPECIAL_SELECTORS, variant)) return SPECIAL_SELECTORS[variant].wrapper;
 
 	// supports-[condition]
 	if (variant.startsWith("supports-[") && variant.endsWith("]")) {
@@ -501,7 +549,7 @@ function resolveVariantUncached(
 			if (sel) return { selectorSuffix: `:not(${sel})` };
 		}
 		if (Object.hasOwn(PSEUDO_CLASSES, inner)) {
-			return { selectorSuffix: `:not(${PSEUDO_CLASSES[inner]})` };
+			return { selectorSuffix: `:not(${PSEUDO_CLASSES[inner].suffix})` };
 		}
 	}
 
@@ -533,4 +581,76 @@ function resolveVariantUncached(
 	}
 
 	return null;
+}
+
+// ---------------------------------------------------------------------------
+// Variant application
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a selector list on top-level commas (not inside parentheses or brackets).
+ */
+export function splitSelectorList(selector: string): string[] {
+	const results: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let i = 0; i < selector.length; i++) {
+		const ch = selector[i];
+		if (ch === "(" || ch === "[") depth++;
+		else if (ch === ")" || ch === "]") depth--;
+		else if (ch === "," && depth === 0) {
+			results.push(selector.slice(start, i).trim());
+			start = i + 1;
+		}
+	}
+	results.push(selector.slice(start).trim());
+	return results.filter(Boolean);
+}
+
+/** Result of folding a wrapper stack over a base selector. */
+export interface AppliedVariants {
+	/** The wrapped selector (comma-joined when a wrapper fans out branches). */
+	selector: string;
+	/** At-rules to nest around the rule, outermost first (wrapper order). */
+	atRules: string[];
+	/** Whether any wrapper demands an @starting-style block. */
+	startingStyle: boolean;
+}
+
+/**
+ * Fold a stack of variant wrappers over a base selector — the cascade
+ * semantics (suffix application order, `&` replacement, at-rule nesting
+ * order, starting-style) shared by the engine's string emitter
+ * (compileUtility) and @apply's AST emitter so the two can never drift.
+ *
+ * Suffixes apply per branch of the accumulated selector: when an earlier
+ * wrapper produced a comma-bearing selector (e.g. a custom variant like
+ * `(&:hover, &:focus)`), a later suffix lands on every branch rather than
+ * only the last one.
+ */
+export function applyVariantWrappers(
+	baseSelector: string,
+	wrappers: readonly VariantWrapper[],
+): AppliedVariants {
+	let selector = baseSelector;
+	const atRules: string[] = [];
+	let startingStyle = false;
+
+	for (const w of wrappers) {
+		if (w.selectorSuffix) {
+			const branches = splitSelectorList(selector);
+			const suffix = w.selectorSuffix;
+			selector = w.replaceAmpersand
+				? branches.map((b) => suffix.replace(/&/g, b)).join(", ")
+				: branches.map((b) => b + suffix).join(", ");
+		}
+		if (w.atRule) {
+			atRules.push(w.atRule);
+		}
+		if (w.startingStyle) {
+			startingStyle = true;
+		}
+	}
+
+	return { selector, atRules, startingStyle };
 }

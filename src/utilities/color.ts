@@ -1,17 +1,12 @@
 /**
  * Color utilities — text-{color}, bg-{color}, border-{color},
- * outline-{color}, accent-{color}, caret-{color}, plus gradients.
+ * outline-{color}, accent-{color}, caret-{color}, plus gradients and the
+ * bg-* keyword statics (delegated to background.ts as a final fallback).
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import {
-	type UtilityResult,
-	single,
-	multi,
-	fullName,
-	extractArbitrary,
-	INTEGER_RE,
-} from "./index.js";
+import { type UtilityResult, single, multi, extractArbitrary, INTEGER_RE } from "./helpers.js";
+import { resolveStaticBackground } from "./background.js";
 import { COLOR_FUNCTION_ALTERNATION, RE_IMAGE_VALUE, SPECIAL_COLORS } from "../merge/props.js";
 import { type ColorDefinition, isValidColorSuffix } from "../theme/index.js";
 import {
@@ -413,13 +408,12 @@ export function resolveColor(
 export function colorGenerator(
 	utility: string,
 	value: string | null,
+	full: string,
 	_negative: boolean,
 	theme: ResolvedTheme,
 	_warnings?: string[],
 	dataType?: string | null,
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// bg-position-* → background-position, bg-size-* → background-size, and
 	// bg-(image:<custom-property>) / bg-[<image>] → background-image. These run
 	// before the color dispatch so image/position/size values aren't claimed as
@@ -595,6 +589,13 @@ export function colorGenerator(
 		const resolved = resolveColor(full.slice(11), theme, dataType);
 		if (resolved) return single("text-decoration-color", resolved);
 	}
+
+	// bg-* keyword statics (bg-fixed, bg-cover, …) — checked LAST so a theme
+	// color that happens to share a keyword name (e.g. "fixed") still wins,
+	// matching the precedence these statics had when they lived in effects.ts
+	// (color ran before effects in the generator chain).
+	const bgStatic = resolveStaticBackground(full);
+	if (bgStatic) return bgStatic;
 
 	return null;
 }

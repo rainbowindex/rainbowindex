@@ -15,7 +15,7 @@ import {
 } from "../engine/index.js";
 import { stripRIDirectives } from "../css/strip.js";
 import { assembleSections } from "../assembly.js";
-import { expandVariantGroups } from "../scanner/index.js";
+import { expandVariantGroups } from "../scanner/class-extraction.js";
 import { pushWarningsDeduped } from "../warnings.js";
 
 export type FontResolver = (

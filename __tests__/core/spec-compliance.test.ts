@@ -43,17 +43,17 @@ import {
 
 // Merge
 import {
-	ri,
 	createCompilationContext,
 	registerCustomUtility,
 	finalizeCompilationContext,
-} from "../../src/merge/index.js";
+} from "../../src/merge/context.js";
+import { ri } from "../../src/merge/index.js";
 
 // Parser
 import { parseUtility } from "../../src/utilities/parser.js";
 
 // Scanner
-import { extractClasses } from "../../src/scanner/index.js";
+import { extractClasses } from "../../src/scanner/class-extraction.js";
 
 // Directives
 import {

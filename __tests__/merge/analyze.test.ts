@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { analyzeMerge, createRi } from "../../src/merge/index.js";
+import { analyzeMerge } from "../../src/merge/analyze.js";
+import { createRi } from "../../src/merge/index.js";
 import { createThemeSnapshot } from "../../src/engine/index.js";
 import { analyzeProjectCSS } from "../../src/project/analyze.js";
 

@@ -8,13 +8,12 @@ import type { ResolvedTheme } from "../directives/foundation.js";
 import {
 	type UtilityResult,
 	single,
-	fullName,
 	extractArbitrary,
 	INTEGER_RE,
 	DECIMAL_RE,
 	deepFreezeUtilityMap,
 	normalizeDecimalToken,
-} from "./index.js";
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Static utilities
@@ -186,13 +185,12 @@ const SVG_COMPOUND_DISPATCH: ReadonlyArray<{
 ];
 
 export function svgGenerator(
-	utility: string,
-	value: string | null,
+	_utility: string,
+	_value: string | null,
+	full: string,
 	_negative: boolean,
 	_theme: ResolvedTheme,
 ): UtilityResult | null {
-	const full = fullName(utility, value);
-
 	// Check static utilities first
 	if (Object.hasOwn(STATIC_SVG, full)) return STATIC_SVG[full];
 

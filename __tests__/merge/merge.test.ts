@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
-	ri,
 	createCompilationContext,
 	registerCustomUtility,
 	finalizeCompilationContext,
-} from "../../src/merge/index.js";
+} from "../../src/merge/context.js";
+import { ri } from "../../src/merge/index.js";
 import { BUILTIN_STATIC_KEYS } from "../../src/merge/props.js";
 import { assertPrefixPropParity, assertStaticUtilityParity } from "../helpers/merge-parity.js";
 import {
