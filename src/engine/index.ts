@@ -356,6 +356,86 @@ export function createEmptyCompilationResult(): CompilationResult {
 	};
 }
 
+/**
+ * Everything compiling one class contributes to a CompilationResult: its rule
+ * (or null), the warnings it emitted, the token references it recorded, and
+ * which SUPPORT_BLOCKS rows it matched (index-aligned with the table; all
+ * false on failure). Captured once per (theme, class) and replayed on hits.
+ */
+interface ClassCompileEntry {
+	rule: CompiledRule | null;
+	warnings: readonly string[];
+	usedColorStops: ReadonlyMap<string, ReadonlySet<number>>;
+	usedTextSizes: ReadonlySet<string>;
+	usedFonts: ReadonlySet<string>;
+	usedRounded: ReadonlySet<string>;
+	usedShadows: ReadonlySet<string>;
+	usedAnimations: ReadonlySet<string>;
+	support: readonly boolean[];
+}
+
+/**
+ * Per-theme, per-class compile memo. A class's compile output is a pure
+ * function of (raw class, theme) — the utility/variant resolvers read no other
+ * mutable state — and entries (including CompiledRule objects) are never
+ * mutated after creation, so sharing them across compilations and compiler
+ * instances is safe. Watch rebuilds present the same theme identity (see the
+ * project/scan.ts and project/pipeline.ts memos) and skip re-parsing and
+ * re-resolving every unchanged class. Keyed weakly: dropping a theme drops
+ * its entries. Like every theme-keyed cache here, this assumes ResolvedTheme
+ * objects are not mutated between compiles.
+ */
+const classCompileMemo = new WeakMap<ResolvedTheme, Map<string, ClassCompileEntry>>();
+
+/** Compile one class into a self-contained memo entry via a scratch result. */
+function compileClassEntry(
+	raw: string,
+	theme: ResolvedTheme,
+	customVariantMap: ReadonlyMap<string, { name: string; selector: string }>,
+	breakpointWeights: ReadonlyMap<string, number>,
+	variantMemo: Map<string, VariantWrapper | null>,
+): ClassCompileEntry {
+	const scratch = createEmptyCompilationResult();
+	const parsed = parseUtility(raw);
+	const rule = compileUtility(
+		parsed,
+		theme,
+		scratch,
+		customVariantMap,
+		new Set(),
+		breakpointWeights,
+		variantMemo,
+	);
+	const support: boolean[] = new Array(SUPPORT_BLOCKS.length).fill(false);
+	if (rule) {
+		for (let i = 0; i < SUPPORT_BLOCKS.length; i++) {
+			const block = SUPPORT_BLOCKS[i];
+			if (block.test(rule.css) || block.utilities?.includes(parsed.utility)) {
+				support[i] = true;
+			}
+		}
+	} else if (parsed.arbitrary && parsed.value) {
+		const bracketContent = parsed.value.replace(/^\[|\]$/g, "");
+		if (shouldWarnUnresolvedArbitrary(bracketContent)) {
+			const truncated = parsed.raw.length > 100 ? `${parsed.raw.slice(0, 100)}...` : parsed.raw;
+			scratch.warnings.push(
+				`[RI-1002] Could not resolve arbitrary utility "${truncated}". Arbitrary utilities use \`[property:value]\` syntax — e.g. \`[padding:1rem]\` or \`[mask-type:luminance]\`. Check that the property name is a known CSS property and the value is well-formed (no stray spaces, quoted strings escaped). If you meant to set a CSS variable, use \`[--my-var:value]\`.`,
+			);
+		}
+	}
+	return {
+		rule,
+		warnings: scratch.warnings,
+		usedColorStops: scratch.usedColorStops,
+		usedTextSizes: scratch.usedTextSizes,
+		usedFonts: scratch.usedFonts,
+		usedRounded: scratch.usedRounded,
+		usedShadows: scratch.usedShadows,
+		usedAnimations: scratch.usedAnimations,
+		support,
+	};
+}
+
 function shouldWarnUnresolvedArbitrary(bracketContent: string): boolean {
 	// Attribute-selector style or wildcard syntax is typically intentional and
 	// not a utility typo (e.g. data-[state=*] extracted from markup).
@@ -459,50 +539,50 @@ function compileInternal(
 	const variantMemo = new Map<string, VariantWrapper | null>();
 
 	const seen = new Set<string>();
-	// One slot per SUPPORT_BLOCKS row — set once, then short-circuited, so each
-	// row's substring test runs at most until its first match (same behavior as
-	// the former per-family boolean flags).
+	// One slot per SUPPORT_BLOCKS row — set once per compilation, replayed from
+	// each class entry's cached match flags.
 	const supportNeeded: boolean[] = new Array(SUPPORT_BLOCKS.length).fill(false);
+
+	let classMemo = classCompileMemo.get(theme);
+	if (!classMemo) {
+		classMemo = new Map();
+		classCompileMemo.set(theme, classMemo);
+	}
 
 	for (const raw of classNames) {
 		if (seen.has(raw)) continue;
 		seen.add(raw);
 
-		const parsed = parseUtility(raw);
-		const compiled = compileUtility(
-			parsed,
-			theme,
-			result,
-			customVariantMap,
-			warnSeen,
-			breakpointWeights,
-			variantMemo,
-		);
-		if (!compiled) {
-			if (parsed.arbitrary && parsed.value) {
-				const bracketContent = parsed.value.replace(/^\[|\]$/g, "");
-				if (shouldWarnUnresolvedArbitrary(bracketContent)) {
-					const truncated = parsed.raw.length > 100 ? `${parsed.raw.slice(0, 100)}...` : parsed.raw;
-					pushWarningsDeduped(
-						result.warnings,
-						[
-							`[RI-1002] Could not resolve arbitrary utility "${truncated}". Arbitrary utilities use \`[property:value]\` syntax — e.g. \`[padding:1rem]\` or \`[mask-type:luminance]\`. Check that the property name is a known CSS property and the value is well-formed (no stray spaces, quoted strings escaped). If you meant to set a CSS variable, use \`[--my-var:value]\`.`,
-						],
-						warnSeen,
-					);
-				}
-			}
-			continue;
+		let entry = classMemo.get(raw);
+		if (!entry) {
+			entry = compileClassEntry(raw, theme, customVariantMap, breakpointWeights, variantMemo);
+			classMemo.set(raw, entry);
 		}
 
-		result.rules.push(compiled);
+		// Replay the entry into this compilation's mutable containers — the
+		// memoized containers themselves are never handed out.
+		if (entry.warnings.length > 0) {
+			pushWarningsDeduped(result.warnings, entry.warnings as string[], warnSeen);
+		}
+		for (const [hue, stops] of entry.usedColorStops) {
+			let set = result.usedColorStops.get(hue);
+			if (!set) {
+				set = new Set();
+				result.usedColorStops.set(hue, set);
+			}
+			for (const stop of stops) set.add(stop);
+		}
+		for (const v of entry.usedTextSizes) result.usedTextSizes.add(v);
+		for (const v of entry.usedFonts) result.usedFonts.add(v);
+		for (const v of entry.usedRounded) result.usedRounded.add(v);
+		for (const v of entry.usedShadows) result.usedShadows.add(v);
+		for (const v of entry.usedAnimations) result.usedAnimations.add(v);
+
+		if (!entry.rule) continue;
+		result.rules.push(entry.rule);
 
 		for (let i = 0; i < SUPPORT_BLOCKS.length; i++) {
-			if (supportNeeded[i]) continue;
-			const block = SUPPORT_BLOCKS[i];
-			if (block.test(compiled.css) || block.utilities?.includes(parsed.utility)) {
-				supportNeeded[i] = true;
-			}
+			if (entry.support[i]) supportNeeded[i] = true;
 		}
 	}
 

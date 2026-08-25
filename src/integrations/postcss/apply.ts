@@ -28,6 +28,18 @@ interface NestedBlockEntry {
 }
 
 /**
+ * Per-processApply memo for resolveClassName. Duplicate classes across @apply
+ * rules (flex, px-4, …) resolve identically — theme and customVariantMap are
+ * constant per invocation and downstream only reads the cached structures.
+ * Warnings emitted during resolution are cached and replayed on every hit so
+ * per-occurrence diagnostics survive; the plugin dedupes them downstream.
+ */
+interface ResolveCacheEntry {
+	result: ResolvedDecl | null;
+	warnings: string[];
+}
+
+/**
  * One source class's declarations, tagged with the sort key that engine/ordering.ts
  * would assign to the same utility as a standalone rule. Groups are stable-sorted
  * by sortKey so @apply preserves the cross-class cascade order that standalone
@@ -174,6 +186,7 @@ export function processApply(root: Root, theme: ResolvedTheme, warnings: string[
 	// Top-level warning walks already performed for a custom utility this
 	// compile — repeat @apply occurrences would re-emit identical warnings.
 	const checkedApplyRoots = new Set<string>();
+	const resolveCache = new Map<string, ResolveCacheEntry>();
 
 	for (let depth = 0; depth < MAX_APPLY_DEPTH; depth++) {
 		// One walk collects the nodes, their expanded class lists, and the group
@@ -206,6 +219,7 @@ export function processApply(root: Root, theme: ResolvedTheme, warnings: string[
 				customVariantMap,
 				groupRoots,
 				checkedApplyRoots,
+				resolveCache,
 			);
 		}
 	}
@@ -233,6 +247,7 @@ function expandApply(
 	customVariantMap: ReadonlyMap<string, { name: string; selector: string }>,
 	groupRoots: ReadonlySet<Rule>,
 	checkedApplyRoots: Set<string>,
+	resolveCache: Map<string, ResolveCacheEntry>,
 ): void {
 	const parentRule = atRule.parent;
 	if (parentRule?.type !== "rule") {
@@ -258,8 +273,23 @@ function expandApply(
 
 	const resolved: ResolvedDecl[] = [];
 	for (const className of classNames) {
-		const r = resolveClassName(className, theme, warnings, customVariantMap, checkedApplyRoots);
-		if (r) resolved.push(r);
+		let entry = resolveCache.get(className);
+		if (!entry) {
+			const entryWarnings: string[] = [];
+			entry = {
+				result: resolveClassName(
+					className,
+					theme,
+					entryWarnings,
+					customVariantMap,
+					checkedApplyRoots,
+				),
+				warnings: entryWarnings,
+			};
+			resolveCache.set(className, entry);
+		}
+		warnings.push(...entry.warnings);
+		if (entry.result) resolved.push(entry.result);
 	}
 
 	// Each "group" is the declarations from one class in the @apply directive.

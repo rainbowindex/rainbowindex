@@ -301,8 +301,8 @@ export function parseArgs(
 				continue;
 			}
 			if (FLAG_TAKES_VALUE.has(arg)) {
-				// Valid flag, wrong command — previously accepted and silently
-				// ignored (e.g. `preload-fonts --watch` was a no-op watcher).
+				// Valid flag for a different command — error rather than silently
+				// ignore it (e.g. `preload-fonts --watch` would be a no-op watcher).
 				throw new Error(
 					`${arg} is not supported by ${opts.command}. Run rainbowindex ${opts.command} --help for usage.`,
 				);

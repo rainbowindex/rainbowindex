@@ -72,32 +72,40 @@ const FLUID_KEYWORD_RE = /\b(no-parabolic|parabolic|no-shift|shift)\s*;?/g;
 // whose `shift` is not a flag — is left intact.
 const COLOR_FLAG_RE = /(?<=[{;\s]|^)(inline|no-parabolic|parabolic)\s*(?:;|(?=}))/g;
 
-/** Apply `rewrite` to the depth-0 spans of a directive body, leaving nested
- *  blocks (e.g. @animate keyframes containing `!important`) untouched. */
-function rewriteTopLevel(body: string, rewrite: (span: string) => string): string {
-	if (!body.includes("{")) return rewrite(body);
+/**
+ * Walk a directive body's top-level structure once: depth-0 spans go through
+ * `mapOutside`, each complete top-level `{ … }` block's interior goes through
+ * `mapBlock` (the braces themselves pass through verbatim). Nesting is owned
+ * by findClosingBrace — the same matcher the outer directive scan uses, so
+ * quotes and comments inside blocks are honored consistently. The tail after
+ * an unclosed `{` is copied through untouched: the parsers treat it as
+ * unterminated, so the rewriter must neither alter nor duplicate it.
+ *
+ * One walker serves both rewrite passes (top-level statements for
+ * removals/keywords, block interiors for @color option flags) so their
+ * boundary handling cannot drift.
+ */
+function mapTopLevelSpans(
+	body: string,
+	mapOutside: (span: string) => string,
+	mapBlock: (interior: string) => string,
+): string {
+	let brace = body.indexOf("{");
+	if (brace === -1) return mapOutside(body);
 	let out = "";
 	let segStart = 0;
-	let depth = 0;
-	for (let i = 0; i < body.length; i++) {
-		const ch = body[i];
-		if (ch === "{") {
-			if (depth === 0) {
-				out += rewrite(body.slice(segStart, i));
-				segStart = i;
-			}
-			depth++;
-		} else if (ch === "}") {
-			if (depth > 0) depth--;
-			if (depth === 0) {
-				out += body.slice(segStart, i + 1);
-				segStart = i + 1;
-			}
-		}
+	while (brace !== -1) {
+		out += mapOutside(body.slice(segStart, brace));
+		const close = findClosingBrace(body, brace);
+		if (close === -1) return out + body.slice(brace);
+		out += `{${mapBlock(body.slice(brace + 1, close))}}`;
+		segStart = close + 1;
+		brace = body.indexOf("{", segStart);
 	}
-	out += depth === 0 ? rewrite(body.slice(segStart)) : body.slice(segStart);
-	return out;
+	return out + mapOutside(body.slice(segStart));
 }
+
+const keepSpan = (span: string): string => span;
 
 /** Map one matched @color flag keyword to its `--ri-*` declaration. */
 function rewriteColorOptionFlag(_match: string, keyword: string): string {
@@ -107,36 +115,14 @@ function rewriteColorOptionFlag(_match: string, keyword: string): string {
 }
 
 /** Rewrite the bare option flags inside each @color entry's `{ … }` block to
- *  their `--ri-*` forms. The flags sit at depth 1 (the per-color options block),
- *  which rewriteTopLevel copies verbatim — so this targets those nested blocks
- *  directly. Depth-0 entries (e.g. an alias `muted: shift;`) are never visited,
- *  so a color value that happens to be a flag word is never mistaken for a flag. */
+ *  their `--ri-*` forms. The flags sit inside the per-color options block, so
+ *  only block interiors are visited. Depth-0 entries (e.g. an alias
+ *  `muted: shift;`) never are — a color value that happens to be a flag word
+ *  is never mistaken for a flag. */
 function rewriteColorOptionFlags(body: string): string {
-	if (!body.includes("{")) return body;
-	let out = "";
-	let segStart = 0;
-	let depth = 0;
-	let blockStart = -1;
-	for (let i = 0; i < body.length; i++) {
-		const ch = body[i];
-		if (ch === "{") {
-			if (depth === 0) {
-				out += body.slice(segStart, i + 1);
-				blockStart = i + 1;
-			}
-			depth++;
-		} else if (ch === "}") {
-			if (depth > 0) depth--;
-			if (depth === 0 && blockStart !== -1) {
-				out += body.slice(blockStart, i).replace(COLOR_FLAG_RE, rewriteColorOptionFlag);
-				out += "}";
-				segStart = i + 1;
-				blockStart = -1;
-			}
-		}
-	}
-	out += body.slice(segStart);
-	return out;
+	return mapTopLevelSpans(body, keepSpan, (interior) =>
+		interior.replace(COLOR_FLAG_RE, rewriteColorOptionFlag),
+	);
 }
 
 /**
@@ -183,19 +169,25 @@ export function rewriteDirectiveBodies(code: string): string {
 		const close = findClosingBrace(code, braceIdx);
 		const bodyStart = braceIdx + 1;
 		const bodyEnd = close === -1 ? code.length : close;
-		let rewritten = rewriteTopLevel(code.slice(bodyStart, bodyEnd), (span) => {
-			let s = span;
-			if (removals) s = s.replace(REMOVAL_RE, "--ri-rm: $1;");
-			if (keywords) {
-				s = s.replace(FLUID_KEYWORD_RE, (_, kw: string) => {
-					const negated = kw.startsWith("no-");
-					return `--ri-${negated ? kw.slice(3) : kw}: ${negated ? "false" : "true"};`;
-				});
-			}
-			return s;
-		});
-		// @color option flags live inside the per-entry `{ … }` block (depth 1),
-		// which rewriteTopLevel leaves untouched — rewrite them separately.
+		// Top-level statements only — block interiors (e.g. @animate keyframes
+		// containing `!important`) pass through untouched.
+		let rewritten = mapTopLevelSpans(
+			code.slice(bodyStart, bodyEnd),
+			(span) => {
+				let s = span;
+				if (removals) s = s.replace(REMOVAL_RE, "--ri-rm: $1;");
+				if (keywords) {
+					s = s.replace(FLUID_KEYWORD_RE, (_, kw: string) => {
+						const negated = kw.startsWith("no-");
+						return `--ri-${negated ? kw.slice(3) : kw}: ${negated ? "false" : "true"};`;
+					});
+				}
+				return s;
+			},
+			keepSpan,
+		);
+		// @color option flags live inside the per-entry `{ … }` block, which the
+		// pass above keeps verbatim — rewrite them in a block-interior pass.
 		if (name === "color") rewritten = rewriteColorOptionFlags(rewritten);
 		out += code.slice(last, bodyStart) + rewritten;
 		last = bodyEnd;

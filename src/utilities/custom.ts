@@ -153,6 +153,31 @@ function parseCustomUtilityBody(body: string): CustomUtilityBodyNode {
 	return root;
 }
 
+/**
+ * Parsed-body cache keyed by body text. The parse is pure per body (CustomUtility
+ * objects are deep-frozen by the resolver), so `card` / `hover:card` / `md:card`
+ * and the per-pass root-info extraction share one tree within a compile — and
+ * across watch rebuilds, whose fresh themes carry equal body text. Keyed by the
+ * string rather than the CustomUtility object because extractCustomUtilityRootInfo
+ * only receives the body. Cached trees are treated as immutable by both readers:
+ * they copy any array they mutate or return, so no caller ever holds a reference
+ * into the cached tree's containers (shared leaf CSSDeclaration objects are fine —
+ * nothing writes to them).
+ */
+const parsedBodyCache = new Map<string, CustomUtilityBodyNode>();
+const PARSED_BODY_CACHE_MAX = 500;
+
+function getParsedBody(body: string): CustomUtilityBodyNode {
+	let tree = parsedBodyCache.get(body);
+	if (!tree) {
+		// ponytail: clear-on-cap eviction; upgrade to LRU if body churn ever matters.
+		if (parsedBodyCache.size >= PARSED_BODY_CACHE_MAX) parsedBodyCache.clear();
+		tree = parseCustomUtilityBody(body);
+		parsedBodyCache.set(body, tree);
+	}
+	return tree;
+}
+
 /** Maximum recursion depth for nested @apply inside custom utilities. */
 const MAX_CUSTOM_APPLY_DEPTH = 5;
 
@@ -240,7 +265,7 @@ export function resolveCustomUtility(
 
 	if (!cu || cu.functional) return null;
 
-	const tree = parseCustomUtilityBody(cu.body);
+	const tree = getParsedBody(cu.body);
 
 	// Expand @apply directives (per block) so className usage produces the same
 	// CSS as the PostCSS @apply path. Cycles and over-depth chains suppress
@@ -286,7 +311,7 @@ export function extractCustomUtilityRootInfo(body: string): {
 	properties: string[];
 	applyClasses: string[];
 } {
-	const tree = parseCustomUtilityBody(body);
+	const tree = getParsedBody(body);
 	const seen = new Set<string>();
 	const properties: string[] = [];
 	for (const d of tree.declarations) {
@@ -295,5 +320,7 @@ export function extractCustomUtilityRootInfo(body: string): {
 			properties.push(d.property);
 		}
 	}
-	return { properties, applyClasses: tree.applyClasses };
+	// Copy: returning the cached tree's array would let a caller's push/sort
+	// poison every later resolution of the same body.
+	return { properties, applyClasses: [...tree.applyClasses] };
 }

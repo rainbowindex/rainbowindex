@@ -67,12 +67,6 @@ const PARITY_EXCEPTIONS: readonly ParityException[] = [
 		classes: /^space-y-/,
 		reason: "see --ri-space-x-reverse — same deliberate reset-vs-claim split",
 	},
-	{
-		property: "stroke-width",
-		classes: /^stroke-\d/,
-		reason:
-			"stroke-{n} emits stroke-width but the merge claims `stroke` (the color property) — width and color forms share one claim today; known drift in merge/props.ts, documented here until fixed there",
-	},
 ];
 
 const defaultTheme = analyzeProjectCSS("").theme;

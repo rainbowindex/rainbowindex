@@ -749,24 +749,231 @@ describe("parseFontBody", () => {
 
 	it("parses font with explicit metrics", () => {
 		const slot = parseFontBody(
-			'"Inter" from google { sizeAdjust: 107.64; ascent: 90.49; descent: 22.48; lineGap: 0; metricsFallback: Arial; }',
+			'"Inter" from google { metrics: "Arial" 107.64 90.49 22.48 0; }',
 			"sans",
 		);
 		expect(slot.family).toBe("Inter");
-		expect(slot.sizeAdjust).toBe(107.64);
-		expect(slot.ascent).toBe(90.49);
-		expect(slot.descent).toBe(22.48);
-		expect(slot.lineGap).toBe(0);
-		expect(slot.metricsFallback).toBe("Arial");
+		expect(slot.metrics).toEqual({
+			fallback: "Arial",
+			sizeAdjust: 107.64,
+			ascent: 90.49,
+			descent: 22.48,
+			lineGap: 0,
+		});
 	});
 
-	it("parses manual stack with metrics", () => {
+	it("parses metrics: none", () => {
+		const slot = parseFontBody('"Inter" from google { metrics: none; }', "sans");
+		expect(slot.metrics).toBeNull();
+	});
+
+	it("parses metrics with only a fallback font", () => {
+		const slot = parseFontBody('"Inter" from google { metrics: "Segoe UI"; }', "sans");
+		expect(slot.metrics).toEqual({ fallback: "Segoe UI" });
+	});
+
+	it("warns (RI-1220) on a partial metrics value and ignores it", () => {
+		const warnings: string[] = [];
 		const slot = parseFontBody(
-			'"Inter", ui-sans-serif { sizeAdjust: 100; ascent: 90; descent: 22; lineGap: 0; }',
+			'"Inter" from google { metrics: "Arial" 105 92; }',
+			"sans",
+			warnings,
+		);
+		expect(slot.metrics).toBeUndefined();
+		expect(warnings.some((w) => w.includes("[RI-1220]"))).toBe(true);
+	});
+
+	it("warns (RI-1220) when metrics are set on a manual stack, but still stores them", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody(
+			'"Inter", ui-sans-serif { metrics: "Arial" 100 90 22 0; }',
+			"sans",
+			warnings,
+		);
+		expect(slot.metrics?.sizeAdjust).toBe(100);
+		expect(warnings.some((w) => w.includes("[RI-1220]"))).toBe(true);
+	});
+
+	it("parses face: entries with inherited defaults and per-face overrides", () => {
+		const slot = parseFontBody(
+			'"Satoshi" { weight: 300 900; face: /fonts/Satoshi.woff2; face: "/fonts/Satoshi-Italic.woff2" { style: italic; } }',
 			"sans",
 		);
-		expect(slot.sizeAdjust).toBe(100);
-		expect(slot.ascent).toBe(90);
+		expect(slot.kind).toBe("local");
+		expect(slot.faces).toHaveLength(2);
+		expect(slot.faces[0].provider).toBe("/fonts/Satoshi.woff2");
+		expect(slot.faces[0].weight).toBe("300 900"); // inherited slot default
+		expect(slot.faces[1].provider).toBe("/fonts/Satoshi-Italic.woff2");
+		expect(slot.faces[1].style).toBe("italic");
+	});
+
+	it("parses fallbacks in the preamble of a google slot", () => {
+		const slot = parseFontBody(
+			'"Inter", ui-sans-serif, sans-serif from google { weight: 400 700; }',
+			"sans",
+		);
+		expect(slot.kind).toBe("google");
+		expect(slot.family).toBe("Inter");
+		expect(slot.fallback).toEqual(["ui-sans-serif", "sans-serif"]);
+		expect(slot.faces[0].weight).toBe("400 700");
+	});
+
+	it("warns (RI-1217) on an unknown option key", () => {
+		const warnings: string[] = [];
+		parseFontBody('"Inter" from google { fallbak: sans-serif; }', "sans", warnings);
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes('"fallbak"'))).toBe(true);
+	});
+
+	it("warns (RI-1219) when preload is set on a google slot", () => {
+		const warnings: string[] = [];
+		parseFontBody('"Inter" from google { preload: true; }', "sans", warnings);
+		expect(warnings.some((w) => w.includes("[RI-1219]"))).toBe(true);
+	});
+
+	it("warns (RI-1218) on deprecated forms while still desugaring them", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody(
+			'"Satoshi" from "/fonts/Satoshi.woff2" { italic: "/fonts/Satoshi-Italic.woff2"; }',
+			"sans",
+			warnings,
+		);
+		expect(slot.kind).toBe("local");
+		expect(slot.faces).toHaveLength(2);
+		expect(warnings.filter((w) => w.includes("[RI-1218]"))).toHaveLength(2); // from-path + italic
+	});
+
+	it("warns (RI-1218) and folds the legacy five-key metrics cluster", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody(
+			'"Inter" from google { sizeAdjust: 107.64; ascent: 90.49; descent: 22.48; lineGap: 0; metricsFallback: Arial; }',
+			"sans",
+			warnings,
+		);
+		expect(slot.metrics).toEqual({
+			fallback: "Arial",
+			sizeAdjust: 107.64,
+			ascent: 90.49,
+			descent: 22.48,
+			lineGap: 0,
+		});
+		expect(warnings.some((w) => w.includes("[RI-1218]"))).toBe(true);
+	});
+
+	it("warns (RI-1220) on a partial legacy metrics cluster", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody('"Inter" from google { sizeAdjust: 107.64; }', "sans", warnings);
+		expect(slot.metrics).toBeUndefined();
+		expect(warnings.some((w) => w.includes("[RI-1220]"))).toBe(true);
+	});
+
+	it("desugars from system to a system slot with an RI-1218 warning", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody('"Whatever" from system', "sans", warnings);
+		expect(slot.kind).toBe("system");
+		expect(warnings.some((w) => w.includes("[RI-1218]"))).toBe(true);
+	});
+
+	it("sanitizes preamble fallback entries through the family trust boundary", () => {
+		const slot = parseFontBody('"Inter", "foo;} .evil { color: red } " from google', "sans");
+		expect(slot.kind).toBe("google");
+		for (const f of slot.fallback) {
+			expect(f).not.toMatch(/[;{}]/);
+		}
+	});
+
+	it("sanitizes deprecated fallback: entries too", () => {
+		const slot = parseFontBody('"Inter" from google { fallback: "bad;}stack", Arial; }', "sans");
+		for (const f of slot.fallback) {
+			expect(f).not.toMatch(/[;{}]/);
+		}
+		expect(slot.fallback).toContain("Arial");
+	});
+
+	it("drops a features value that would break out of its declaration (RI-1217)", () => {
+		// An unbalanced quote is the one way a `}` survives brace pairing into a value.
+		const warnings: string[] = [];
+		const slot = parseFontBody(
+			'"Inter" from google { features: "cv11; } :root{--x:y}',
+			"sans",
+			warnings,
+		);
+		expect(slot.features).toBeNull();
+		expect(warnings.some((w) => w.includes("[RI-1217]"))).toBe(true);
+	});
+
+	it("keeps a quoted features list (quotes are inert in emitted CSS)", () => {
+		const slot = parseFontBody('"Inter", ui-sans-serif { features: "cv11", "ss01"; }', "sans");
+		expect(slot.features).toBe('"cv11", "ss01"');
+	});
+
+	it("drops an unsafe unicode-range value (RI-1217)", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody(
+			'"Satoshi" { face: /f.woff2; unicode-range: "U+0-FF} .evil{color:red; }',
+			"sans",
+			warnings,
+		);
+		expect(slot.faces[0].unicodeRange).toBeUndefined();
+		expect(warnings.some((w) => w.includes("[RI-1217]"))).toBe(true);
+	});
+
+	it("warns (RI-1220) on metrics with an empty quoted name instead of silently disabling", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody('"Inter" from google { metrics: ""; }', "sans", warnings);
+		expect(slot.metrics).toBeUndefined();
+		expect(warnings.some((w) => w.includes("[RI-1220]"))).toBe(true);
+	});
+
+	it("warns (RI-1217) on a stray keyless value (e.g. a line-wrapped metrics tail)", () => {
+		const warnings: string[] = [];
+		parseFontBody(
+			'"Inter" from google { metrics: "Arial"\n 107.64 90.49 22.48 0; }',
+			"sans",
+			warnings,
+		);
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes("stray value"))).toBe(true);
+	});
+
+	it("warns (RI-1217) when a scalar key carries a { } block", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody(
+			'"Satoshi" { weight: 400 { face: /hidden.woff2; } face: /real.woff2; }',
+			"sans",
+			warnings,
+		);
+		expect(slot.faces).toHaveLength(1);
+		expect(slot.faces[0].provider).toBe("/real.woff2");
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes("takes no"))).toBe(true);
+	});
+
+	it("warns (RI-1217) on a face: entry with no source", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody('"Satoshi" { face: { style: italic; } }', "sans", warnings);
+		expect(slot.kind).toBe("manual");
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes("no source"))).toBe(true);
+	});
+
+	it("warns (RI-1217) on an unterminated block inside a slot body", () => {
+		const warnings: string[] = [];
+		parseFontBody('"Satoshi" { face: /f.woff2 { style: italic;', "sans", warnings);
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes("unterminated"))).toBe(true);
+	});
+
+	it("still emits body diagnostics for a system slot", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody("system { preload: true; subzet: latin; }", "sans", warnings);
+		expect(slot.kind).toBe("system");
+		expect(warnings.some((w) => w.includes("[RI-1219]"))).toBe(true);
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes('"subzet"'))).toBe(true);
+	});
+
+	it("warns (RI-1217) on a slot with no family before its block", () => {
+		const warnings: string[] = [];
+		const slot = parseFontBody("{ weight: 400; }", "sans", warnings);
+		expect(slot.family).toBe("");
+		expect(warnings.some((w) => w.includes("[RI-1217]") && w.includes("no font family"))).toBe(
+			true,
+		);
 	});
 });
 
@@ -803,10 +1010,7 @@ describe("parseNestedFontBlock", () => {
       sans: "Inter" from google {
         weight: 100 900;
         display: optional;
-        sizeAdjust: 107.64;
-        ascent: 90.49;
-        descent: 22.48;
-        lineGap: 0;
+        metrics: "Arial" 107.64 90.49 22.48 0;
       }
       mono: "Fira Code" from google;
     `);
@@ -814,9 +1018,24 @@ describe("parseNestedFontBlock", () => {
 		expect(configs[0].slot).toBe("sans");
 		expect(configs[0].faces[0].weight).toBe("100 900");
 		expect(configs[0].faces[0].display).toBe("optional");
-		expect(configs[0].sizeAdjust).toBe(107.64);
+		expect(configs[0].metrics?.sizeAdjust).toBe(107.64);
 		expect(configs[1].slot).toBe("mono");
 		expect(configs[1].kind).toBe("google");
+	});
+
+	it("parses face: entries in a nested block", () => {
+		const configs = parseNestedFontBlock(`
+      display: "Satoshi" {
+        weight: 300 900;
+        face: /fonts/Satoshi.woff2;
+        face: /fonts/Satoshi-Italic.woff2 { style: italic; }
+      }
+    `);
+		expect(configs).toHaveLength(1);
+		expect(configs[0].kind).toBe("local");
+		expect(configs[0].faces).toHaveLength(2);
+		expect(configs[0].faces[1].style).toBe("italic");
+		expect(configs[0].faces[1].weight).toBe("300 900");
 	});
 
 	it("parses manual font stack in nested block", () => {

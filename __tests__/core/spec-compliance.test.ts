@@ -240,17 +240,21 @@ describe("Font system (spec differentiator #2)", () => {
 			slot: "sans",
 			family: "Inter",
 			kind: "google",
+			metrics: {
+				fallback: "Arial",
+				sizeAdjust: 107.64,
+				ascent: 90.49,
+				descent: 22.48,
+				lineGap: 0,
+			},
+		});
+		expect(slot.metrics).toEqual({
+			fallback: "Arial",
 			sizeAdjust: 107.64,
 			ascent: 90.49,
 			descent: 22.48,
 			lineGap: 0,
-			metricsFallback: "Arial",
 		});
-		expect(slot.sizeAdjust).toBe(107.64);
-		expect(slot.ascent).toBe(90.49);
-		expect(slot.descent).toBe(22.48);
-		expect(slot.lineGap).toBe(0);
-		expect(slot.metricsFallback).toBe("Arial");
 	});
 
 	it("generates @font-face for Google Fonts", () => {
@@ -276,11 +280,13 @@ describe("Font system (spec differentiator #2)", () => {
 			slot: "sans",
 			family: "Inter",
 			kind: "google",
-			sizeAdjust: 107.64,
-			ascent: 90.49,
-			descent: 22.48,
-			lineGap: 0,
-			metricsFallback: "Arial",
+			metrics: {
+				fallback: "Arial",
+				sizeAdjust: 107.64,
+				ascent: 90.49,
+				descent: 22.48,
+				lineGap: 0,
+			},
 		});
 		const result = generateFontCSS(slot);
 		const fallback = result.fontFaces.find((f) => f.includes("Fallback"));
@@ -290,14 +296,32 @@ describe("Font system (spec differentiator #2)", () => {
 		expect(fallback).toContain("descent-override");
 	});
 
-	it("no fallback @font-face without explicit metrics", () => {
+	it("automatic fallback @font-face for a family in the metrics table", () => {
 		const slot = createFontSlot({ slot: "sans", family: "Inter", kind: "google" });
 		const result = generateFontCSS(slot);
-		expect(result.fontFaces).toHaveLength(0);
+		expect(result.fontFaces).toHaveLength(1);
+		expect(result.fontFaces[0]).toContain('"Inter Fallback"');
+	});
+
+	it("no fallback @font-face when metrics are disabled or the family is unknown", () => {
+		const disabled = createFontSlot({
+			slot: "sans",
+			family: "Inter",
+			kind: "google",
+			metrics: null,
+		});
+		expect(generateFontCSS(disabled).fontFaces).toHaveLength(0);
+		const unknown = createFontSlot({ slot: "sans", family: "Obscure Custom", kind: "google" });
+		expect(generateFontCSS(unknown).fontFaces).toHaveLength(0);
 	});
 
 	it("getFontPreloadLinks returns preload data", () => {
-		const slot = createFontSlot({ slot: "sans", family: "Inter", kind: "google", preload: true });
+		const slot = createFontSlot({
+			slot: "sans",
+			family: "Inter",
+			kind: "google",
+			faces: [createFontFace({ provider: "google", preload: true })],
+		});
 		const links = getFontPreloadLinks([slot]);
 		// Google fonts use @import, so preload links may vary
 		// At minimum the API should exist and return an array

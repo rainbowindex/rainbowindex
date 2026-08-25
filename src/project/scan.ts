@@ -25,6 +25,7 @@ import {
 	finalizeProjectCompilation,
 	type FinalizeProjectResult,
 	type FontResolver,
+	type ProjectAnalysis,
 } from "./pipeline.js";
 
 export interface CompileScannedProjectOptions {
@@ -41,10 +42,33 @@ export interface CompileScannedProjectOptions {
 	resolveFonts?: FontResolver;
 }
 
+/**
+ * Single-entry analysis memo — watch/HMR rebuilds triggered by source edits
+ * re-enter with byte-identical CSS, and re-analyzing would mint a fresh theme
+ * object each build, missing every theme-identity-keyed cache downstream
+ * (custom-utility maps, variant maps, the per-class compile memo). The theme
+ * and directives keep their identity; `warnings`/`warningSeen`/`diagnostics`
+ * are mutated by callers, so fresh containers are cloned out per call.
+ */
+let lastAnalysis: { css: string; analysis: ProjectAnalysis } | null = null;
+
+function analyzeProjectCSSMemo(css: string): ProjectAnalysis {
+	if (lastAnalysis === null || lastAnalysis.css !== css) {
+		lastAnalysis = { css, analysis: analyzeProjectCSS(css) };
+	}
+	const cached = lastAnalysis.analysis;
+	return {
+		...cached,
+		warnings: [...cached.warnings],
+		warningSeen: new Set(cached.warningSeen),
+		diagnostics: [...cached.diagnostics],
+	};
+}
+
 export async function compileScannedProject(
 	options: CompileScannedProjectOptions,
 ): Promise<{ compiled: FinalizeProjectResult; warningSeen: Set<string> }> {
-	const analysis = analyzeProjectCSS(options.css);
+	const analysis = analyzeProjectCSSMemo(options.css);
 
 	// Kick off the font-metadata fetch (network, up to a 10s timeout) before the
 	// filesystem scan — its only input is the pre-scan theme, so cold builds pay

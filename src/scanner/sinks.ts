@@ -95,6 +95,8 @@ export class CandidateCollector implements CandidateSink {
 	private origin: CandidateOrigin = "plain";
 	private helperName: string | null = null;
 	private readonly byCandidate = new Map<string, ClassCandidate>();
+	/** value -> byCandidate keys, so delete() is O(occurrences of the value). */
+	private readonly keysByValue = new Map<string, Set<string>>();
 	private readonly contexts: CandidateContext[] = [];
 
 	setOrigin(origin: CandidateOrigin): void {
@@ -123,12 +125,19 @@ export class CandidateCollector implements CandidateSink {
 		const candidate: ClassCandidate = { value, start, end, origin: "plain" };
 		if (prefixStart >= 0) candidate.groupPrefix = { start: prefixStart, end: prefixEnd };
 		this.byCandidate.set(key, candidate);
+		let keys = this.keysByValue.get(value);
+		if (!keys) {
+			keys = new Set();
+			this.keysByValue.set(value, keys);
+		}
+		keys.add(key);
 	}
 
 	delete(value: string): void {
-		for (const [key, candidate] of this.byCandidate) {
-			if (candidate.value === value) this.byCandidate.delete(key);
-		}
+		const keys = this.keysByValue.get(value);
+		if (!keys) return;
+		for (const key of keys) this.byCandidate.delete(key);
+		this.keysByValue.delete(value);
 	}
 
 	finish(): ClassCandidate[] {
@@ -136,11 +145,37 @@ export class CandidateCollector implements CandidateSink {
 			(a, b) => a.start - b.start || a.end - b.end,
 		);
 		if (this.contexts.length > 0) {
+			// Sweep instead of candidates x contexts: candidates are start-sorted,
+			// so each context enters `live` once its start is reached and leaves
+			// for good once its end falls behind the sweep — amortized O(1) per
+			// context, with only the (usually shallow) live nesting scanned per
+			// candidate. Contexts are typically nested-or-disjoint, but different
+			// collectors mark independently and nothing enforces that, so the scan
+			// stays correct for overlaps: narrowest containing context wins, equal
+			// widths broken by insertion order (id) — the old full scan's exact
+			// tie-breaking.
+			const byStart = [...this.contexts].sort((a, b) => a.start - b.start);
+			const live: CandidateContext[] = [];
+			let next = 0;
 			for (const candidate of candidates) {
+				while (next < byStart.length && byStart[next].start <= candidate.start) {
+					live.push(byStart[next]);
+					next++;
+				}
 				let best: CandidateContext | null = null;
-				for (const context of this.contexts) {
-					if (context.start <= candidate.start && candidate.end <= context.end) {
-						if (!best || context.end - context.start < best.end - best.start) {
+				for (let i = 0; i < live.length; i++) {
+					const context = live[i];
+					if (context.end < candidate.start) {
+						// Ends before this candidate, so before every later one too.
+						live[i] = live[live.length - 1];
+						live.pop();
+						i--;
+						continue;
+					}
+					if (candidate.end <= context.end) {
+						const width = context.end - context.start;
+						const bestWidth = best ? best.end - best.start : -1;
+						if (!best || width < bestWidth || (width === bestWidth && context.id < best.id)) {
 							best = context;
 						}
 					}

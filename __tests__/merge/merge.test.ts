@@ -566,6 +566,19 @@ describe("ri() color conflicts", () => {
 		expect(ri("fill-red-500 stroke-blue-500")).toBe("fill-red-500 stroke-blue-500");
 	});
 
+	test("stroke width and stroke color don't conflict", () => {
+		expect(ri("stroke-2 stroke-red-500")).toBe("stroke-2 stroke-red-500");
+		expect(ri("stroke-red-500 stroke-1.5")).toBe("stroke-red-500 stroke-1.5");
+		expect(ri("stroke-[3px] stroke-current")).toBe("stroke-[3px] stroke-current");
+	});
+
+	test("same-property stroke conflicts still merge", () => {
+		expect(ri("stroke-2 stroke-4")).toBe("stroke-4");
+		expect(ri("stroke-2 stroke-[3px]")).toBe("stroke-[3px]");
+		expect(ri("stroke-red-500 stroke-blue-500")).toBe("stroke-blue-500");
+		expect(ri("stroke-red-500 stroke-none")).toBe("stroke-none");
+	});
+
 	test("caret color conflict", () => {
 		expect(ri("caret-red-500 caret-blue-500")).toBe("caret-blue-500");
 	});

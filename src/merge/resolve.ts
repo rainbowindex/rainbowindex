@@ -125,6 +125,7 @@ const FONT_FAMILY_PROPS: readonly string[] = Object.freeze([
 	"font-variation-settings",
 ]);
 const MASK_RADIAL_SIZE_PROPS: readonly string[] = Object.freeze(["--ri-mask-radial-size"]);
+const STROKE_WIDTH_PROPS: readonly string[] = Object.freeze(["stroke-width"]);
 const BG_IMAGE_PROPS: readonly string[] = Object.freeze(["background-image"]);
 const BORDER_COLOR_PROPS: readonly string[] = Object.freeze(["border-color"]);
 const OUTLINE_COLOR_PROPS: readonly string[] = Object.freeze(["outline-color"]);
@@ -134,6 +135,9 @@ const DECORATION_COLOR_PROPS: readonly string[] = Object.freeze(["text-decoratio
 // Hoisted dual-mode value tests — resolvers run per ri() token.
 const RE_SIGNED_INT = /^-?\d+$/;
 const RE_UNSIGNED_INT = /^\d+$/;
+// Mirrors DECIMAL_RE in utilities/helpers.ts (svg.ts routes these to
+// stroke-width) — kept local so the merge layer stays generator-free.
+const RE_DECIMAL = /^\d+(?:[._]\d+)?$/;
 
 /** Color-vs-default dual mode shared by the composable shadow/ring families. */
 function colorOrDefault(prefix: string, colorProps: readonly string[]): DualModeResolver {
@@ -174,6 +178,17 @@ const DUAL_MODE_PREFIXES: Readonly<Record<string, DualModeResolver>> = {
 		if (RE_SIGNED_INT.test(value) || (value.startsWith("[") && !isColorValue(value)))
 			return PREFIX_PROPS.outline;
 		return OUTLINE_STYLE_PROPS;
+	},
+	// Width-vs-color, mirroring svg.ts's generate-side dispatch: decimals
+	// (stroke-2, stroke-1.5) and non-color arbitraries (stroke-[3px]) emit
+	// stroke-width; every color-shaped value emits the `stroke` paint property.
+	stroke: (value, _textSizes, _fontFamilies, colorNames) => {
+		if (
+			RE_DECIMAL.test(value) ||
+			(value.startsWith("[") && !isColorValue(value, undefined, colorNames))
+		)
+			return STROKE_WIDTH_PROPS;
+		return PREFIX_PROPS.stroke;
 	},
 	decoration: (value, _textSizes, _fontFamilies, colorNames) => {
 		// `length:`-hinted custom property / arbitrary → thickness

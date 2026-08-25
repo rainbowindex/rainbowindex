@@ -46,6 +46,14 @@ describe("vite transform — directive-body-scoped rewrites", () => {
 		expect(out).not.toContain("--ri-shift:");
 	});
 
+	it("copies an unclosed option block through without duplicating it", () => {
+		// An unterminated `{` inside a directive body must pass through verbatim —
+		// a previous per-caller brace walk re-emitted the text before it.
+		const css = `@color { accent: 0.18 330 { inline`;
+		const out = transform(css);
+		expect(out ?? css).toBe(css);
+	});
+
 	it("does not rewrite a depth-0 color value that is a flag word", () => {
 		// `muted: shift` is an alias to a color named `shift`, not an option flag —
 		// only flags inside an option block are rewritten.

@@ -211,7 +211,7 @@ Customization happens in your CSS input, not a JS config. The engine recognizes:
 | `@color` | Define color tokens. Supports generative (`chroma hue`), explicit (`oklch(...)`, `#rrggbb`), light/dark pairs, and aliases. |
 | `@spacing` | Set the spacing base unit. |
 | `@text` | Define text size tokens (`size, line-height`). |
-| `@font`, `@font-face` | Register font families inside a single `@font { … }` block. One slot can own multiple `@face` faces (e.g. upright + italic) or use the `italic:` shorthand. |
+| `@font`, `@font-face` | Register font families inside a single `@font { … }` block. Local files are repeatable `face:` entries (e.g. upright + italic). Known families get an automatic zero-CLS metrics fallback (`metrics: none` opts out). |
 | `@rounded` | Border-radius tokens; modifier sets corner shape (`round`, `squircle`, `superellipse(N)`, etc). |
 | `@fluid` | Configure fluid type/spacing range. |
 | `@animate` | Register named animations with inline `@keyframes`. |
@@ -242,10 +242,11 @@ Example:
 }
 
 @font {
-	sans: "Inter" from google { weight: 400 700; }
-	display: "Satoshi" from "/fonts/Satoshi.woff2" {
+	sans: "Inter", ui-sans-serif, sans-serif from google { weight: 400 700; }
+	display: "Satoshi" {
 		weight: 300 900;
-		italic: "/fonts/Satoshi-Italic.woff2";   /* second face, font-style: italic */
+		face: /fonts/Satoshi.woff2;
+		face: /fonts/Satoshi-Italic.woff2 { style: italic; }
 	}
 }
 

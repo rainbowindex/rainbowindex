@@ -510,8 +510,7 @@ export function compileCSSFunctions(
 			);
 			return result; // Return the pre-expansion value
 		}
-		// Warn early at pass 3 (of 5) so users see the issue before exhausting
-		// all passes — previously, 4 silent passes could occur before the warning.
+		// Warn early at pass 3 (of 5) so users see the issue before exhausting all passes.
 		if (depth >= 2) {
 			const severity = depth === MAX_CSS_FUNCTION_DEPTH - 1 ? "" : " (still attempting)";
 			warnings?.push(

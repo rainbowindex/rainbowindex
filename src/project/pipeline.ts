@@ -54,6 +54,16 @@ function collectApplyClassNames(css: string, warnings: string[]): string[] {
 	return classes;
 }
 
+/** Effective-theme memo: same pre-scan theme + same resolved-fonts identity →
+ *  same effective theme object across rebuilds, so theme-identity-keyed caches
+ *  (variant maps, per-class compile memo) survive even when Google metadata
+ *  narrowed the font defaults. refreshFontWeightDefaults memoizes its output
+ *  per (fonts, metadata-state), so the identity check here is sound. */
+const effectiveThemeMemo = new WeakMap<
+	ResolvedTheme,
+	{ fonts: ResolvedTheme["fonts"]; theme: ResolvedTheme }
+>();
+
 export async function finalizeProjectCompilation(
 	options: FinalizeProjectOptions,
 ): Promise<FinalizeProjectResult> {
@@ -65,7 +75,13 @@ export async function finalizeProjectCompilation(
 		// resolveGoogleFonts returns the same array when there are no google slots —
 		// only rebuild the theme (and bust identity-keyed caches) when fonts changed.
 		if (resolvedFonts !== analysis.theme.fonts) {
-			effectiveTheme = { ...analysis.theme, fonts: [...resolvedFonts] };
+			const memo = effectiveThemeMemo.get(analysis.theme);
+			if (memo && memo.fonts === resolvedFonts) {
+				effectiveTheme = memo.theme;
+			} else {
+				effectiveTheme = { ...analysis.theme, fonts: [...resolvedFonts] };
+				effectiveThemeMemo.set(analysis.theme, { fonts: resolvedFonts, theme: effectiveTheme });
+			}
 		}
 	}
 

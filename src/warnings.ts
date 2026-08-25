@@ -79,6 +79,10 @@
  *   1214  Duplicate @font faces (same weight + style) in a slot
  *   1215  Duplicate @font slot definition (last wins)
  *   1216  @font slot definitions exceeded the limit (truncated)
+ *   1217  Malformed or unknown @font entry (unknown key, stray value, spurious or unterminated block, missing family/src, unsafe value) — ignored
+ *   1218  Deprecated @font syntax (still desugared, will be removed)
+ *   1219  @font preload on a non-local slot has no effect
+ *   1220  @font metrics problem (invalid value, partial overrides, no effect, or family not in the metrics table)
  *
  * RI-13xx — Merge / compilation context
  *   1301  registerCustomUtility() empty name

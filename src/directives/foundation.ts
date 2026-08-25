@@ -6,6 +6,7 @@ import type {
 	CornerShape,
 	FluidConfig,
 } from "../theme/index.js";
+import { stripCSSComments } from "../shared.js";
 
 /**
  * Raw-extractable directive names — the single source for the DirectiveType
@@ -163,8 +164,41 @@ export type WritableTheme = { -readonly [K in keyof ResolvedTheme]: DeepMutable<
  *  `--ri-rm: name;`. Shared by every body parser that supports removals. */
 export const REMOVAL_KEY = "--ri-rm";
 
+/** Valid directive entry keys and @utility names. Digit-leading keys (`2xl`)
+ *  and `--`-prefixed keys (`--roof`, `--my-var`) are intentionally allowed;
+ *  whitespace, semicolons, and braces would emit broken CSS and are not. */
+export const IDENT_KEY_RE = /^[\w-]+$/;
+
 /** Precompiled single-char whitespace test for the entry scanner. */
 const WS_CHAR_RE = /\s/;
+
+/**
+ * Index of the first `char` at paren/bracket depth 0 outside quotes, or -1.
+ * Shared by value splitters (@color light-dark pairs, @text comma splits,
+ * @font brace detection) so `clamp(2rem, 5vw, 4rem)` and friends never split
+ * at an inner comma.
+ */
+export function topLevelIndexOf(str: string, char: string): number {
+	let depth = 0;
+	for (let i = 0; i < str.length; i++) {
+		const c = str[i];
+		if (c === '"' || c === "'") {
+			i++;
+			while (i < str.length && str[i] !== c) {
+				if (str[i] === "\\") i++;
+				i++;
+			}
+			continue;
+		}
+		if (c === "(" || c === "[") depth++;
+		else if (c === ")" || c === "]") {
+			if (depth > 0) depth--;
+		} else if (c === char && depth === 0) {
+			return i;
+		}
+	}
+	return -1;
+}
 
 export interface ScanEntriesOptions {
 	/**
@@ -287,7 +321,10 @@ export function* scanEntries(
 			const block = src.slice(i + 1, close).trim();
 			i = close + 1;
 			if (colonIdx === -1) {
-				if (value) yield { key: "", value, fragment: true };
+				// Fragments keep their block so @font can consume legacy `@face { … }`
+				// spans; @color skips fragments and @animate requires a valid key, so
+				// neither changes behavior.
+				if (value) yield { key: "", value, fragment: true, block };
 				continue;
 			}
 			if (key === REMOVAL_KEY) {
@@ -309,6 +346,103 @@ export function* scanEntries(
 		}
 		yield { key, value };
 	}
+}
+
+/**
+ * Parse key-value pairs from a directive body — the generic grammar behind
+ * @text, @spacing, @fluid, @preflight, @layer, @register, and @font
+ * sub-blocks. Handles both simple values and values with semicolons/commas.
+ *
+ * ```
+ * sm: 0.125rem;
+ * DEFAULT: 0.25rem;
+ * !slate;              ← removal
+ * ```
+ *
+ * Entry boundaries are depth-aware: `;` ends an entry at paren/bracket/quote
+ * depth 0; a newline ends one only when the last non-whitespace char is not a
+ * comma (a trailing comma is the standard CSS wrap for multi-line values).
+ * When `warnings` is provided, keys that would emit broken CSS are skipped
+ * with RI-1035 naming `directiveName`.
+ */
+export function parseKeyValueBody(
+	body: string,
+	warnings?: string[],
+	directiveName?: string,
+): {
+	entries: Array<[string, string]>;
+	removals: string[];
+} {
+	const entries: Array<[string, string]> = [];
+	const removals: string[] = [];
+	const cleanedBody = stripCSSComments(body);
+
+	const flush = (raw: string): void => {
+		const line = raw.trim();
+		if (!line) return;
+
+		// Removal: !key
+		if (line.startsWith("!")) {
+			removals.push(line.slice(1).trim());
+			return;
+		}
+
+		// key: value
+		const colonIdx = line.indexOf(":");
+		if (colonIdx === -1) return;
+
+		const key = line.slice(0, colonIdx).trim();
+		const value = line.slice(colonIdx + 1).trim();
+		if (key === REMOVAL_KEY && value) {
+			removals.push(value);
+			return;
+		}
+		if (key && !IDENT_KEY_RE.test(key)) {
+			warnings?.push(
+				`[RI-1035] Invalid @${directiveName ?? "directive"} entry key "${key}" — keys may only contain letters, numbers, hyphens, and underscores. The entry was skipped.`,
+			);
+			return;
+		}
+		if (key && value) {
+			entries.push([key, value]);
+		}
+	};
+
+	let start = 0;
+	let depth = 0;
+	let lastNonWS = "";
+	for (let i = 0; i < cleanedBody.length; i++) {
+		const ch = cleanedBody[i];
+		if (ch === '"' || ch === "'") {
+			i++;
+			while (i < cleanedBody.length && cleanedBody[i] !== ch) {
+				if (cleanedBody[i] === "\\") i++;
+				i++;
+			}
+			lastNonWS = ch;
+			continue;
+		}
+		if (ch === "(" || ch === "[") {
+			depth++;
+			lastNonWS = ch;
+			continue;
+		}
+		if (ch === ")" || ch === "]") {
+			if (depth > 0) depth--;
+			lastNonWS = ch;
+			continue;
+		}
+		if (depth === 0 && (ch === ";" || (ch === "\n" && lastNonWS !== ","))) {
+			flush(cleanedBody.slice(start, i));
+			start = i + 1;
+			lastNonWS = "";
+			continue;
+		}
+		if (!WS_CHAR_RE.test(ch)) lastNonWS = ch;
+	}
+	flush(cleanedBody.slice(start));
+
+	return { entries, removals };
 }
 
 export function findClosingBrace(src: string, start: number): number {

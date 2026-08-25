@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-08-25
+
+### Added
+
+- **Automatic zero-CLS font fallbacks.** Any `@font` slot whose family is in
+  the built-in metrics table (~100 common Google + system families, generated
+  from `@capsizecss/metrics` at development time — no new runtime dependency)
+  now gets a metrics-adjusted local fallback `@font-face` automatically. The
+  fallback font is picked from the slot's stack, or by the web font's
+  category (Arial / Times New Roman / Courier New). Opt out with
+  `metrics: none;`, pick the matched local font with `metrics: "Segoe UI";`,
+  or keep full manual control with
+  `metrics: "Arial" <size-adjust> <ascent> <descent> <line-gap>;`.
+- **`face:` entries** — local font files are now declared as repeatable
+  `face: <src> [{ overrides }]` entries, one grammar for every face:
+  `display: "Satoshi" { face: /Satoshi.woff2; face: /Satoshi-Italic.woff2 { style: italic; } }`.
+- **Fallback stacks work with `from google`** —
+  `sans: "Inter", ui-sans-serif, sans-serif from google;` now parses as a
+  google slot with fallbacks (previously it silently became a manual stack).
+- **@font now warns instead of ignoring silently**: unknown option keys
+  (RI-1217), `preload` on non-local slots where it can have no effect
+  (RI-1219), and partial or invalid `metrics` values (RI-1220).
+
+### Changed
+
+- The `@font` parser was rebuilt on the shared entry scanner: one pass, no
+  regex preambles, no re-serialization. Public API (`parseFontBody`,
+  `parseNestedFontBlock`) is unchanged.
+- **Incremental rebuilds only re-do changed work** — the scanner keeps a
+  per-file cache keyed on mtime + size, so a CLI watch or Vite HMR rebuild
+  re-reads and re-extracts only the files that actually changed instead of
+  the whole project. The CSS entry analysis is memoized on the entry text
+  (stable theme identity across rebuilds), Google-font resolution keeps its
+  identity when metadata is unchanged, and per-class compilation results
+  (rule, warnings, token usage) are replayed across rebuilds from a
+  theme-keyed cache. A one-file edit in a large project now costs
+  O(changed files) instead of O(project).
+- **`ri()` conditional args hit the cache fast path** — falsy arguments
+  (`ri("flex", isActive && "bg-blue-500")`) no longer force re-tokenization
+  on every call: the raw-key cache skips falsy primitives, making cached
+  conditional-pattern calls ~4x faster.
+- **Cheaper compile passes** — duplicate class names across `@apply` rules
+  resolve once per pass, the `@slot`/`@apply` walks no longer traverse the
+  generated utility CSS, custom `@utility` bodies parse once per body text
+  instead of once per variant form, and the editor candidate collector's
+  context assignment went from quadratic to a sorted sweep. As part of the
+  compile-result replay, engine-level compilation warnings are now
+  deduplicated (final project output already was).
+- **Internal restructuring (behavior-preserving)** — the directive body
+  parsers were split by grammar family: `@color` and `@font` now own their
+  own modules, and the generic key-value/entry grammars sit together in the
+  directives foundation. The `parsers` import surface is unchanged.
+
+### Deprecated
+
+- The older `@font` forms still parse and desugar into the new model, but
+  warn (RI-1218) and will be removed in a future release: `@face { src: …; }`
+  blocks and the `italic:` shorthand (use `face:`), `from "<path>"` (use
+  `face:`), `from system` (use bare `system`), the `fallback:` key (list
+  fallbacks in the slot preamble), the five-key metrics cluster
+  `metricsFallback`/`sizeAdjust`/`ascent`/`descent`/`lineGap` (use
+  `metrics:`), and the `unicodeRange` spelling (use `unicode-range`).
+
+### Removed
+
+- **`@font` `subset:`** — the Google css2 API takes no subset hint, so the
+  key never affected the emitted URL. It now warns (RI-1218) and is ignored.
+- **`FontSlot` / `FontFace` fields** — the five slot-level metrics fields
+  (`metricsFallback`, `sizeAdjust`, `ascent`, `descent`, `lineGap`) are
+  replaced by a single `metrics?: FontMetricsConfig | null`; slot-level
+  `preload` moved onto the faces; `FontFace.subset` is gone. Stylesheets are
+  unaffected — this only touches code importing those types directly.
+
+### Fixed
+
+- **`ri()` stroke-width vs stroke-color conflict — for real this time.** The
+  v0.4.0 changelog described this fix, but the implementation did not ship in
+  that release: `ri("stroke-2 stroke-red-500")` still dropped `stroke-2`. The
+  `stroke` prefix is now actually width-vs-color dual-mode (mirroring
+  `border`/`outline`): decimal and non-color arbitrary values claim
+  `stroke-width`, color values claim `stroke`. Same-property conflicts
+  (`stroke-2` vs `stroke-4`, `stroke-red-500` vs `stroke-blue-500`) still
+  merge as before. The emission↔claim parity suite no longer carries a
+  stroke exception, and regression tests pin the merged output.
+- **Directive rewriter no longer duplicates unclosed blocks** — an
+  unterminated `{` inside a `@color` body made the Vite-plugin pre-pass
+  re-emit the text before it (`@color { accent: 0.18 330 { inline` came out
+  with the entry doubled). The rewriter's two hand-rolled brace walks were
+  replaced by one shared walker built on the same brace matcher the directive
+  scan already uses, which also makes quotes and comments inside blocks
+  behave consistently across the rewrite passes.
+
 ## [0.4.0] - 2026-08-20
 
 ### Added

@@ -1,6 +1,6 @@
 {
 	"name": "rainbowindex",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "CSS-first system for building and maintaining consistent user interfaces",
 	"keywords": [
 		"css",
@@ -97,6 +97,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.16",
+		"@capsizecss/metrics": "^4.2.0",
 		"@types/node": "^25.9.1",
 		"@vitest/coverage-v8": "^4.1.0",
 		"postcss": "^8.5.8",

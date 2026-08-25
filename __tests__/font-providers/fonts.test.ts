@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	SYSTEM_STACKS,
+	computeFallbackMetrics,
 	createFontFace,
 	createFontSlot,
 	fetchGoogleFontList,
@@ -11,6 +12,7 @@ import {
 	getFontPreloadLinks,
 	googleFontsUrl,
 	isVariableFont,
+	lookupFontMetrics,
 	refreshFontWeightDefaults,
 	resolveGoogleFonts,
 	type FontFace,
@@ -147,6 +149,17 @@ describe("generateFallbackFontFace", () => {
 		expect(css).toContain("descent-override: 22.48%");
 		expect(css).toContain("line-gap-override: 0%");
 	});
+
+	it("escapes the fallback font name against CSS string breakout", () => {
+		const css = generateFallbackFontFace("Inter", {
+			fallback: 'Ari"al\\',
+			sizeAdjust: 100,
+			ascent: 90,
+			descent: 22,
+			lineGap: 0,
+		});
+		expect(css).toContain('local("Ari\\"al\\\\")');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -195,6 +208,12 @@ describe("generateWebFontFace", () => {
 		);
 		expect(result!.css).toContain("unicode-range: U+0000-00FF");
 	});
+
+	it("escapes newlines and quotes in a local src path", () => {
+		const result = generateWebFontFace("Inter", makeFace({ provider: '/fonts/a"\n.woff2' }));
+		expect(result!.css).not.toContain("\n.woff2");
+		expect(result!.css).toContain('\\"');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -234,26 +253,68 @@ describe("generateFontCSS", () => {
 		expect(result.variables[1]).toContain("--font-sans--variations");
 	});
 
-	it("web font without metrics: no fallback @font-face, just @import + variable", () => {
+	it("known web font: automatic metrics fallback @font-face + @import + variable", () => {
 		const result = generateFontCSS(makeSlot());
-		expect(result.fontFaces).toHaveLength(0); // no metrics = no fallback font-face
+		expect(result.fontFaces).toHaveLength(1); // auto metrics from the built-in table
+		expect(result.fontFaces[0]).toContain('"Inter Fallback"');
+		expect(result.fontFaces[0]).toContain('local("Arial")');
 		expect(result.imports).toHaveLength(1);
 		expect(result.imports[0]).toContain("@import url(");
 		expect(result.imports[0]).toContain("fonts.googleapis.com");
 		expect(result.variables.length).toBeGreaterThanOrEqual(1);
 		expect(result.variables[0]).toContain("--font-sans:");
 		expect(result.variables[0]).toContain('"Inter"');
+		expect(result.variables[0]).toContain('"Inter Fallback"');
+	});
+
+	it("automatic metrics match computeFallbackMetrics for the family/fallback pair", () => {
+		const result = generateFontCSS(makeSlot());
+		const expected = computeFallbackMetrics(
+			"Arial",
+			lookupFontMetrics("Inter") as NonNullable<ReturnType<typeof lookupFontMetrics>>,
+			lookupFontMetrics("Arial") as NonNullable<ReturnType<typeof lookupFontMetrics>>,
+		);
+		expect(result.fontFaces[0]).toContain(`size-adjust: ${expected.sizeAdjust}%`);
+		expect(result.fontFaces[0]).toContain(`ascent-override: ${expected.ascent}%`);
+		expect(result.fontFaces[0]).toContain(`descent-override: ${expected.descent}%`);
+		expect(result.fontFaces[0]).toContain(`line-gap-override: ${expected.lineGap}%`);
+	});
+
+	it("metrics: none disables the automatic fallback face", () => {
+		const result = generateFontCSS(makeSlot({ metrics: null }));
+		expect(result.fontFaces).toHaveLength(0);
 		expect(result.variables[0]).not.toContain('"Inter Fallback"');
+	});
+
+	it("unknown family: no metrics fallback, no warning", () => {
+		const result = generateFontCSS(makeSlot({ family: "Totally Unknown Font" }));
+		expect(result.fontFaces).toHaveLength(0);
+		expect(result.warnings).toHaveLength(0);
+	});
+
+	it("warns (RI-1220) when an explicit metrics fallback is not in the table", () => {
+		const result = generateFontCSS(makeSlot({ metrics: { fallback: "Comic Sans MS" } }));
+		expect(result.fontFaces).toHaveLength(0);
+		expect(result.warnings.some((w) => w.includes("[RI-1220]"))).toBe(true);
+	});
+
+	it("mono family metric-matches the mono category default (Courier New)", () => {
+		const result = generateFontCSS(
+			makeSlot({ slot: "mono", family: "JetBrains Mono", fallback: [] }),
+		);
+		expect(result.fontFaces[0]).toContain('local("Courier New")');
 	});
 
 	it("web font with explicit metrics: generates fallback @font-face", () => {
 		const result = generateFontCSS(
 			makeSlot({
-				sizeAdjust: 107.64,
-				ascent: 90.49,
-				descent: 22.48,
-				lineGap: 0,
-				metricsFallback: "Arial",
+				metrics: {
+					fallback: "Arial",
+					sizeAdjust: 107.64,
+					ascent: 90.49,
+					descent: 22.48,
+					lineGap: 0,
+				},
 			}),
 		);
 		expect(result.fontFaces).toHaveLength(1); // fallback font-face
@@ -297,18 +358,33 @@ describe("generateFontCSS", () => {
 		expect(result.variables[2]).toContain("--font-sans--variations");
 	});
 
-	it("metrics fallback defaults to first fallback entry when metricsFallback not set", () => {
+	it("explicit metrics default to the first fallback entry when no font is named", () => {
 		const result = generateFontCSS(
 			makeSlot({
 				fallback: ["Helvetica"],
-				sizeAdjust: 100,
-				ascent: 90,
-				descent: 22,
-				lineGap: 0,
+				metrics: { sizeAdjust: 100, ascent: 90, descent: 22, lineGap: 0 },
 			}),
 		);
 		expect(result.fontFaces).toHaveLength(1);
 		expect(result.fontFaces[0]).toContain('local("Helvetica")');
+	});
+
+	it("automatic metrics prefer the first fallback entry with known metrics", () => {
+		const result = generateFontCSS(makeSlot({ fallback: ["NotAFont", "Verdana"] }));
+		expect(result.fontFaces).toHaveLength(1);
+		expect(result.fontFaces[0]).toContain('local("Verdana")');
+	});
+
+	it("local slot with a known family also gets an automatic metrics face", () => {
+		const slot = createFontSlot({
+			slot: "sans",
+			family: "Inter",
+			kind: "local",
+			faces: [createFontFace({ provider: "/fonts/inter.woff2" })],
+		});
+		const result = generateFontCSS(slot);
+		expect(result.fontFaces).toHaveLength(2); // metrics fallback + the face itself
+		expect(result.fontFaces[0]).toContain('"Inter Fallback"');
 	});
 
 	it("local slot emits one @font-face per face, sharing the family", () => {
@@ -354,27 +430,32 @@ describe("getFontPreloadLinks", () => {
 			slot: "sans",
 			family,
 			kind: "local",
-			preload,
-			faces: [createFontFace({ provider: src })],
+			faces: [createFontFace({ provider: src, preload })],
 		});
 
 	it("returns empty for no preload", () => {
-		const links = getFontPreloadLinks([makeSlot({ preload: false })]);
+		const links = getFontPreloadLinks([makeSlot()]);
 		expect(links).toHaveLength(0);
 	});
 
 	it("skips system slot", () => {
-		const links = getFontPreloadLinks([makeSlot({ kind: "system", preload: true })]);
+		const links = getFontPreloadLinks([
+			makeSlot({ kind: "system", faces: [createFontFace({ provider: "system", preload: true })] }),
+		]);
 		expect(links).toHaveLength(0);
 	});
 
 	it("skips manual stack", () => {
-		const links = getFontPreloadLinks([makeSlot({ kind: "manual", preload: true })]);
+		const links = getFontPreloadLinks([
+			makeSlot({ kind: "manual", faces: [createFontFace({ provider: "", preload: true })] }),
+		]);
 		expect(links).toHaveLength(0);
 	});
 
 	it("skips google fonts (CDN returns CSS, not font binary)", () => {
-		const links = getFontPreloadLinks([makeSlot({ preload: true })]);
+		const links = getFontPreloadLinks([
+			makeSlot({ faces: [createFontFace({ provider: "google", preload: true })] }),
+		]);
 		expect(links).toHaveLength(0);
 	});
 
@@ -399,20 +480,19 @@ describe("getFontPreloadLinks", () => {
 
 	it("handles multiple slots (only local files produce links)", () => {
 		const links = getFontPreloadLinks([
-			makeSlot({ preload: true }),
+			makeSlot({ faces: [createFontFace({ provider: "google", preload: true })] }),
 			localSlot("Custom", "/fonts/custom.woff2", true),
 		]);
 		expect(links).toHaveLength(1);
 		expect(links[0].href).toBe("/fonts/custom.woff2");
 	});
 
-	it("honors per-face preload over the slot default", () => {
+	it("preloads only the faces that opt in", () => {
 		const links = getFontPreloadLinks([
 			createFontSlot({
 				slot: "sans",
 				family: "Satoshi",
 				kind: "local",
-				preload: false,
 				faces: [
 					createFontFace({ provider: "/fonts/Satoshi.woff2", preload: true }),
 					createFontFace({ provider: "/fonts/Satoshi-Italic.woff2" }),
@@ -434,7 +514,6 @@ describe("createFontFace / createFontSlot", () => {
 		expect(face.provider).toBe("");
 		expect(face.weight).toBe("400");
 		expect(face.style).toBe("normal");
-		expect(face.subset).toBe("latin");
 		expect(face.display).toBe("swap");
 	});
 
@@ -451,8 +530,8 @@ describe("createFontFace / createFontSlot", () => {
 		expect(slot.features).toBeNull();
 		expect(slot.variation).toBeNull();
 		expect(slot.fallback).toEqual([]);
-		expect(slot.preload).toBe(false);
-		expect(slot.sizeAdjust).toBeUndefined();
+		expect(slot.metrics).toBeUndefined();
+		expect("metrics" in slot).toBe(false); // absent, not undefined — cache keys stringify slots
 		expect(slot.faces).toHaveLength(1);
 		expect(slot.faces[0].provider).toBe("");
 	});
@@ -478,13 +557,11 @@ describe("createFontFace / createFontSlot", () => {
 			slot: "mono",
 			family: "Fira Code",
 			faces: [createFontFace({ provider: "/fonts/FiraCode.woff2", weight: "300 700" })],
-			preload: true,
 		});
 		expect(slot.slot).toBe("mono");
 		expect(slot.family).toBe("Fira Code");
 		expect(slot.kind).toBe("local");
 		expect(slot.faces[0].weight).toBe("300 700");
-		expect(slot.preload).toBe(true);
 		expect(slot.faces[0].display).toBe("swap");
 	});
 

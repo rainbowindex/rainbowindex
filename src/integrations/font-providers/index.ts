@@ -28,6 +28,8 @@ import { isRIDebug } from "../../shared.js";
 // Re-exported wholesale for compat.
 export * from "./model.js";
 import type { FontFace, FontMetrics, FontSlot } from "./model.js";
+export { computeFallbackMetrics, lookupFontMetrics, resolveAutoMetrics } from "./metrics.js";
+import { lookupFontMetrics, resolveAutoMetrics } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // System Font Stacks
@@ -84,9 +86,7 @@ export function googleFontsUrl(family: string, face: FontFace): string {
 	}
 
 	const display = face.display || "swap";
-	const subset =
-		face.subset && face.subset !== "latin" ? `&subset=${encodeURIComponent(face.subset)}` : "";
-	return `https://fonts.googleapis.com/css2?family=${encodedFamily}:${axisParam}&display=${display}${subset}`;
+	return `https://fonts.googleapis.com/css2?family=${encodedFamily}:${axisParam}&display=${display}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ export function generateFallbackFontFace(family: string, metrics: FontMetrics): 
 	const safeFamily = escapeFontFamily(family);
 	return `@font-face {
   font-family: "${safeFamily} Fallback";
-  src: local("${metrics.fallback}");
+  src: local("${escapeFontFamily(metrics.fallback)}");
   size-adjust: ${metrics.sizeAdjust}%;
   ascent-override: ${metrics.ascent}%;
   descent-override: ${metrics.descent}%;
@@ -168,8 +168,10 @@ export function generateWebFontFace(
 		return { type: "import", css: `@import url("${googleFontsUrl(family, face)}");` };
 	}
 	// Local file or URL — generate @font-face with direct src.
-	// Escape characters that would break the CSS url("...") syntax.
-	const safeProvider = face.provider.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	// Escape characters that would break the CSS url("...") syntax —
+	// escapeFontFamily also neutralizes newlines/CR/NUL, which are invalid
+	// inside CSS quoted strings.
+	const safeProvider = escapeFontFamily(face.provider);
 	const format = inferFontFormat(face.provider);
 	const src = `url("${safeProvider}") format("${format}")`;
 
@@ -209,6 +211,33 @@ function normalizeLocalStyle(style: string, family: string, warnings: string[]):
 }
 
 /**
+ * Resolve the CLS-fallback metrics for a loaded (google/local) slot.
+ * Returns null when metrics are disabled, unresolvable, or not applicable.
+ */
+function resolveSlotMetrics(slot: FontSlot, warnings: string[]): FontMetrics | null {
+	const cfg = slot.metrics;
+	if (cfg === null) return null; // `metrics: none`
+	if (cfg?.sizeAdjust !== undefined) {
+		// Manual override — the parser guarantees all four numbers are present.
+		return {
+			fallback: cfg.fallback || slot.fallback[0] || "Arial",
+			sizeAdjust: cfg.sizeAdjust,
+			ascent: cfg.ascent as number,
+			descent: cfg.descent as number,
+			lineGap: cfg.lineGap as number,
+		};
+	}
+	const resolved = resolveAutoMetrics(slot.family, slot.fallback, cfg?.fallback);
+	if (!resolved && cfg?.fallback) {
+		const missing = lookupFontMetrics(slot.family) ? cfg.fallback : slot.family;
+		warnings.push(
+			`[RI-1220] @font slot "${slot.slot}" requests metrics matching against "${cfg.fallback}", but "${missing}" is not in the built-in metrics table — no fallback @font-face was generated. Provide the four percentages explicitly (metrics: "${cfg.fallback}" <size-adjust> <ascent> <descent> <line-gap>) or use \`metrics: none\`.`,
+		);
+	}
+	return resolved;
+}
+
+/**
  * Generate all CSS for a single @font slot (one or more faces).
  */
 export function generateFontCSS(slot: FontSlot): FontOutput {
@@ -236,25 +265,11 @@ export function generateFontCSS(slot: FontSlot): FontOutput {
 		return { imports, fontFaces, variables, warnings };
 	}
 
-	// Metrics-adjusted fallback @font-face (only when the user provides explicit metrics).
-	const { sizeAdjust, ascent, descent, lineGap } = slot;
-	const hasMetrics =
-		sizeAdjust !== undefined &&
-		ascent !== undefined &&
-		descent !== undefined &&
-		lineGap !== undefined;
-	if (hasMetrics) {
-		const metricsFallbackFont = slot.metricsFallback || slot.fallback[0] || "Arial";
-		fontFaces.push(
-			generateFallbackFontFace(slot.family, {
-				fallback: metricsFallbackFont,
-				sizeAdjust: sizeAdjust as number,
-				ascent: ascent as number,
-				descent: descent as number,
-				lineGap: lineGap as number,
-			}),
-		);
-	}
+	// Metrics-adjusted fallback @font-face — automatic from the built-in
+	// metrics table, manual via `metrics: "<font>" N N N N`, off via
+	// `metrics: none`.
+	const metrics = resolveSlotMetrics(slot, warnings);
+	if (metrics) fontFaces.push(generateFallbackFontFace(slot.family, metrics));
 
 	// One @font-face (local) or @import (google) per face.
 	for (const face of slot.faces) {
@@ -284,7 +299,7 @@ export function generateFontCSS(slot: FontSlot): FontOutput {
 		slot.fallback.length > 0 ? slot.fallback.join(", ") : getFallbackStack(slot.slot);
 	const safeFamily = escapeFontFamily(slot.family);
 	const stackParts = [`"${safeFamily}"`];
-	if (hasMetrics) stackParts.push(`"${safeFamily} Fallback"`);
+	if (metrics) stackParts.push(`"${safeFamily} Fallback"`);
 	stackParts.push(fallbackStack);
 	variables.push(`--font-${slot.slot}: ${stackParts.join(", ")};`);
 	pushFeatureVars();
@@ -311,8 +326,7 @@ export function getFontPreloadLinks(slots: readonly FontSlot[]): FontPreloadLink
 	const seen = new Set<string>();
 	for (const slot of slots) {
 		for (const face of slot.faces) {
-			const preload = face.preload ?? slot.preload;
-			if (!preload) continue;
+			if (!face.preload) continue;
 			// Google Fonts returns CSS stylesheets, not font binaries — we can't
 			// determine the actual .woff2 URL without fetching the CSS at build time,
 			// so preload is only supported for local file / raw URL providers.

@@ -1,6 +1,10 @@
 import type { ResolvedTheme } from "../../../directives/foundation.js";
 import type { FontSlot } from "../index.js";
-import { googleFontInternals, type GoogleFontMeta } from "./state.js";
+import {
+	googleFontInternals,
+	type GoogleFontCacheState,
+	type GoogleFontMeta,
+} from "./state.js";
 import { getFontCacheFile, loadFontCache, saveFontCache } from "./cache.js";
 import { fetchGoogleFontMetadata } from "./client.js";
 import { isRIDebug, withTimeout } from "../../../shared.js";
@@ -86,9 +90,25 @@ export function isVariableFont(family: string): boolean {
  *
  * When metadata isn't loaded yet, slots are returned unchanged — the caller is
  * expected to invoke `fetchGoogleFontList()` before this runs.
+ *
+ * Identity contract: when no slot changes, the ORIGINAL array is returned, and
+ * repeated calls with the same array + same metadata state return the same
+ * output array. Watch rebuilds hand in the same (memoized) theme fonts every
+ * build, so a stable output identity lets finalizeProjectCompilation keep the
+ * effective theme object — and every theme-identity-keyed cache — alive.
  */
+const refreshMemo = new WeakMap<
+	readonly FontSlot[],
+	{ state: GoogleFontCacheState; result: FontSlot[] }
+>();
+
 export function refreshFontWeightDefaults(fonts: readonly FontSlot[]): FontSlot[] {
-	return fonts.map((slot) => {
+	const state = googleFontInternals.googleFontState;
+	const memo = refreshMemo.get(fonts);
+	if (memo && memo.state === state) return memo.result;
+
+	let anyChanged = false;
+	const refreshed = fonts.map((slot) => {
 		if (slot.kind !== "google") return slot;
 		const meta = googleFontInternals.googleFontState.cache.get(slot.family);
 		if (!meta) return slot;
@@ -114,8 +134,15 @@ export function refreshFontWeightDefaults(fonts: readonly FontSlot[]): FontSlot[
 			return next;
 		});
 
+		if (changed) anyChanged = true;
 		return changed ? { ...slot, faces } : slot;
 	});
+
+	// The input is only readonly by annotation — every producer hands us a plain
+	// mutable array — so returning it unchanged is safe.
+	const result = anyChanged ? refreshed : (fonts as FontSlot[]);
+	refreshMemo.set(fonts, { state, result });
+	return result;
 }
 
 /** Cap how long any surface (CLI, PostCSS, compileProject) waits for Google

@@ -272,28 +272,42 @@ function mergeClasses(
 /**
  * Shared ri()/createRi() entry: cache fast path, then flatten + merge.
  *
- * When every argument is a non-empty string, the cache key is built from the
- * raw arguments before any flattening/tokenization, so repeat calls (the
- * per-render common case) skip the whole tokenize pipeline. Raw-join and
- * token-join keys can only collide when they describe the same token list —
- * i.e. when they'd produce the same output — short of a literal "\x00" inside
- * an argument, which cannot occur in a real class name.
+ * When every argument is a string or a falsy primitive, the cache key is built
+ * from the raw string arguments before any flattening/tokenization, so repeat
+ * calls (the per-render common case, including the conditional pattern
+ * ri('flex', isActive && 'bg-blue-500')) skip the whole tokenize pipeline.
+ * Falsy arguments are skipped when building the key — flattenInputs drops them,
+ * so they contribute nothing to the output. Truthy non-strings (arrays,
+ * numbers) bail to the flatten path, which preserves exact semantics (nesting,
+ * dev warnings). Raw-join and token-join keys can only collide when they
+ * describe the same token list — i.e. when they'd produce the same output —
+ * short of a literal "\x00" inside an argument, which cannot occur in a real
+ * class name.
  */
 function mergeFrom(
 	inputs: ClassInput[],
 	resolve: (utility: string) => readonly string[] | null,
 	cache: Map<string, string>,
 ): string {
-	let allStrings = inputs.length > 0;
+	let fastPath = true;
+	let rawKey = "";
 	for (let i = 0; i < inputs.length; i++) {
 		const input = inputs[i];
-		if (typeof input !== "string" || input === "") {
-			allStrings = false;
+		if (typeof input === "string") {
+			// "" is falsy and contributes nothing — skip it like flattenInputs does.
+			if (input !== "") rawKey = rawKey === "" ? input : `${rawKey}\x00${input}`;
+		} else if (input) {
+			// Truthy non-string (array, number, object) — only the flatten path
+			// preserves exact semantics.
+			fastPath = false;
 			break;
 		}
+		// Other falsy values (false/null/undefined/0/NaN) contribute nothing:
+		// flattenInputs drops them, so the key omits them too.
 	}
-	if (allStrings) {
-		const rawKey = (inputs as string[]).join("\x00");
+	if (fastPath) {
+		// All inputs falsy (or none) — flattening would yield no classes.
+		if (rawKey === "") return "";
 		if (rawKey.length <= RI_CACHE_KEY_MAX_LEN) {
 			const cached = lruGet(cache, rawKey);
 			if (cached !== undefined) return cached;

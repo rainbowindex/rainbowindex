@@ -192,31 +192,46 @@ type FileScanResult = {
 
 const FILE_IO_TIMEOUT_MS = 10_000;
 
+// Per-file scan cache keyed by absolute path. An mtimeMs+size match replays
+// the previous result verbatim (classes, warnings, failure), so watch-mode
+// rebuilds re-read only the files that actually changed. Deleted files drop
+// out naturally — the glob stops matching them, so stale entries are never
+// consulted.
+// ponytail: whole-map clear at 20k entries — swap for LRU eviction if
+// projects that large churn in practice.
+const SCAN_CACHE_MAX_ENTRIES = 20_000;
+const scanCache = new Map<string, { mtimeMs: number; size: number; result: FileScanResult }>();
+
 async function scanOneFile(file: string): Promise<FileScanResult> {
 	const warnings: string[] = [];
 	try {
-		const fileSize = await withTimeout(
-			stat(file).then((s) => s.size),
-			FILE_IO_TIMEOUT_MS,
-			"stat() timed out",
-		);
-		if (fileSize > MAX_FILE_SIZE) {
-			return {
+		const stats = await withTimeout(stat(file), FILE_IO_TIMEOUT_MS, "stat() timed out");
+		const cached = scanCache.get(file);
+		if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+			return cached.result;
+		}
+		let result: FileScanResult;
+		if (stats.size > MAX_FILE_SIZE) {
+			result = {
 				classes: null,
 				warnings,
-				failure: `[RI-1405] Skipping source file "${file}" (${fileSize} bytes) — exceeds ${MAX_FILE_SIZE} byte limit.`,
+				failure: `[RI-1405] Skipping source file "${file}" (${stats.size} bytes) — exceeds ${MAX_FILE_SIZE} byte limit.`,
+			};
+		} else {
+			const content = await withTimeout(
+				readFile(file, "utf-8"),
+				FILE_IO_TIMEOUT_MS,
+				"readFile() timed out",
+			);
+			result = {
+				classes: extractClassesFromSource({ path: file, content }, warnings),
+				warnings,
+				failure: null,
 			};
 		}
-		const content = await withTimeout(
-			readFile(file, "utf-8"),
-			FILE_IO_TIMEOUT_MS,
-			"readFile() timed out",
-		);
-		return {
-			classes: extractClassesFromSource({ path: file, content }, warnings),
-			warnings,
-			failure: null,
-		};
+		if (scanCache.size >= SCAN_CACHE_MAX_ENTRIES) scanCache.clear();
+		scanCache.set(file, { mtimeMs: stats.mtimeMs, size: stats.size, result });
+		return result;
 	} catch (err) {
 		return {
 			classes: null,

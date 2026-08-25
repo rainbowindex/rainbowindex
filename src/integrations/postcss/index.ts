@@ -132,11 +132,14 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 				// User nodes stay in the AST; `compiled.sections` is generated-only
 				// (user CSS is carried separately in compiled.userCSS).
 				stripRIDirectiveNodes(root);
-				if (compiled.sections.length > 0) {
-					const generatedRoot = postcss.parse(compiled.sections.join("\n\n"), { from });
-					root.prepend(generatedRoot.nodes);
-				}
 
+				// The @slot/@apply walks run BEFORE the generated sections are
+				// prepended: generated CSS can never contain @slot or @apply
+				// (custom-utility @apply bodies are pre-expanded at generation
+				// time), so walking only the user AST skips full traversals of
+				// the largest subtree. Rules expandApply appends at the document
+				// root land after user CSS either way, so prepending afterwards
+				// yields the identical final order.
 				const slotWarnings: string[] = [];
 				warnStandaloneSlots(root, slotWarnings);
 				pushWarningsDeduped(compilationWarnings, slotWarnings, warningSeen);
@@ -144,6 +147,11 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 				const applyWarnings: string[] = [];
 				processApply(root, compiled.theme, applyWarnings);
 				pushWarningsDeduped(compilationWarnings, applyWarnings, warningSeen);
+
+				if (compiled.sections.length > 0) {
+					const generatedRoot = postcss.parse(compiled.sections.join("\n\n"), { from });
+					root.prepend(generatedRoot.nodes);
+				}
 
 				const cssFnWarnings: string[] = [];
 				processCSSFunctions(root, compiled.theme, cssFnWarnings);

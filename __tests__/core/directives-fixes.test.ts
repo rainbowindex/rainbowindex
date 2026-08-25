@@ -289,6 +289,16 @@ describe("parseAnimateBody — top-level-only removals", () => {
 		expect(removals).toEqual(["spin"]);
 		expect(animations["fade"]).toBeDefined();
 	});
+
+	it("drops a colon-less fragment even when it carries a block", () => {
+		// Regression guard for scanEntries yielding blocks on fragments (added for
+		// @font's legacy @face desugaring): a keyless fragment must never register.
+		const { animations } = parseAnimateBody(`
+			stray { from { opacity: 0; } }
+			fade: fade 1s ease { from { opacity: 0; } to { opacity: 1; } }
+		`);
+		expect(Object.keys(animations)).toEqual(["fade"]);
+	});
 });
 
 // ---------------------------------------------------------------------------

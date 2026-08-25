@@ -30,11 +30,9 @@ export interface FontFace {
 	style: string;
 	/** font-display strategy. */
 	display: string;
-	/** Unicode subsets — used as a Google Fonts URL hint. */
-	subset: string;
 	/** Optional unicode-range descriptor emitted into the @font-face (local subsetting). */
 	unicodeRange?: string;
-	/** Per-face preload override; when undefined the slot-level default applies. */
+	/** Whether to emit a preload link for this face's font file. */
 	preload?: boolean;
 	/** Whether the weight was explicitly set by the user (not a default).
 	 *  Used by refreshFontWeightDefaults() to avoid overriding user intent. */
@@ -57,19 +55,26 @@ export interface FontSlot {
 	features: string | null;
 	/** Font variation settings — applied via the font-<slot> utility. */
 	variation: string | null;
-	/** Slot-level preload default for faces that don't set their own. */
-	preload: boolean;
 	/** One or more faces — each emits an @font-face for local providers. */
 	faces: FontFace[];
-	/** User-specified fallback font for metrics-adjusted @font-face. */
-	metricsFallback?: string;
-	/** User-specified size-adjust percentage. */
+	/**
+	 * CLS-fallback metrics config from the `metrics:` key. Absent = automatic
+	 * (from the built-in table when the family is known); `null` = disabled via
+	 * `metrics: none`; an object overrides the fallback font and/or the numbers.
+	 */
+	metrics?: FontMetricsConfig | null;
+}
+
+/**
+ * Parsed `metrics:` value. `fallback` picks the local font to metric-match.
+ * The four override percentages are all-present or all-absent (the parser
+ * enforces arity); when absent they are computed from the built-in table.
+ */
+export interface FontMetricsConfig {
+	fallback?: string;
 	sizeAdjust?: number;
-	/** User-specified ascent-override percentage. */
 	ascent?: number;
-	/** User-specified descent-override percentage. */
 	descent?: number;
-	/** User-specified line-gap-override percentage. */
 	lineGap?: number;
 }
 
@@ -106,7 +111,6 @@ export function createFontFace(partial: Partial<FontFace> & { provider: string }
 		weight: isGoogle ? GOOGLE_DEFAULT_WEIGHT : "400",
 		style: isGoogle ? GOOGLE_DEFAULT_STYLE : "normal",
 		display: "swap",
-		subset: "latin",
 		...partial,
 	};
 }
@@ -122,19 +126,17 @@ export function createFontSlot(
 		partial.faces && partial.faces.length > 0
 			? partial.faces.map((f) => ({ ...f }))
 			: [createFontFace({ provider: defaultProvider })];
-	return {
+	const slot: FontSlot = {
 		slot: partial.slot,
 		family: partial.family,
 		kind: partial.kind ?? kindFromProvider(faces[0].provider),
 		fallback: [...(partial.fallback ?? [])],
 		features: partial.features ?? null,
 		variation: partial.variation ?? null,
-		preload: partial.preload ?? false,
 		faces,
-		metricsFallback: partial.metricsFallback,
-		sizeAdjust: partial.sizeAdjust,
-		ascent: partial.ascent,
-		descent: partial.descent,
-		lineGap: partial.lineGap,
 	};
+	// Assigned conditionally so an unset config stays absent (not `undefined`) —
+	// the assembly-level cache key JSON.stringifies whole slots.
+	if (partial.metrics !== undefined) slot.metrics = partial.metrics;
+	return slot;
 }
