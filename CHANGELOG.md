@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-27
+
+### Added
+
+- **`rainbowindex scan <file|glob…>`** — prints every class candidate the
+  scanner extracts from each file, with scanner warnings on stderr. Answers
+  "why doesn't my class generate?" directly: a class missing from the list
+  was never seen by the scanner (check the markup), while a class listed
+  there that still produces no rule fails later (check the build warnings).
+- **RI-1411 — skipped over-long lines are now reported.** The scanner drops
+  lines above the minified-input guard, previously in silence. It now warns
+  once per file with the path and line count. Suppressed for `node_modules`
+  paths, where minified dists are the guard's intended target.
+- **RI-1038 — uppercase `@utility` names warn.** The markup scanner only
+  matches lowercase tokens, so `@utility cardHeader` could never trigger
+  from `class="cardHeader"`. The utility still works through `@a`/`@apply`
+  and inline `@source`, so it is kept — but no longer silently unreachable.
+
+### Changed
+
+- **Fallback stacks moved from preflight into `@font`.** The
+  `--sans-fallback` / `--serif-fallback` / `--mono-fallback` variables were
+  emitted into every project and referenced by nothing. A manual `@font`
+  slot that declares no fallbacks now gets the default system stack appended
+  to its `--font-<slot>` value instead (`sans: "Chartwell";` →
+  `"Chartwell", ui-sans-serif, system-ui, …`); a slot that declares its own
+  fallbacks is untouched. Font tokens no longer depend on a preflight
+  category that users can switch off.
+- **Focus ring uses literal lengths.** `:focus-visible` drew its outline at
+  `var(--spacing)` (4px by default) and offset at half that, so changing the
+  spacing scale silently resized every focus ring. Now a flat 2px width and
+  2px offset.
+- **Placeholder color follows the text color** —
+  `color-mix(in oklab, currentColor 48%, transparent)` instead of a
+  hardcoded gray that ignored the theme in dark mode.
+- **Scanner line-length guard raised from 2,000 to 10,000 characters.** Real
+  minified files run far above this, while hand-written long lines (inline
+  SVG path data, long attribute stacks) sit below it. `MAX_LINE_LENGTH` is
+  exported so tooling and tests derive from it instead of hardcoding.
+- **Default source patterns scan every root HTML file** (`*.html`, not just
+  `index.html`), so Vite multi-page apps are covered without an explicit
+  `@source`. `dist`, `build`, and `public` remain excluded.
+
+### Removed
+
+- **Preflight `select-reset`.** It styled rather than reset, and shipped
+  three defects: its chevron was a `currentColor` SVG in a `background-image`,
+  which resolves to black and disappears on dark backgrounds; the bare
+  `select` selector also hit `<select multiple>`, giving listboxes a floating
+  chevron and 2.5rem of padding; and `appearance: none` stripped the native
+  control on every platform. Style selects in your own CSS.
+- **Preflight `:focus:not(:focus-visible) { outline: none }`** — no current
+  browser draws an outline for plain `:focus`, so the rule was dead.
+
+### Fixed
+
+- **Quoted class attributes on over-long lines are no longer lost.** A
+  `className="…"` sharing a line with multi-KB inline SVG path data
+  generated nothing: the whole-file scan skipped the line for length, and
+  the attribute collector stripped the quotes and then searched only for
+  string literals *nested inside* the value, of which a plain quoted
+  attribute has none. Quoted attribute values are now tokenized directly, in
+  the one shared collector — so JSX, HTML, Vue, Svelte, and object-literal
+  (`{ className: "…" }`) syntax are all fixed together. Non-quoted
+  expression values keep their existing semantics.
+- **List margins are reset.** `list-reset` removed bullets and padding while
+  `ol`, `ul`, and `menu` kept the browser's `margin-block: 1em`, leaving
+  unexplained gaps around navigation and menus.
+- **`fieldset` and `legend` are reset** — their default margin and padding
+  survived while every other form control was flush.
+
 ## [0.4.1] - 2026-08-25
 
 ### Added

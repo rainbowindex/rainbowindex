@@ -8,6 +8,7 @@ import { buildCSS } from "../cli/build.js";
 import { generateTypes } from "../cli/generate-types.js";
 import { preloadFonts } from "../cli/preload-fonts.js";
 import { buildAndWrite, minifyIfRequested, watchMode } from "../cli/watch.js";
+import { scanFiles } from "../cli/scan.js";
 import { createViteProject, initViteProject } from "../cli/vite-setup.js";
 
 declare const __RI_VERSION__: string;
@@ -40,6 +41,9 @@ async function main(): Promise<void> {
 			break;
 		case "preload-fonts":
 			await preloadFonts(opts, cwd);
+			break;
+		case "scan":
+			await scanFiles(opts, cwd);
 			break;
 		case "build": {
 			if (opts.watch) {

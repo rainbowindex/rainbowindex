@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { extractDirectives, resolveDirectives } from "../../src/directives/index.js";
 import { extractClasses, extractClassesFromSource } from "../../src/scanner/class-extraction.js";
+import { MAX_LINE_LENGTH } from "../../src/scanner/collectors.js";
 import {
 	discoverPackageSafelistSources,
 	resetSafelistDiscoveryCache,
@@ -318,7 +319,7 @@ describe("unterminated template literals", () => {
 
 describe("single-line minified handling", () => {
 	test("drops the over-long line but keeps helper-call extraction", () => {
-		const padding = "x".repeat(2_100);
+		const padding = "x".repeat(MAX_LINE_LENGTH + 100);
 		const content = `var pad="${padding}";var raw="m-2 bare-token";var a=cn("p-4 flex");var b=safelist("stroke-cap-round");`;
 		expect(content.includes("\n")).toBe(false);
 		const classes = extractClassesFromSource({ path: "/tmp/dist/lib.min.js", content });
@@ -332,9 +333,88 @@ describe("single-line minified handling", () => {
 	});
 
 	test("treats a single over-long line the same as one inside a multiline file", () => {
-		const longLine = `class="${"x".repeat(2_100)} p-4"`;
+		const longLine = `class="${"x".repeat(MAX_LINE_LENGTH + 100)} p-4"`;
 		expect(extractClasses(longLine).size).toBe(0);
 		expect(extractClasses(`${longLine}\n<div class="m-2">`)).toContain("m-2");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Quoted class attributes on over-long lines
+// ---------------------------------------------------------------------------
+// Inline SVG icons commonly put the class attribute on the same line as
+// multi-KB path data. The line-length guard drops such lines from the
+// whole-file scan, so the attribute collectors must extract quoted values
+// themselves — for every file type that collects class attributes.
+
+describe("quoted class attributes on over-long lines", () => {
+	const UNIT = "M9.9,9.9c-.3-.1-.5-.2-.7-.3";
+	const pathData = UNIT.repeat(Math.ceil((MAX_LINE_LENGTH + 100) / UNIT.length));
+
+	test("JSX className survives on a line dropped for length", () => {
+		const content = `<path d="${pathData}" className="fill-[#222222] hover:stroke-2" />`;
+		const classes = extractClassesFromSource({ path: "/tmp/src/logo.tsx", content });
+		expect(classes).toContain("fill-[#222222]");
+		expect(classes).toContain("hover:stroke-2");
+	});
+
+	test("HTML class survives on a line dropped for length", () => {
+		const content = `<path d="${pathData}" class="m-2 p-4"/>`;
+		const classes = extractClassesFromSource({ path: "/tmp/src/icon.html", content });
+		expect(classes).toContain("m-2");
+		expect(classes).toContain("p-4");
+	});
+
+	test("Vue static class survives on a line dropped for length", () => {
+		const content = `<template><path d="${pathData}" class="gap-2"/></template>`;
+		const classes = extractClassesFromSource({ path: "/tmp/src/Icon.vue", content });
+		expect(classes).toContain("gap-2");
+	});
+
+	test("Svelte static class survives on a line dropped for length", () => {
+		const content = `<path d="${pathData}" class="stroke-2"/>`;
+		const classes = extractClassesFromSource({ path: "/tmp/src/Icon.svelte", content });
+		expect(classes).toContain("stroke-2");
+	});
+
+	test("object-literal className survives on a line dropped for length", () => {
+		const content = `const cfg = { pad: "${pathData}", className: "px-6" };`;
+		const classes = extractClassesFromSource({ path: "/tmp/src/cfg.ts", content });
+		expect(classes).toContain("px-6");
+	});
+
+	test("non-quoted expression values keep expression semantics", () => {
+		// A bare identifier value is not a class list; only its nested string
+		// literals count. Both sit on a dropped line so the whole-file scan
+		// cannot mask the attribute collector's behavior.
+		const content = `<i data-pad="${pathData}" className={statusvar} /><b className={"flex"} />`;
+		const classes = extractClassesFromSource({ path: "/tmp/src/x.tsx", content });
+		expect(classes).not.toContain("statusvar");
+		expect(classes).toContain("flex");
+	});
+
+	test("skipped long lines warn RI-1411 with the file path", () => {
+		const warnings: string[] = [];
+		extractClassesFromSource(
+			{ path: "/tmp/src/logo.tsx", content: `<path d="${pathData}" className="p-2" />` },
+			warnings,
+		);
+		expect(warnings.some((w) => w.includes("[RI-1411]") && w.includes("/tmp/src/logo.tsx"))).toBe(
+			true,
+		);
+	});
+
+	test("RI-1411 stays silent for node_modules paths and short files", () => {
+		const warnings: string[] = [];
+		extractClassesFromSource(
+			{ path: "/x/node_modules/lib/dist/index.js", content: `var p="${pathData}";` },
+			warnings,
+		);
+		extractClassesFromSource(
+			{ path: "/tmp/src/ok.tsx", content: '<i className="p-1" />' },
+			warnings,
+		);
+		expect(warnings.some((w) => w.includes("[RI-1411]"))).toBe(false);
 	});
 });
 

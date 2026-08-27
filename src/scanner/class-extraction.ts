@@ -16,6 +16,7 @@ import {
 	collectDirectiveNames,
 	collectStringLiteralClasses,
 	collectVariantHelperArguments,
+	MAX_LINE_LENGTH,
 	pruneTokens,
 	pruneVariantMetadata,
 	scanClassTokens,
@@ -49,8 +50,11 @@ type Extractor = {
 	extract: (sink: CandidateSink, context: SourceExtractionInput, warnings?: string[]) => void;
 };
 
-/** Adds nothing — used for position-only passes that record class contexts
- *  (markContext) without contributing values, so build output is untouched. */
+/** Adds nothing itself — used for passes whose non-quoted values should not
+ *  contribute tokens. Quoted attribute values are still tokenized by
+ *  collectAssignedValues regardless of visitor, so these passes both annotate
+ *  attribute contexts (markContext) and keep quoted classes alive on lines the
+ *  whole-file scan drops for length. */
 const NOOP_VISITOR: ValueVisitor = () => undefined;
 
 function extractHTML(
@@ -60,12 +64,11 @@ function extractHTML(
 ): void {
 	sink.setOrigin?.("plain");
 	scanClassTokens(sink, context.content, 0, warnings);
-	// Quoted class attributes are fully tokenized by the whole-file scan above;
-	// this pass only annotates their spans as attribute contexts.
-	if (sink.wantsPositions) {
-		sink.setOrigin?.("attribute");
-		collectAssignedValues(sink, context.content, /\bclass\s*=/g, NOOP_VISITOR, 0, warnings);
-	}
+	// Runs unconditionally: besides annotating attribute contexts for the
+	// editor, this pass is what extracts quoted class attributes on
+	// >MAX_LINE_LENGTH lines, which the whole-file scan above drops.
+	sink.setOrigin?.("attribute");
+	collectAssignedValues(sink, context.content, /\bclass\s*=/g, NOOP_VISITOR, 0, warnings);
 }
 
 function extractJSXTSX(
@@ -119,17 +122,9 @@ function extractVue(
 		0,
 		warnings,
 	);
-	// Position-only annotation for static class="…" attributes (see extractHTML).
-	if (sink.wantsPositions) {
-		collectAssignedValues(
-			sink,
-			context.content,
-			/(?<![:\w-])class\s*=/g,
-			NOOP_VISITOR,
-			0,
-			warnings,
-		);
-	}
+	// Unconditional for the same reason as extractHTML: quoted static
+	// class="…" attributes on over-long lines only survive through this pass.
+	collectAssignedValues(sink, context.content, /(?<![:\w-])class\s*=/g, NOOP_VISITOR, 0, warnings);
 }
 
 function extractSvelte(
@@ -177,7 +172,33 @@ const EXTRACTORS: readonly Extractor[] = [
 	},
 ];
 
+/**
+ * Surface the whole-file scan's long-line drops instead of losing content
+ * silently — a class list on a dropped line simply never generating is the
+ * scanner's worst failure mode to debug. Suppressed for node_modules paths:
+ * minified dists are the guard's intended target, and warning there is noise.
+ */
+function warnOverLongLines(input: SourceExtractionInput, warnings?: string[]): void {
+	const content = input.content;
+	if (!warnings || content.length <= MAX_LINE_LENGTH) return;
+	if (input.path?.includes("node_modules")) return;
+	let count = 0;
+	let start = 0;
+	for (;;) {
+		const idx = content.indexOf("\n", start);
+		const end = idx === -1 ? content.length : idx;
+		if (end - start > MAX_LINE_LENGTH) count++;
+		if (idx === -1) break;
+		start = idx + 1;
+	}
+	if (count === 0) return;
+	warnings.push(
+		`[RI-1411] ${input.path ?? "<source>"}: ${count} line(s) longer than ${MAX_LINE_LENGTH} characters were skipped by the class scanner (minified-input guard). Quoted class attributes on those lines are still read; other class references there are not — split the long lines.`,
+	);
+}
+
 function extractInto(sink: CandidateSink, input: SourceExtractionInput, warnings?: string[]): void {
+	warnOverLongLines(input, warnings);
 	let handled = false;
 	for (const extractor of EXTRACTORS) {
 		if (extractor.test(input)) {

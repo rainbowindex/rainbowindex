@@ -12,8 +12,11 @@ import { validateGlobPattern } from "./glob-utils.js";
 import { extractClassesFromSource } from "./class-extraction.js";
 import { discoverPackageSafelistSources } from "./package-discovery.js";
 
+// Root-level "*.html" (not just index.html) so Vite multi-page apps with
+// about.html etc. at the root are scanned by default; dist/build/public are
+// excluded below.
 export const DEFAULT_PATTERNS = Object.freeze([
-	"index.html",
+	"*.html",
 	"src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}",
 ]);
 

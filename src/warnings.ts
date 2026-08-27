@@ -48,6 +48,7 @@
  *   1035  Invalid directive entry key or @utility name (skipped)
  *   1036  RI directive nested inside a conditional at-rule applies unconditionally
  *   1037  @slot used outside @custom (only valid inside @custom)
+ *   1038  @utility name contains uppercase (never matched by the markup scanner)
  *
  * RI-11xx — Color directives + directive-resolver catch-alls
  *   1101  Invalid @color value
@@ -99,6 +100,7 @@
  *   1408  Variant group expansion output exceeds character limit
  *   1409  Variant group nesting exceeds max depth
  *   1410  Safelist discovery — could not read dep package.json or invalid safelistSources entry
+ *   1411  Over-long lines skipped by the class scanner (minified-input guard)
  *
  * RI-15xx — Typography utilities
  *   1501  text-fluid requires rem font size

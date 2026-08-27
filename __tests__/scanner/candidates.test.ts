@@ -5,6 +5,7 @@ import {
 	type ClassCandidate,
 	type SourceExtractionInput,
 } from "../../src/scanner/class-extraction.js";
+import { MAX_LINE_LENGTH } from "../../src/scanner/collectors.js";
 
 // ---------------------------------------------------------------------------
 // Invariant helpers
@@ -189,7 +190,7 @@ describe("candidate positions", () => {
 	});
 
 	test("candidates after a dropped over-long line keep correct offsets", () => {
-		const longLine = `const blob = "${"x".repeat(2100)}";`;
+		const longLine = `const blob = "${"x".repeat(MAX_LINE_LENGTH + 100)}";`;
 		const content = `<div class="flex"></div>\n${longLine}\n<div class="px-6"></div>`;
 		const candidates = extractClassCandidates({ path: "a.html", content });
 		const px6 = byValue(candidates, "px-6");
@@ -203,6 +204,20 @@ describe("candidate positions", () => {
 					c.end < content.indexOf(longLine) + longLine.length,
 			),
 		).toBe(false);
+	});
+
+	test("quoted attribute candidates on an over-long line keep offsets and origin", () => {
+		// The whole-file scan drops the line, so these candidates exist purely
+		// through the attribute collector's quoted-value tokenization — offsets
+		// must still map into the original source, with attribute origin.
+		const content = `<path d="${"x".repeat(MAX_LINE_LENGTH + 100)}" class="px-6 hover:{gap-2 m-1}"/>`;
+		const candidates = extractClassCandidates({ path: "a.html", content });
+		const px6 = byValue(candidates, "px-6");
+		expect(content.slice(px6.start, px6.end)).toBe("px-6");
+		expect(px6.origin).toBe("attribute");
+		const gap = byValue(candidates, "hover:gap-2");
+		expect(content.slice(gap.start, gap.end)).toBe("gap-2");
+		expect(content.slice(gap.groupPrefix?.start, gap.groupPrefix?.end)).toBe("hover:");
 	});
 
 	test("template literal chunks around interpolations keep offsets", () => {

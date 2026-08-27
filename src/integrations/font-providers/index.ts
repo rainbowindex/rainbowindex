@@ -258,8 +258,13 @@ export function generateFontCSS(slot: FontSlot): FontOutput {
 	}
 
 	if (slot.kind === "manual") {
-		// Manual font stack — no loading, just wire the variable.
-		const stack = [`"${escapeFontFamily(slot.family)}"`, ...slot.fallback].join(", ");
+		// Manual font stack — no loading, just wire the variable. A family with
+		// no user fallbacks still gets the default system stack appended: no
+		// token may ship a bare family name that strands users on the browser
+		// default when the font is missing.
+		const fallback =
+			slot.fallback.length > 0 ? slot.fallback.join(", ") : getFallbackStack(slot.slot);
+		const stack = [`"${escapeFontFamily(slot.family)}"`, fallback].join(", ");
 		variables.push(`--font-${slot.slot}: ${stack};`);
 		pushFeatureVars();
 		return { imports, fontFaces, variables, warnings };

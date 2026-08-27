@@ -32,10 +32,7 @@ afterEach(() => {
 
 describe("default discovery constants", () => {
 	test("uses shared source and CSS defaults", () => {
-		expect(DEFAULT_PATTERNS).toEqual([
-			"index.html",
-			"src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}",
-		]);
+		expect(DEFAULT_PATTERNS).toEqual(["*.html", "src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}"]);
 		expect(CSS_CANDIDATES).toEqual([
 			"src/index.css",
 			"src/style.css",

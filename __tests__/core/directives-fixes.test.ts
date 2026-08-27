@@ -433,6 +433,19 @@ describe("RI-1035 — invalid keys/names are warn-skipped", () => {
 		expect(warnings.some((w) => w.includes("[RI-1035]") && w.includes('"my util"'))).toBe(true);
 	});
 
+	it("keeps an uppercase @utility name but warns RI-1038 (scanner-unreachable)", () => {
+		const warnings: string[] = [];
+		const util = parseUtilityDirective("color: red;", "cardHeader", warnings);
+		expect(util).not.toBeNull();
+		expect(warnings.some((w) => w.includes("[RI-1038]") && w.includes('"cardHeader"'))).toBe(true);
+	});
+
+	it("does not warn RI-1038 for lowercase names", () => {
+		const warnings: string[] = [];
+		expect(parseUtilityDirective("color: red;", "card-header", warnings)).not.toBeNull();
+		expect(warnings.some((w) => w.includes("[RI-1038]"))).toBe(false);
+	});
+
 	it("rejects a ;-separated grouped-utility artifact with RI-1035", () => {
 		const warnings: string[] = [];
 		const utils = parseGroupedUtilityDirective(

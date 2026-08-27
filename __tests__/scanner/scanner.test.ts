@@ -4,6 +4,7 @@ import {
 	expandVariantGroups,
 	extractClasses,
 } from "../../src/scanner/class-extraction.js";
+import { MAX_LINE_LENGTH } from "../../src/scanner/collectors.js";
 import { resolveSourceFilesAsync, scanSourceFilesAsync } from "../../src/scanner/sources.js";
 import { writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
@@ -332,7 +333,7 @@ describe("extractClasses", () => {
 	});
 
 	test("skips oversized lines during multiline filtering", () => {
-		const longLine = `class="${"x".repeat(2100)} p-4"`;
+		const longLine = `class="${"x".repeat(MAX_LINE_LENGTH + 100)} p-4"`;
 		const source = `${longLine}\n<div class="m-2">`;
 		const classes = extractClasses(source);
 

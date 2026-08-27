@@ -1,10 +1,6 @@
 import type { ResolvedTheme } from "../../../directives/foundation.js";
 import type { FontSlot } from "../index.js";
-import {
-	googleFontInternals,
-	type GoogleFontCacheState,
-	type GoogleFontMeta,
-} from "./state.js";
+import { googleFontInternals, type GoogleFontCacheState, type GoogleFontMeta } from "./state.js";
 import { getFontCacheFile, loadFontCache, saveFontCache } from "./cache.js";
 import { fetchGoogleFontMetadata } from "./client.js";
 import { isRIDebug, withTimeout } from "../../../shared.js";

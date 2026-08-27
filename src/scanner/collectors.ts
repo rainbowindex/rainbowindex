@@ -47,7 +47,12 @@ const CLASS_RE_SOURCE = `${BOUNDARY}(${NEGATIVE}${VARIANT_PREFIX}(?:${UTILITY_VA
 const CLASS_RE = new RegExp(CLASS_RE_SOURCE, "g");
 const VARIANT_STRIP_RE = new RegExp(`^(?:${VARIANT_SEGMENT})+`);
 
-const MAX_LINE_LENGTH = 2000;
+/** Lines longer than this are dropped from the whole-file token scan — a
+ *  guard against minified input. Real minified dists run 100KB+ per line,
+ *  while hand-written lines (inline SVG path data, long attribute stacks)
+ *  stay well under this, so the guard keeps its target without eating real
+ *  source. Exported for the extractors' skip diagnostics and for tests. */
+export const MAX_LINE_LENGTH = 10_000;
 
 const CLASS_HELPERS = [
 	"clsx",
@@ -355,12 +360,18 @@ export function collectAssignedValues(
 		const value = raw.trim();
 		if (!value) continue;
 		sink.markContext?.(base + parsed.valueStart, base + parsed.valueStart + raw.length);
-		visitor(
-			sink,
-			value,
-			base + parsed.valueStart + (raw.length - raw.trimStart().length),
-			warnings,
-		);
+		const valueOffset = base + parsed.valueStart + (raw.length - raw.trimStart().length);
+		// A plain quoted value IS a class list, so tokenize it directly — the
+		// expression visitors only find literals nested INSIDE a value, and the
+		// whole-file scan that used to cover the quoted case drops
+		// >MAX_LINE_LENGTH lines (e.g. `className` sharing a line with inline
+		// SVG path data), silently losing the classes. The visitor still runs:
+		// a quoted value can carry nested extractables (template chunks), and
+		// duplicate finds dedupe in the sink.
+		if (parsed.quoted && visitor !== scanClassTokens) {
+			scanClassTokens(sink, value, valueOffset, warnings);
+		}
+		visitor(sink, value, valueOffset, warnings);
 		regex.lastIndex = Math.max(regex.lastIndex, parsed.end + 1);
 	}
 }

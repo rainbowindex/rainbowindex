@@ -238,7 +238,18 @@ function stripLeadingClassDot(name: string): string {
  *  Names with whitespace/semicolons/braces would emit broken selectors — warn
  *  RI-1035 and report invalid so callers skip the utility. */
 function isValidUtilityName(name: string, warnings?: string[]): boolean {
-	if (IDENT_KEY_RE.test(name)) return true;
+	if (IDENT_KEY_RE.test(name)) {
+		// The markup scanner rejects candidates containing uppercase (its filter
+		// for JS identifiers), so an uppercase utility can never trigger from
+		// class/className markup — only via @a/@apply or inline @source. Keep
+		// the utility (those paths are legitimate) but say so loudly.
+		if (/[A-Z]/.test(name)) {
+			warnings?.push(
+				`[RI-1038] @utility name "${name}" contains uppercase letters — the markup scanner only matches lowercase tokens, so class="${name}" will never generate it. It still works via @a/@apply and inline @source. Prefer a lowercase-hyphen name.`,
+			);
+		}
+		return true;
+	}
 	warnings?.push(
 		`[RI-1035] Invalid @utility name "${name}" — names may only contain letters, numbers, hyphens, and underscores (plus an optional trailing "-*" for functional utilities). The utility was skipped.`,
 	);

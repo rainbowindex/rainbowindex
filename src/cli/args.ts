@@ -1,6 +1,6 @@
 import { relative, resolve } from "node:path";
 
-export type Subcommand = "build" | "generate-types" | "preload-fonts" | "init" | "create";
+export type Subcommand = "build" | "generate-types" | "preload-fonts" | "init" | "create" | "scan";
 
 export interface CLIOptions {
 	command: Subcommand;
@@ -186,6 +186,22 @@ Examples:
   rainbowindex generate-types
   rainbowindex generate-types --strict --css src/styles.css`,
 	},
+	scan: {
+		summary: "Show what the class scanner extracts (debugging)",
+		usage: "  rainbowindex scan <file|glob...>",
+		flags: [],
+		positionals: "globs",
+		body: `Output:
+  One line per extracted class candidate, per file. Scanner warnings (skipped
+  over-long lines, unreadable files) print to stderr with [RI-NNNN] codes.
+  A class missing here was never seen by the scanner — check how it appears
+  in the markup. A class listed here that still does not generate fails
+  later — check the build warnings.
+
+Examples:
+  rainbowindex scan src/components/icons/logo.tsx
+  rainbowindex scan "src/**/*.tsx"`,
+	},
 	"preload-fonts": {
 		summary: 'Generate <link rel="preload"> tags',
 		usage: "  rainbowindex preload-fonts [options]",
@@ -325,6 +341,12 @@ export function parseArgs(
 		throw new Error("create requires a project directory. Example: rainbowindex create my-app");
 	}
 
+	if (opts.command === "scan" && opts.globs.length === 0) {
+		throw new Error(
+			'scan requires at least one file or glob. Example: rainbowindex scan "src/**/*.tsx"',
+		);
+	}
+
 	if (opts.watch && !opts.output) {
 		throw new Error(
 			'--output is required with --watch. Example: rainbowindex "src/**/*.tsx" --watch -o dist/styles.css',
@@ -375,7 +397,7 @@ export function printHelp(subcommand?: Subcommand): void {
 			`🌈 rainbowindex ${subcommand} — ${spec.summary}`,
 			`Usage:\n${spec.usage}`,
 			...(spec.intro ? [spec.intro] : []),
-			`Options:\n${renderFlagLines(spec.flags)}\n${HELP_LINE}`,
+			`Options:\n${[renderFlagLines(spec.flags), HELP_LINE].filter(Boolean).join("\n")}`,
 			spec.body,
 		];
 		console.log(`\n${sections.join("\n\n")}\n`);
@@ -390,6 +412,7 @@ Usage:
   rainbowindex create <dir>            Scaffold a Vite app with Rainbow Index ready
   rainbowindex generate-types          Generate TypeScript types for ri()
   rainbowindex preload-fonts           Generate font preload link tags
+  rainbowindex scan <file...>          Show what the class scanner extracts
 
 Run \`rainbowindex <subcommand> --help\` for subcommand-specific options.
 

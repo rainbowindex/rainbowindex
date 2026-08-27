@@ -654,3 +654,17 @@ describe("CLI create helper", () => {
 		}
 	});
 });
+
+describe("CLI scan", () => {
+	test("prints extracted classes per file", () => {
+		const out = runCLI("scan", "src/App.tsx");
+		expect(out).toContain("src/App.tsx");
+		expect(out).toContain("  flex");
+		expect(out).toContain("  bg-theme-500");
+	});
+
+	test("errors without positionals and on zero matches", () => {
+		expect(() => runCLI("scan")).toThrow();
+		expect(() => runCLI("scan", "src/Nope.tsx")).toThrow();
+	});
+});

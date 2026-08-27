@@ -45,7 +45,7 @@ const modules: PreflightModule[] = [
 	{
 		name: "margins",
 		category: "core",
-		css: `body, h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre {
+		css: `body, h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre, ol, ul, menu {
   margin: 0;
 }`,
 	},
@@ -62,9 +62,6 @@ const modules: PreflightModule[] = [
 		name: "root-defaults",
 		category: "core",
 		css: `:root {
-  --sans-fallback: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --serif-fallback: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --mono-fallback: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
   tab-size: 4;
@@ -179,7 +176,7 @@ button {
 		category: "forms",
 		css: `input::placeholder, textarea::placeholder {
   opacity: 1;
-  color: oklch(0.556 0 0);
+  color: color-mix(in oklab, currentColor 48%, transparent);
 }
 input:where([type="button"], [type="reset"], [type="submit"]) {
   -webkit-appearance: button;
@@ -194,16 +191,14 @@ input:where([type="button"], [type="reset"], [type="submit"]) {
 }`,
 	},
 	{
-		name: "select-reset",
+		name: "fieldset-reset",
 		category: "forms",
-		css: `select {
-  -webkit-appearance: none;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='currentColor'%3e%3cpath fill-rule='evenodd' d='M4.22 6.22a.75.75 0 0 1 1.06 0L8 8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L4.22 7.28a.75.75 0 0 1 0-1.06z' clip-rule='evenodd'/%3e%3c/svg%3e");
-  background-position: right 0.5rem center;
-  background-repeat: no-repeat;
-  background-size: 1.5em 1.5em;
-  padding-inline-end: 2.5rem;
+		css: `fieldset {
+  margin: 0;
+  padding: 0;
+}
+legend {
+  padding: 0;
 }`,
 	},
 
@@ -213,13 +208,10 @@ input:where([type="button"], [type="reset"], [type="submit"]) {
 		name: "focus-visible",
 		category: "interactive",
 		css: `:focus-visible {
-  outline-width: var(--spacing);
+  outline-width: 2px;
   outline-style: solid;
-  outline-offset: calc(var(--spacing) * 0.5);
+  outline-offset: 2px;
   outline-color: currentColor;
-}
-:focus:not(:focus-visible) {
-  outline: none;
 }`,
 	},
 	{

@@ -239,6 +239,14 @@ describe("generateFontCSS", () => {
 		expect(result.fontFaces).toHaveLength(0);
 		expect(result.variables[0]).toContain('"Inter"');
 		expect(result.variables[0]).toContain("Arial");
+		// User-defined fallbacks are respected as-is — no default stack appended.
+		expect(result.variables[0]).not.toContain("ui-sans-serif");
+	});
+
+	it("manual slot without fallbacks appends the default system stack", () => {
+		const result = generateFontCSS(makeSlot({ kind: "manual", fallback: [] }));
+		expect(result.variables[0]).toContain('"Inter"');
+		expect(result.variables[0]).toContain("ui-sans-serif");
 	});
 
 	it("manual slot with features", () => {

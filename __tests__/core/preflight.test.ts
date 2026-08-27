@@ -15,9 +15,33 @@ describe("generatePreflight", () => {
 		expect(css).toContain("color-scheme: light dark");
 		expect(css).toContain("font-family: var(--font-sans)");
 		expect(css).toContain("font-family: var(--font-mono)");
-		expect(css).toContain("--sans-fallback:");
-		expect(css).toContain("--serif-fallback:");
-		expect(css).toContain("--mono-fallback:");
+		// Fallback stacks live in the font token emission now, not preflight.
+		expect(css).not.toContain("--sans-fallback");
+		expect(css).not.toContain("--serif-fallback");
+		expect(css).not.toContain("--mono-fallback");
+		// A preflight neutralizes; it does not design form controls.
+		expect(css).not.toContain("/* preflight: select-reset */");
+		expect(css).not.toContain("background-position");
+	});
+
+	it("resets list margins, fieldset, and legend", () => {
+		const css = generatePreflight();
+		expect(css).toContain("pre, ol, ul, menu {");
+		expect(css).toContain("/* preflight: fieldset-reset */");
+		expect(css).toContain("legend {");
+	});
+
+	it("placeholder color follows the text color", () => {
+		const css = generatePreflight();
+		expect(css).toContain("color-mix(in oklab, currentColor 48%, transparent)");
+		expect(css).not.toContain("oklch(0.556 0 0)");
+	});
+
+	it("focus ring uses literal widths and keeps default :focus behavior", () => {
+		const css = generatePreflight();
+		expect(css).toContain("outline-width: 2px");
+		expect(css).toContain("outline-offset: 2px");
+		expect(css).not.toContain(":focus:not(:focus-visible)");
 	});
 
 	it("disables forms category", () => {

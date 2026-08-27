@@ -102,7 +102,7 @@ describe("per-file scan cache", () => {
 	test("cached results replay extraction warnings deterministically", async () => {
 		const dir = makeDir("warnings");
 		try {
-			// Many short lines (under the 2000-char long-line filter) of variant
+			// Many short lines (under the long-line filter) of variant
 			// groups whose combined expansion overflows the output cap → RI-1408.
 			const line = `<div className="hover:{${"aa ".repeat(600)}}">`;
 			writeFileSync(join(dir, "src/A.tsx"), `${line}\n`.repeat(60));

@@ -161,17 +161,22 @@ function isValueTerminatorCode(code: number): boolean {
 export function readAssignedValue(
 	source: string,
 	start: number,
-): { value: string; end: number; valueStart: number } | null {
+): { value: string; end: number; valueStart: number; quoted: boolean } | null {
 	const i = skipWhitespace(source, start);
 	const ch = source[i];
 	if (!ch) return null;
 
+	// `quoted` marks a plain '/" string — its value IS the final class list,
+	// with no nested expression for a visitor to unwrap. Template and bracket
+	// values are not "quoted": they may contain interpolations or code, so
+	// their handling stays with the caller's visitor.
 	if (ch === "'" || ch === '"') {
 		const end = skipQuoted(source, i, ch);
 		return {
 			value: source.slice(i + 1, end),
 			end,
 			valueStart: i + 1,
+			quoted: true,
 		};
 	}
 
@@ -181,6 +186,7 @@ export function readAssignedValue(
 			value: source.slice(i + 1, end),
 			end,
 			valueStart: i + 1,
+			quoted: false,
 		};
 	}
 
@@ -191,6 +197,7 @@ export function readAssignedValue(
 			value: source.slice(i + 1, end),
 			end,
 			valueStart: i + 1,
+			quoted: false,
 		};
 	}
 
@@ -200,6 +207,7 @@ export function readAssignedValue(
 		value: source.slice(i, end),
 		end: end - 1,
 		valueStart: i,
+		quoted: false,
 	};
 }
 
