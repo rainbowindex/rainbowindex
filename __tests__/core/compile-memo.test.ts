@@ -24,7 +24,7 @@ import { compileScannedProject } from "../../src/project/scan.js";
 import { resetGoogleFontCacheForTests } from "../helpers/google-font-cache.js";
 
 describe("per-class compile memo", () => {
-	const classes = ["p-4", "text-lg", "rounded-lg", "shadow-md", "hover:p-2", "notavariant:p-4"];
+	const classes = ["p-4", "text-lg", "rounded-4", "shadow-md", "hover:p-2", "notavariant:p-4"];
 
 	it("recompiling with the same theme reuses rules and replays warnings/token usage", () => {
 		const theme = analyzeProjectCSS("").theme;
@@ -40,9 +40,8 @@ describe("per-class compile memo", () => {
 		expect(r1.warnings.some((w) => w.includes("[RI-1004]"))).toBe(true);
 		expect(r2.warnings).toEqual(r1.warnings);
 		// Token usage and support blocks must be replayed on cache hits.
-		expect(r1.usedTextSizes.size + r1.usedRounded.size + r1.usedShadows.size).toBeGreaterThan(0);
+		expect(r1.usedTextSizes.size + r1.usedShadows.size).toBeGreaterThan(0);
 		expect(r2.usedTextSizes).toEqual(r1.usedTextSizes);
-		expect(r2.usedRounded).toEqual(r1.usedRounded);
 		expect(r2.usedShadows).toEqual(r1.usedShadows);
 		expect(r2.usedColorStops).toEqual(r1.usedColorStops);
 		expect(r2.usedFonts).toEqual(r1.usedFonts);
@@ -58,11 +57,11 @@ describe("per-class compile memo", () => {
 		const ruleCount = r1.rules.length;
 		r1.rules.push({ selector: ".junk", sortKey: 0, css: ".junk {}" });
 		r1.warnings.push("junk");
-		r1.usedRounded.add("junk");
+		r1.usedShadows.add("junk");
 		const r2 = compiler.compile(["p-4"], theme);
 		expect(r2.rules.length).toBe(ruleCount);
 		expect(r2.warnings).toEqual([]);
-		expect(r2.usedRounded.has("junk")).toBe(false);
+		expect(r2.usedShadows.has("junk")).toBe(false);
 	});
 
 	it("class-set changes with a stable theme compile correctly", () => {

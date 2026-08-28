@@ -208,8 +208,9 @@ Examples:
 		flags: [CSS_INPUT_FONTS],
 		positionals: "none",
 		body: `Output:
-  Prints <link rel="preload"> tags to stdout for fonts declared in the @font
-  block (faces marked preload), or via @font-face.
+  Prints <link rel="preload"> tags to stdout, one per @font face marked
+  preload. Only local-file and raw-URL faces qualify — Google serves CSS, not
+  the font binary, so a Google or system slot never produces a tag.
 
 Examples:
   rainbowindex preload-fonts --css src/styles.css > preload.html`,

@@ -161,7 +161,7 @@ function isValueTerminatorCode(code: number): boolean {
 export function readAssignedValue(
 	source: string,
 	start: number,
-): { value: string; end: number; valueStart: number; quoted: boolean } | null {
+): { value: string; end: number; valueStart: number; quoted: boolean; bare: boolean } | null {
 	const i = skipWhitespace(source, start);
 	const ch = source[i];
 	if (!ch) return null;
@@ -177,6 +177,7 @@ export function readAssignedValue(
 			end,
 			valueStart: i + 1,
 			quoted: true,
+			bare: false,
 		};
 	}
 
@@ -187,6 +188,7 @@ export function readAssignedValue(
 			end,
 			valueStart: i + 1,
 			quoted: false,
+			bare: false,
 		};
 	}
 
@@ -198,9 +200,13 @@ export function readAssignedValue(
 			end,
 			valueStart: i + 1,
 			quoted: false,
+			bare: false,
 		};
 	}
 
+	// An unquoted, undelimited value: `class=flex` in HTML/Vue/Svelte. Unlike a
+	// template or `{…}` expression it carries no code, so it IS a class list —
+	// `bare` lets collectAssignedValues tokenize it and give it provenance.
 	let end = i;
 	while (end < source.length && !isValueTerminatorCode(source.charCodeAt(end))) end++;
 	return {
@@ -208,6 +214,7 @@ export function readAssignedValue(
 		end: end - 1,
 		valueStart: i,
 		quoted: false,
+		bare: true,
 	};
 }
 

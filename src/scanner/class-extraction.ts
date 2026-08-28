@@ -172,6 +172,24 @@ const EXTRACTORS: readonly Extractor[] = [
 	},
 ];
 
+/** SVG geometry attributes carry unbounded numeric blobs, never class lists.
+ *  Their values tokenize cleanly against the class grammar — `d="M255.75,40c-.35…"`
+ *  yields hundreds of digit fragments (`40c-.35-1.1-1.04`, `9.17-57.2`), each one
+ *  a wasted compile lookup and cache entry on every build of every file with an
+ *  inline icon. Matching only quoted values keeps `d={expr}` bindings, where a
+ *  class list can legitimately live, untouched. */
+const SVG_GEOMETRY_VALUE_RE = /((?<![\w-])(?:d|points)\s*=\s*["'])([^"']*)/g;
+
+/** Blank SVG geometry values before any collector reads them. Spaces, not
+ *  removal: the replacement is the same length, so every candidate span the
+ *  editor path reports still points at the original text. */
+function blankSvgGeometry(content: string): string {
+	return content.replace(
+		SVG_GEOMETRY_VALUE_RE,
+		(_match, head: string, value: string) => head + " ".repeat(value.length),
+	);
+}
+
 /**
  * Surface the whole-file scan's long-line drops instead of losing content
  * silently — a class list on a dropped line simply never generating is the
@@ -199,17 +217,24 @@ function warnOverLongLines(input: SourceExtractionInput, warnings?: string[]): v
 
 function extractInto(sink: CandidateSink, input: SourceExtractionInput, warnings?: string[]): void {
 	warnOverLongLines(input, warnings);
+	// Every pass below reads the blanked copy — the geometry values it drops
+	// cannot hold a class in any of them, and blanking once here is what keeps
+	// the guard from having to be repeated per extractor.
+	const scanned: SourceExtractionInput = {
+		path: input.path,
+		content: blankSvgGeometry(input.content),
+	};
 	let handled = false;
 	for (const extractor of EXTRACTORS) {
-		if (extractor.test(input)) {
-			extractor.extract(sink, input, warnings);
+		if (extractor.test(scanned)) {
+			extractor.extract(sink, scanned, warnings);
 			handled = true;
 			break;
 		}
 	}
 	if (!handled) {
 		sink.setOrigin?.("plain");
-		scanClassTokens(sink, input.content, 0, warnings);
+		scanClassTokens(sink, scanned.content, 0, warnings);
 	}
 
 	// `safelist(...)` — cross-language protocol for libraries that ship class
@@ -218,11 +243,11 @@ function extractInto(sink: CandidateSink, input: SourceExtractionInput, warnings
 	// arguments are extracted, so the scan is fast and predictable. Runs after
 	// the extractor's prunes on purpose: a safelisted literal survives even
 	// when it collides with a structural token.
-	if (input.content.includes("safelist")) {
+	if (scanned.content.includes("safelist")) {
 		sink.setOrigin?.("safelist");
 		collectCallArguments(
 			sink,
-			input.content,
+			scanned.content,
 			SAFELIST_CALL_RE,
 			collectStringLiteralClasses,
 			0,

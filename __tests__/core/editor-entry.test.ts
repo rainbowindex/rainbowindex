@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
 	analyzeProjectCSS,
 	CLASS_HELPER_NAMES,
@@ -89,5 +89,23 @@ describe("rainbowindex/editor entry", () => {
 		expect(flex?.origin).toBe("attribute");
 		expect(isSourceFile("a.tsx")).toBe(true);
 		expect(isSourceFile("a.css")).toBe(false);
+	});
+});
+
+describe("rainbowindex/editor version injection", () => {
+	test("reports the build-time version when tsup injected one", async () => {
+		// tsup replaces __RI_VERSION__ at build time; running from source it is
+		// undefined and the entry falls back to the dev placeholder (asserted
+		// above). Defining the global covers the injected half of that branch.
+		const g = globalThis as Record<string, unknown>;
+		g.__RI_VERSION__ = "9.9.9";
+		try {
+			vi.resetModules();
+			const mod = await import("../../src/entries/editor.js");
+			expect(mod.version).toBe("9.9.9");
+		} finally {
+			delete g.__RI_VERSION__;
+			vi.resetModules();
+		}
 	});
 });

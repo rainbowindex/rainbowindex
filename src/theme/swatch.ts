@@ -182,7 +182,6 @@ export interface ThemeTokens {
 	spacingBase: string;
 	textSizes: Array<{ name: string; fontSize: string; lineHeight: string }>;
 	breakpoints: Record<string, string>;
-	rounded: Record<string, string>;
 	shadows: Record<string, string>;
 	weights: Record<string, number>;
 	easing: Record<string, string>;
@@ -209,7 +208,6 @@ export function listThemeTokens(theme: ResolvedTheme): ThemeTokens {
 			lineHeight: def.lineHeight,
 		})),
 		breakpoints: { ...theme.breakpoints },
-		rounded: { ...theme.rounded },
 		shadows: { ...theme.shadows },
 		weights: { ...theme.weights },
 		easing: { ...theme.easing },

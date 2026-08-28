@@ -275,7 +275,7 @@ describe("CLI build", () => {
 		// Realistic multi-directive CSS file exercising the full compilation pipeline
 		writeFileSync(
 			join(testDir, "src/e2e-full.tsx"),
-			`<div className="flex items-center p-4 bg-primary-500 text-white text-lg rounded-md shadow-sm gap-2 hover:bg-primary-600">
+			`<div className="flex items-center p-4 bg-primary-500 text-white text-lg rounded-2 shadow-sm gap-2 hover:bg-primary-600">
 				<span className="font-bold tracking-tight">E2E</span>
 			</div>`,
 		);
@@ -285,7 +285,6 @@ describe("CLI build", () => {
 @color { primary: 0.18 220; }
 @text { base: 1rem/1.5; lg: 1.125rem/1.75; }
 @spacing { base: 0.25rem; }
-@rounded { md: 0.375rem; }
 @shadow { sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
 `,
 		);
@@ -298,7 +297,7 @@ describe("CLI build", () => {
 		expect(output).toContain(".flex");
 		expect(output).toContain(".p-4");
 		expect(output).toContain(".text-lg");
-		expect(output).toContain(".rounded-md");
+		expect(output).toContain(".rounded-2");
 		expect(output).toContain(".shadow-sm");
 		expect(output).toContain(".gap-2");
 		// Hover variant

@@ -25,6 +25,11 @@ export const EDITOR_API_VERSION = 1;
 export const editorCapabilities: readonly string[] = Object.freeze([
 	"class-candidates",
 	"candidate-call-ids",
+	// A candidate carries a certain origin only when a context-aware collector
+	// tokenized it, so bare JS identifiers stay "plain"; equality operands
+	// report the "expression" origin. Without this, position alone decided,
+	// and `ri(mode === "x" ? …)` reported `mode` as a helper-origin class.
+	"candidate-origin-provenance",
 	"css-entry-detection",
 	"theme-analysis",
 	"class-inspection",

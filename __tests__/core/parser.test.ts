@@ -63,10 +63,10 @@ describe("parseUtility", () => {
 			expect(r.value).toBe("2xl");
 		});
 
-		it("parses rounded-lg", () => {
-			const r = parseUtility("rounded-lg");
+		it("parses rounded-4", () => {
+			const r = parseUtility("rounded-4");
 			expect(r.utility).toBe("rounded");
-			expect(r.value).toBe("lg");
+			expect(r.value).toBe("4");
 		});
 
 		it("parses w-full as static", () => {

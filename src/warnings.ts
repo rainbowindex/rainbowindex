@@ -62,6 +62,7 @@
  *   1110  Unknown directive type reached the resolver — internal bug signal
  *   1120  Unknown @layer option key
  *   1121  Invalid --corner-scale value in @rounded
+ *   1122  Unknown @rounded option key
  *
  * RI-12xx — Font system
  *   1201  Unknown font provider
@@ -101,6 +102,7 @@
  *   1409  Variant group nesting exceeds max depth
  *   1410  Safelist discovery — could not read dep package.json or invalid safelistSources entry
  *   1411  Over-long lines skipped by the class scanner (minified-input guard)
+ *   1412  Whitespace inside an arbitrary value — class can never match an element
  *
  * RI-15xx — Typography utilities
  *   1501  text-fluid requires rem font size

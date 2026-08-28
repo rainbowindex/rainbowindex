@@ -40,6 +40,27 @@ const GLOB_TIMEOUT_MESSAGE = `glob() timed out after ${GLOB_TIMEOUT_MS / 1000}s 
 
 type ResolveResult = { files: string[]; warnings: string[] };
 
+// A cached file list is only correct while something reacts to file adds and
+// deletes, so caching is opt-in: the Vite plugin arms it and invalidates from
+// its watcher, while one-shot builds and postcss-cli --watch (which has no
+// watcher hook) keep the always-fresh glob.
+const SOURCE_LIST_CACHE_MAX_ENTRIES = 50;
+let sourceListCacheEnabled = false;
+const sourceListCache = new Map<string, string[]>();
+// Guards against a glob that was already in flight when an invalidation
+// arrived: its result predates the file add/delete and must not be cached,
+// or the stale list would be served until the next watcher event.
+let sourceListCacheGeneration = 0;
+
+export function enableSourceFileListCache(): void {
+	sourceListCacheEnabled = true;
+}
+
+export function invalidateSourceFileListCache(): void {
+	sourceListCacheGeneration++;
+	sourceListCache.clear();
+}
+
 function collectPatterns(sources: SourceDirective[]): {
 	includePatterns: string[];
 	nodeModulesIncludePatterns: string[];
@@ -117,33 +138,51 @@ export async function resolveSourceFilesAsync(
 	} = collectPatterns(sources);
 	const allIncludes = [...includePatterns, ...nodeModulesIncludePatterns];
 	if (allIncludes.length === 0) return { files: [], warnings };
+	// The include split is derived from the patterns themselves, so cwd plus the
+	// flat pattern lists fully determine the glob result.
+	const cacheKey = sourceListCacheEnabled
+		? [
+				cwd,
+				includePatterns.join("\u0000"),
+				nodeModulesIncludePatterns.join("\u0000"),
+				excludePatterns.join("\u0000"),
+			].join("\u0001")
+		: null;
 	try {
-		// The two passes are independent; the Set + sort below makes the merged
-		// result order-insensitive, so they can run concurrently.
-		const globPasses: Promise<string[]>[] = [];
-		if (includePatterns.length > 0) {
-			globPasses.push(
-				withTimeout(
-					glob(includePatterns, { cwd, ignore: excludePatterns }),
-					GLOB_TIMEOUT_MS,
-					GLOB_TIMEOUT_MESSAGE,
-				),
-			);
+		const generationAtStart = sourceListCacheGeneration;
+		let files = cacheKey !== null ? sourceListCache.get(cacheKey) : undefined;
+		if (files === undefined) {
+			// The two passes are independent; the Set + sort below makes the merged
+			// result order-insensitive, so they can run concurrently.
+			const globPasses: Promise<string[]>[] = [];
+			if (includePatterns.length > 0) {
+				globPasses.push(
+					withTimeout(
+						glob(includePatterns, { cwd, ignore: excludePatterns }),
+						GLOB_TIMEOUT_MS,
+						GLOB_TIMEOUT_MESSAGE,
+					),
+				);
+			}
+			if (nodeModulesIncludePatterns.length > 0) {
+				const relaxedExcludes = excludePatterns.filter((p) => p !== "node_modules/**");
+				globPasses.push(
+					withTimeout(
+						glob(nodeModulesIncludePatterns, { cwd, ignore: relaxedExcludes }),
+						GLOB_TIMEOUT_MS,
+						GLOB_TIMEOUT_MESSAGE,
+					),
+				);
+			}
+			const matched = (await Promise.all(globPasses)).flat();
+			// Glob yields filesystem-traversal order, which would leak into rule
+			// order downstream — sort for deterministic output across machines.
+			files = [...new Set(matched.map((f) => resolve(cwd, f)))].sort(codepointCompare);
+			if (cacheKey !== null && sourceListCacheGeneration === generationAtStart) {
+				if (sourceListCache.size >= SOURCE_LIST_CACHE_MAX_ENTRIES) sourceListCache.clear();
+				sourceListCache.set(cacheKey, files);
+			}
 		}
-		if (nodeModulesIncludePatterns.length > 0) {
-			const relaxedExcludes = excludePatterns.filter((p) => p !== "node_modules/**");
-			globPasses.push(
-				withTimeout(
-					glob(nodeModulesIncludePatterns, { cwd, ignore: relaxedExcludes }),
-					GLOB_TIMEOUT_MS,
-					GLOB_TIMEOUT_MESSAGE,
-				),
-			);
-		}
-		const matched = (await Promise.all(globPasses)).flat();
-		// Glob yields filesystem-traversal order, which would leak into rule
-		// order downstream — sort for deterministic output across machines.
-		const files = [...new Set(matched.map((f) => resolve(cwd, f)))].sort(codepointCompare);
 		// Zero matches is expected (not warning-worthy) when the user supplied
 		// only inline @source content and the searched globs were just the
 		// defaults they never asked for. An explicit user glob that matches
@@ -244,11 +283,21 @@ async function scanOneFile(file: string): Promise<FileScanResult> {
 	}
 }
 
+/** Every class a scan produced, and the subset the user wrote by hand. Warnings
+ *  that accuse a class of being a typo belong to the authored subset only. */
+export interface ScannedClasses {
+	classes: Set<string>;
+	authored: Set<string>;
+}
+
 export async function scanSourceFilesAsync(
 	sources: SourceDirective[],
 	cwd: string,
-): Promise<{ classes: Set<string>; warnings: string[] }> {
+): Promise<ScannedClasses & { warnings: string[] }> {
 	const { classes: allClasses, warnings: inlineWarnings } = collectInlineClasses(sources);
+	// `@source inline(...)` classes are authored — the user typed them. Copy the
+	// set now, before file scanning merges its own finds into `allClasses`.
+	const authored = new Set(allClasses);
 	const allWarnings: string[] = [...inlineWarnings];
 	const { files, warnings: resolveWarnings } = await resolveSourceFilesAsync(
 		sources,
@@ -288,7 +337,7 @@ export async function scanSourceFilesAsync(
 		pushWarningsDeduped(allWarnings, result.warnings, seen);
 	}
 
-	return { classes: allClasses, warnings: allWarnings };
+	return { classes: allClasses, authored, warnings: allWarnings };
 }
 
 /**
@@ -304,11 +353,11 @@ export async function collectProjectClasses(
 	cwd: string,
 	warnings: string[],
 	warningSeen: Set<string>,
-): Promise<Set<string>> {
+): Promise<ScannedClasses> {
 	const discovered = discoverPackageSafelistSources(cwd);
 	pushWarningsDeduped(warnings, discovered.warnings, warningSeen);
 	const allSources = [...themeSources, ...surfaceSources, ...discovered.sources];
 	const scanResult = await scanSourceFilesAsync(allSources, cwd);
 	pushWarningsDeduped(warnings, scanResult.warnings, warningSeen);
-	return scanResult.classes;
+	return { classes: scanResult.classes, authored: scanResult.authored };
 }

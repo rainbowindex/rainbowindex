@@ -23,7 +23,7 @@ describe("concurrent SSR compilations via createCompiler()", () => {
 			"text-white",
 			"hover:bg-red-600",
 			"sm:flex-col",
-			"rounded-lg",
+			"rounded-4",
 			"shadow-md",
 		];
 

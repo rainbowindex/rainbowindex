@@ -5,8 +5,10 @@ import type { HmrContext, ModuleNode, Plugin, UserConfig, ViteDevServer } from "
 import { hasRIActivation } from "../directives/index.js";
 import { rewriteDirectiveBodies } from "../directives/postcss-safe.js";
 import { devWarn } from "../runtime.js";
-import { expandApplyGroups } from "../scanner/class-extraction.js";
+import { expandApplyGroups, extractClassesFromSource } from "../scanner/class-extraction.js";
 import { isSourceFile } from "../scanner/source-files.js";
+import { enableSourceFileListCache, invalidateSourceFileListCache } from "../scanner/sources.js";
+import { codepointCompare } from "../shared.js";
 import rainbowindex from "./postcss/index.js";
 
 const CSS_FILE_RE = /\.(?:module\.)?css$/;
@@ -20,6 +22,15 @@ const POSTCSS_CONFIG_FILES = [
 	"postcss.config.ts",
 	"postcss.config.cjs",
 ] as const;
+
+/**
+ * A Vite config patch that can also carry Vite+ blocks. Vite+ reads `fmt` off
+ * the *resolved* Vite config, so a plugin contributes to it from the config
+ * hook; the key is not part of Vite's own `UserConfig`. Plain Vite ignores it.
+ */
+type ViteConfigPatch = Omit<UserConfig, "plugins"> & {
+	fmt?: { ignorePatterns: string[] };
+};
 
 function isIgnorableDirectoryReadError(err: unknown): boolean {
 	return (
@@ -42,6 +53,10 @@ export default function rainbowindexVite(): Plugin {
 	let logger: { info: (msg: string) => void; warn: (msg: string) => void } | undefined;
 	const riCSSFiles = new Set<string>();
 	const fileVersions = new Map<string, number>();
+	// Sorted-unique candidate list per source file; an edit that leaves it
+	// unchanged (logic or comments only) produces byte-identical CSS, so the
+	// RI entries need no re-transform. Pruned alongside the CSS tracking maps.
+	const candidateSignatures = new Map<string, string>();
 	let hotUpdateCount = 0;
 	const PRUNE_INTERVAL = 50;
 
@@ -51,21 +66,33 @@ export default function rainbowindexVite(): Plugin {
 
 		async config(config: UserConfig) {
 			root = config.root ?? process.cwd();
+			const patch: ViteConfigPatch = {};
+
+			const ignorePatterns = await riStylesheetPatterns(root);
+			if (ignorePatterns.length > 0) {
+				patch.fmt = { ignorePatterns };
+			}
+
 			if (!hasLocalPostCSSConfig(root)) {
-				return {
-					css: {
-						postcss: {
-							plugins: [rainbowindex()],
-						},
+				patch.css = {
+					postcss: {
+						plugins: [rainbowindex()],
 					},
 				};
 			}
 
-			return {};
+			return patch;
 		},
 
 		configureServer(server: ViteDevServer) {
 			root = server.config?.root ?? process.cwd();
+			// The resolved source-file list may only be cached while file
+			// adds/deletes invalidate it — this watcher is what makes that safe.
+			enableSourceFileListCache();
+			server.watcher?.on("add", invalidateSourceFileListCache);
+			server.watcher?.on("unlink", invalidateSourceFileListCache);
+			server.watcher?.on("unlinkDir", invalidateSourceFileListCache);
+			server.httpServer?.once("close", invalidateSourceFileListCache);
 			logger = {
 				info: (msg) => server.config.logger?.info?.(msg, { timestamp: true }),
 				warn: (msg) => server.config.logger?.warn?.(msg, { timestamp: true }),
@@ -126,7 +153,8 @@ export default function rainbowindexVite(): Plugin {
 			return null;
 		},
 
-		async handleHotUpdate({ file, server, modules }: HmrContext) {
+		async handleHotUpdate(ctx: HmrContext) {
+			const { file, server, modules } = ctx;
 			if (++hotUpdateCount % PRUNE_INTERVAL === 0) {
 				await pruneDeletedFiles();
 			}
@@ -137,6 +165,24 @@ export default function rainbowindexVite(): Plugin {
 			}
 
 			if (!isSourceFile(file)) return;
+
+			// A first sighting or a failed read invalidates conservatively; an
+			// unchanged signature skips the CSS re-transform and leaves Vite's
+			// default HMR for the file itself untouched.
+			const previous = candidateSignatures.get(file);
+			let signature: string | undefined;
+			try {
+				const content = await ctx.read();
+				signature = [...extractClassesFromSource({ path: file, content })]
+					.sort(codepointCompare)
+					.join(" ");
+			} catch {
+				candidateSignatures.delete(file);
+			}
+			if (signature !== undefined) {
+				candidateSignatures.set(file, signature);
+				if (previous === signature) return;
+			}
 
 			const extraModules: ModuleNode[] = [];
 			const hmrModules = new Set(modules);
@@ -160,13 +206,14 @@ export default function rainbowindexVite(): Plugin {
 	async function pruneDeletedFiles(): Promise<void> {
 		// fileVersions tracks every transformed CSS file, not just RI ones —
 		// prune from the union or the map grows unboundedly in long dev sessions.
-		const tracked = new Set([...riCSSFiles, ...fileVersions.keys()]);
+		const tracked = new Set([...riCSSFiles, ...fileVersions.keys(), ...candidateSignatures.keys()]);
 		const checks = [...tracked].map(async (file) => {
 			try {
 				await access(file);
 			} catch {
 				riCSSFiles.delete(file);
 				fileVersions.delete(file);
+				candidateSignatures.delete(file);
 			}
 		});
 		await Promise.all(checks);
@@ -193,6 +240,35 @@ export default function rainbowindexVite(): Plugin {
 				results.push(join(dir, entry.name));
 			}
 		}
+	}
+
+	/**
+	 * Stylesheets that carry RI syntax, as root-relative POSIX paths.
+	 *
+	 * Directive bodies are not valid CSS: `@font` and `@animate` entries put a
+	 * block after a declaration, token scales remove with `!name;`, `@fluid`
+	 * and `@color` take bare keywords, and `@apply` bodies take variant groups.
+	 * A strict CSS parser stops at the first one, so Oxfmt — the formatter
+	 * behind `vp fmt` and `vp check` — fails the whole run before it can lint
+	 * or type check. The paths feed `fmt.ignorePatterns`, which keeps those
+	 * files out of the formatter and leaves every other file formatted.
+	 */
+	async function riStylesheetPatterns(root: string): Promise<string[]> {
+		const files = await findCSSFilesOnDisk(root);
+		const active = await Promise.all(
+			files.map(async (file) => {
+				try {
+					return hasRIActivation(await readFile(file, "utf-8")) ? file : null;
+				} catch {
+					// An unreadable file cannot be formatted either — leave it out
+					// rather than fail the config hook.
+					return null;
+				}
+			}),
+		);
+		return active
+			.filter((file) => file !== null)
+			.map((file) => relative(root, file).replaceAll("\\", "/"));
 	}
 
 	async function findCSSFilesOnDisk(root: string): Promise<string[]> {

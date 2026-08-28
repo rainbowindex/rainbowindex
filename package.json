@@ -1,6 +1,6 @@
 {
 	"name": "rainbowindex",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"description": "CSS-first system for building and maintaining consistent user interfaces",
 	"keywords": [
 		"css",
@@ -16,6 +16,8 @@
 		"postcss",
 		"postcss-plugin",
 		"vite-plugin",
+		"vite-plus",
+		"oxlint",
 		"class-merge",
 		"classnames",
 		"tailwind",
@@ -64,6 +66,10 @@
 		"./vite": {
 			"types": "./dist/vite.d.ts",
 			"default": "./dist/vite.mjs"
+		},
+		"./oxlint": {
+			"types": "./dist/oxlint.d.ts",
+			"default": "./dist/oxlint.mjs"
 		},
 		"./package.json": "./package.json"
 	},

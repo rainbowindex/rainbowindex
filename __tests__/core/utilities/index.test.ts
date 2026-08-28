@@ -320,14 +320,10 @@ describe("border utilities", () => {
 		expect(r!.declarations[0].value).toBe("2px");
 	});
 
-	it("rounded → border-radius from theme", () => {
-		const r = resolveUtility("rounded", null, false, theme);
+	it("rounded-4 → border-radius from the spacing step", () => {
+		const r = resolveUtility("rounded-4", null, false, theme);
 		expect(r!.declarations[0].property).toBe("border-radius");
-	});
-
-	it("rounded-lg → themed radius", () => {
-		const r = resolveUtility("rounded-lg", null, false, theme);
-		expect(r!.declarations[0].value).toContain("--rounded-lg");
+		expect(r!.declarations[0].value).toBe("calc(var(--spacing) * 4 * var(--ri-rounded-scale, 1))");
 	});
 
 	it("rounded-full → calc(infinity * 1px)", () => {
@@ -335,15 +331,15 @@ describe("border utilities", () => {
 		expect(r!.declarations[0].value).toBe("calc(infinity * 1px)");
 	});
 
-	it("rounded-t-lg → logical start-start + start-end radius", () => {
-		const r = resolveUtility("rounded-t-lg", null, false, theme);
+	it("rounded-t-4 → logical start-start + start-end radius", () => {
+		const r = resolveUtility("rounded-t-4", null, false, theme);
 		expect(r!.declarations).toHaveLength(2);
 		expect(r!.declarations[0].property).toBe("border-start-start-radius");
 		expect(r!.declarations[1].property).toBe("border-start-end-radius");
 	});
 
-	it("rounded-tl-md → border-start-start-radius", () => {
-		const r = resolveUtility("rounded-tl-md", null, false, theme);
+	it("rounded-tl-2 → border-start-start-radius", () => {
+		const r = resolveUtility("rounded-tl-2", null, false, theme);
 		expect(r!.declarations[0].property).toBe("border-start-start-radius");
 	});
 

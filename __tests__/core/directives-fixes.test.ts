@@ -344,19 +344,18 @@ describe("resolver — consecutive @fluid target directives accumulate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolver — @rounded --roof / --corner-scale are last-wins
+// resolver — @rounded --corner-scale is last-wins
 // ---------------------------------------------------------------------------
 
 describe("resolver — @rounded special keys are last-wins", () => {
-	it("takes the last --roof and --corner-scale occurrences", () => {
+	it("takes the last --corner-scale occurrence", () => {
 		const theme = resolveDirectives([
 			{
 				type: "rounded",
-				body: "--roof: 1rem; --roof: 2rem; --corner-scale: 1.2; --corner-scale: 1.4;",
+				body: "--corner-scale: 1.2; --corner-scale: 1.4;",
 				modifier: "squircle",
 			},
 		]);
-		expect(theme.roundedRoof).toBe("2rem");
 		expect(theme.roundedShapeScale).toBe(1.4);
 	});
 });

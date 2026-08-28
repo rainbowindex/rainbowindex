@@ -20,6 +20,8 @@ The product is not a visual design tool, a component library, or a framework abs
 
 When tradeoffs arise, we consistently prioritize composability, user control, predictable performance, explicit behavior, and correctness over convenience or familiarity.
 
+Full consumer documentation lives in [docs/](docs/README.md).
+
 ## Install
 
 ```sh
@@ -67,14 +69,20 @@ export default defineConfig({
 ```css
 /* src/styles.css */
 @import "rainbowindex";
+
+@color {
+	brand: 0.18 330;
+}
 ```
 
 ```tsx
 // src/App.tsx
 export default function App() {
-	return <div className="flex gap-4 px-6 py-3 bg-blue-500 text-white">Hello</div>;
+	return <div className="flex gap-4 px-6 py-3 bg-brand-500 text-white">Hello</div>;
 }
 ```
+
+The default palette ships only the neutral `theme` color (plus `black`, `white`, `paper`, `ink`, `transparent`, `current`, `inherit`) — declare your palette with `@color`.
 
 To scaffold a fresh app instead, use the CLI:
 
@@ -86,14 +94,15 @@ pnpm dlx rainbowindex init
 
 ## CLI
 
-The `rainbowindex` binary exposes five subcommands. The default is `build`.
+The `rainbowindex` binary exposes six subcommands. The default is `build`.
 
 ```
 rainbowindex <glob> [options]        Generate CSS from source files
 rainbowindex init                    Wire Rainbow Index into the current Vite app
 rainbowindex create <dir>            Scaffold a Vite app with Rainbow Index ready
 rainbowindex generate-types          Generate TypeScript types for ri() autocomplete
-rainbowindex preload-fonts           Generate <link rel="preload"> tags for resolved fonts
+rainbowindex preload-fonts           Print <link rel="preload"> tags for local faces marked preload
+rainbowindex scan <glob>             Print the class names the scanner extracts from files
 ```
 
 Common flags:
@@ -103,7 +112,7 @@ Common flags:
 | `-o`, `--output <file>` | Output CSS file path. Required with `--watch`. |
 | `--watch` | Re-run on source-file changes (chokidar). |
 | `--minify` | Minification + browser-fallback passes via LightningCSS. `--optimize` is an accepted alias. |
-| `--css <file>` | CSS input with directives. Auto-detected if omitted. |
+| `--css <file>` | CSS input with directives. Auto-detected if omitted. For `init`/`create`: the stylesheet to create or patch (default `src/index.css`). |
 | `--strict` | Drop the string escape hatch in generated types. |
 | `--template <name>` | Vite template to scaffold (default: `react-ts`). |
 
@@ -130,7 +139,7 @@ Options:
 
 | Option | Type | Description |
 | --- | --- | --- |
-| `sources` | `string[]` | Glob patterns for files to scan. Can also be declared via `@source` in CSS. |
+| `sources` | `string[]` | Glob patterns for files to scan. Can also be declared via `@source` in CSS. Any positive glob (here or via `@source`) replaces the default scan patterns. |
 | `cwd` | `string` | Working directory. Defaults to `process.cwd()`. |
 
 ## Vite plugin
@@ -139,7 +148,25 @@ Options:
 import rainbowindex from "rainbowindex/vite";
 ```
 
-Auto-detects your CSS entry, injects a PostCSS config if none exists, supports HMR with file versioning. No options required for the common case.
+Auto-detects your CSS entry, injects a PostCSS config if none exists, supports HMR with file versioning. The plugin takes no options — to pass PostCSS options, create a `postcss.config.js` and register the PostCSS plugin there yourself.
+
+## Vite+
+
+[Vite+](https://viteplus.dev) works out of the box. Directive syntax is not valid CSS, so Oxfmt — the formatter behind `vp fmt` and `vp check` — cannot parse a stylesheet that holds directives, and the whole check fails before it lints or type checks. The Vite plugin prevents that: it adds every activated stylesheet to `fmt.ignorePatterns`, and leaves the rest of the project formatted. Without the Vite plugin, add the pattern yourself.
+
+One more integration is opt-in:
+
+```ts
+// vite.config.ts — lint rule: merge classes with ri(), not clsx/tailwind-merge
+export default defineConfig({
+	lint: {
+		jsPlugins: [{ name: "rainbowindex", specifier: "rainbowindex/oxlint" }],
+		rules: { "rainbowindex/prefer-ri": "error" },
+	},
+});
+```
+
+See [docs/vite-plus.md](docs/vite-plus.md).
 
 ## Class syntax
 
@@ -152,7 +179,7 @@ Roughly the same surface area as Tailwind: spacing, sizing, typography, color, l
 Prefix any utility with one or more variants, separated by `:`.
 
 ```html
-<button class="bg-blue-500 hover:bg-blue-600 dark:bg-blue-400 sm:px-6">…</button>
+<button class="bg-brand-500 hover:bg-brand-600 dark:bg-brand-400 sm:px-6">…</button>
 ```
 
 Supported variants:
@@ -164,6 +191,8 @@ Supported variants:
 - **Container queries** — `@sm`, `@md`, …
 - **Attribute selectors** — `data-[state=open]`, `aria-[pressed=true]`
 - **Arbitrary** — `[selector]`, `[@media(...)]`
+
+This list is a subset — the full variant tables are in [docs/class-syntax.md](docs/class-syntax.md).
 
 ### Arbitrary values
 
@@ -183,24 +212,21 @@ When multiple utilities share the same variant prefix, group them with `{…}` i
 
 ```html
 <!-- These two lines are equivalent -->
-<div class="hover:text-red-500 hover:bg-blue-100 hover:underline">…</div>
-<div class="hover:{text-red-500 bg-blue-100 underline}">…</div>
+<div class="hover:text-brand-500 hover:bg-brand-100 hover:underline">…</div>
+<div class="hover:{text-brand-500 bg-brand-100 underline}">…</div>
 ```
 
-Groups stack and nest:
+Prefixes chain:
 
 ```html
 <!-- Chained variants -->
-<div class="sm:hover:{bg-gray-700 text-white}">…</div>
+<div class="sm:hover:{bg-theme-700 text-white}">…</div>
 
 <!-- Multiple groups in one class string -->
-<div class="focus:{outline-2 outline-blue-500} disabled:{opacity-50 cursor-not-allowed}">…</div>
-
-<!-- The data-attribute case -->
-<div class="data-[active]:{relative px-2} data-[slot=sidebar]:{fixed leading-none}">…</div>
+<div class="focus:{outline-2 outline-brand-500} disabled:{opacity-50 cursor-not-allowed}">…</div>
 ```
 
-Expansion happens at scan-time, so the runtime never sees the grouped form. Nesting is capped at depth 10; expanded output is capped at 1MB.
+Expansion happens at scan-time, so the runtime never sees the grouped form. Only plain prefixes work — bracketed variants like `data-[state=open]:` cannot prefix a group, and braces do not nest (chain the prefixes instead). Expansion input is capped at 500,000 characters, output at 100,000.
 
 ## Theming with CSS directives
 
@@ -211,8 +237,8 @@ Customization happens in your CSS input, not a JS config. The engine recognizes:
 | `@color` | Define color tokens. Supports generative (`chroma hue`), explicit (`oklch(...)`, `#rrggbb`), light/dark pairs, and aliases. |
 | `@spacing` | Set the spacing base unit. |
 | `@text` | Define text size tokens (`size, line-height`). |
-| `@font`, `@font-face` | Register font families inside a single `@font { … }` block. Local files are repeatable `face:` entries (e.g. upright + italic). Known families get an automatic zero-CLS metrics fallback (`metrics: none` opts out). |
-| `@rounded` | Border-radius tokens; modifier sets corner shape (`round`, `squircle`, `superellipse(N)`, etc). |
+| `@font` | Register font families inside a single `@font { … }` block. Local files are repeatable `face:` entries (e.g. upright + italic). Known families get an automatic zero-CLS metrics fallback (`metrics: none` opts out). Plain `@font-face` rules are standard CSS and pass through untouched. |
+| `@rounded` | Corner shape (`round`, `squircle`, `superellipse(N)`, etc). Radii are spacing multiples, so there are no radius tokens. |
 | `@fluid` | Configure fluid type/spacing range. |
 | `@animate` | Register named animations with inline `@keyframes`. |
 | `@utility` | Define a custom utility (static or functional `name-*`). |
@@ -221,7 +247,10 @@ Customization happens in your CSS input, not a JS config. The engine recognizes:
 | `@slot` | Slot marker inside `@custom` block form. |
 | `@source` | Declare additional source globs from CSS. Supports `not "..."` and `inline("...")`. |
 | `@preflight` | Toggle preflight base styles. |
-| `@layer`, `@media`, `@custom-media`, `@import` | Standard CSS plus a few extensions. |
+| `@breakpoint`, `@shadow`, `@weight`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, `@duration` | Key-value token scales; `!key;` removes a token. |
+| `@register` | Emit CSS `@property` registrations. |
+| `@layer` | Place the generated output in cascade layers (intercepted, own grammar). |
+| `@media`, `@import`, other standard at-rules | Standard CSS — passed through untouched. |
 
 Example:
 
@@ -250,11 +279,11 @@ Example:
 	}
 }
 
-@source "../emails/**/*.html";
-@source not "../**/legacy/*";
+@source "emails/**/*.html";
+@source not "src/**/legacy/*";
 ```
 
-Default theme keys: `colors`, `spacing`, `text`, `breakpoints`, `rounded`, `shadows`, `weights`, `easing`, `fluid`, `animations`, `blur`, `z`.
+Default theme scales: `colors`, `spacing`, `text`, `breakpoints`, `shadows`, `weights`, `easing`, `fluid`, `animations`, `blur`, `leading`, `tracking`. The `z`, `opacity`, and `duration` scales ship empty — numeric class forms are computed, and their directives add named tokens.
 
 ## `ri()` — runtime class merger
 
@@ -263,8 +292,8 @@ Default theme keys: `colors`, `spacing`, `text`, `breakpoints`, `rounded`, `shad
 ```ts
 import { ri } from "rainbowindex";
 
-ri("px-2 py-1", isActive && "bg-blue-500", "px-4");
-// → "py-1 bg-blue-500 px-4"   (px-2 is dropped — px-4 wins)
+ri("px-2 py-1", isActive && "bg-brand-500", "px-4");
+// → "py-1 bg-brand-500 px-4"   (px-2 is dropped — px-4 wins)
 ```
 
 Accepted inputs:
@@ -297,17 +326,17 @@ themes in the same Node process, that shared state will leak — use
 // Anywhere ri() is single-compile-safe (browser, Vite, PostCSS):
 import { ri } from "rainbowindex";
 
-const className = ri("px-2 py-1", isActive && "bg-blue-500", "px-4");
+const className = ri("px-2 py-1", isActive && "bg-brand-500", "px-4");
 ```
 
 ```ts
-// SSR / multi-tenant — capture the snapshot at compile time, bind per-request:
-import { compileProject, createRi, finalizeCompilationContext } from "rainbowindex";
+// SSR / multi-tenant — bind a merger to one compile, isolated per theme:
+import { compileProject, createRi } from "rainbowindex";
+import { createThemeSnapshot } from "rainbowindex/editor";
 
 // At server startup (once per theme):
-const ctx = await compileProject({ cwd, css });
-const snapshot = finalizeCompilationContext(ctx);
-const ri = createRi(snapshot);
+const result = await compileProject({ css });
+const ri = createRi(createThemeSnapshot(result.theme));
 
 // In your request handler:
 function render(req, res) {
@@ -316,9 +345,9 @@ function render(req, res) {
 }
 ```
 
-If you call `ri()` while a compilation is still in progress (e.g. inside a
-server-rendering pass that triggers a fresh compile), the runtime emits a
-throttled `[RI-2004]` warning. That's your signal to switch to `createRi()`.
+In any Node/SSR process, the default `ri()` emits a throttled `[RI-2004]`
+warning (at most once per 60 s) to flag its shared module state. Switching to
+`createRi(snapshot)` silences it.
 
 ## Editor tooling API
 
@@ -370,16 +399,16 @@ Warnings carry `RI-NNNN` codes. Ranges:
 
 | Range | Subsystem |
 | --- | --- |
+| 00xx | PostCSS plugin bootstrap (thrown) |
 | 10xx | Compilation & directives |
-| 11xx | Color directives |
+| 11xx | Color directives & resolver catch-alls |
 | 12xx | Font system |
 | 13xx | Merge / compilation context |
 | 14xx | Source scanner |
 | 15xx | Typography utilities |
 | 16xx | Integration plugins (Vite, PostCSS, CLI wiring) |
-| 20xx | CSS function processing |
-| 21xx | `ri()` runtime |
+| 20xx | CSS functions, `ri()` runtime & `compile()` validation |
 
-See the [diagnostics reference](https://rainbowindex.dev/docs/diagnostics) for the full code → cause → fix table.
+See [docs/diagnostics.md](docs/diagnostics.md) for the full code → cause → fix table.
 
 Warnings are deduplicated and capped at 200 per compile, with 20 slots reserved for high-severity errors.

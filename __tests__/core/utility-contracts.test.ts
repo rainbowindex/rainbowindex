@@ -111,7 +111,7 @@ describe("PREFIX_DISPATCH covers all resolvable utilities", () => {
 		["z", "10"],
 		["overflow-hidden", null],
 		["border", null],
-		["rounded", "lg"],
+		["rounded", "4"],
 		["outline", null],
 		["divide-y", null],
 		["shadow", "lg"],

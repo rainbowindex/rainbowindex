@@ -16,6 +16,7 @@ export default defineConfig([
 			cli: "src/entries/cli.ts",
 			editor: "src/entries/editor.ts",
 			vite: "src/integrations/vite.ts",
+			oxlint: "src/integrations/oxlint.ts",
 		},
 		format: ["esm"],
 		outExtension: () => ({ js: ".mjs", dts: ".d.ts" }),

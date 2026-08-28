@@ -110,6 +110,10 @@ const ROUNDED_SIDES: readonly string[] = Object.freeze([
 	...ROUNDED_CORNER_NAMES,
 ]);
 
+/** Radii are spacing multiples, so they sample the spacing steps. `px` rides
+ *  along and the resolver probe drops it — no radius accepts it. */
+const RADIUS_SAMPLES: readonly string[] = Object.freeze([...SPACING_SAMPLES, "none", "full"]);
+
 function buildValueSpaces(): ReadonlyMap<string, ValueSpaceSpec> {
 	const table = new Map<string, { kinds: Set<ValueSpaceKind>; keywords: Set<string> }>();
 	for (const { roots, spec } of ROOT_GROUPS) {
@@ -166,13 +170,11 @@ function candidateValues(kind: ValueSpaceKind, theme: ResolvedTheme): string[] {
 		case "weight":
 			return Object.keys(theme.weights);
 		case "rounded":
-			return Object.keys(theme.rounded);
+			return [...RADIUS_SAMPLES];
 		case "rounded-side": {
-			const tokens = Object.keys(theme.rounded);
 			const out: string[] = [];
 			for (const side of ROUNDED_SIDES) {
-				out.push(side);
-				for (const token of tokens) out.push(`${side}-${token}`);
+				for (const size of RADIUS_SAMPLES) out.push(`${side}-${size}`);
 			}
 			return out;
 		}

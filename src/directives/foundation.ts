@@ -110,8 +110,6 @@ export interface ResolvedTheme {
 	readonly text: Readonly<Record<string, { fontSize: string; lineHeight: string }>>;
 	readonly spacing: Readonly<{ base: string }>;
 	readonly breakpoints: Readonly<Record<string, string>>;
-	readonly rounded: Readonly<Record<string, string>>;
-	readonly roundedRoof: string;
 	/**
 	 * Corner shape set via `@rounded <shape>`. `null` means no shape was configured —
 	 * the compiler emits neither a `corner-shape` rule nor the fallback `@supports not`
@@ -165,7 +163,7 @@ export type WritableTheme = { -readonly [K in keyof ResolvedTheme]: DeepMutable<
 export const REMOVAL_KEY = "--ri-rm";
 
 /** Valid directive entry keys and @utility names. Digit-leading keys (`2xl`)
- *  and `--`-prefixed keys (`--roof`, `--my-var`) are intentionally allowed;
+ *  and `--`-prefixed keys (`--corner-scale`, `--my-var`) are intentionally allowed;
  *  whitespace, semicolons, and braces would emit broken CSS and are not. */
 export const IDENT_KEY_RE = /^[\w-]+$/;
 

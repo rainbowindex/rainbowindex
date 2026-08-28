@@ -1304,12 +1304,16 @@ describe("resolveDirectives", () => {
 	});
 
 	it("handles radius with squircle shape", () => {
+		const theme = resolveDirectives([{ type: "rounded", body: "", modifier: "squircle" }]);
+		expect(theme.roundedShape).toBe("squircle");
+		expect(theme.roundedShapeScale).toBe(1.6);
+	});
+
+	it("warns on a radius token in the body (RI-1122)", () => {
 		const theme = resolveDirectives([
 			{ type: "rounded", body: "sm: 0.125rem;", modifier: "squircle" },
 		]);
-		expect(theme.roundedShape).toBe("squircle");
-		expect(theme.roundedShapeScale).toBe(1.6);
-		expect(theme.rounded["sm"]).toBe("0.125rem");
+		expect(theme.warnings.some((w) => w.includes("RI-1122"))).toBe(true);
 	});
 
 	it("handles superellipse with custom exponent", () => {
@@ -1345,10 +1349,9 @@ describe("resolveDirectives", () => {
 	});
 
 	it("leaves roundedShape null when no modifier given", () => {
-		const theme = resolveDirectives([{ type: "rounded", body: "sm: 0.5rem;" }]);
+		const theme = resolveDirectives([{ type: "rounded", body: "" }]);
 		expect(theme.roundedShape).toBeNull();
 		expect(theme.roundedShapeScale).toBe(1);
-		expect(theme.rounded["sm"]).toBe("0.5rem");
 	});
 
 	it("resolves font directives", () => {

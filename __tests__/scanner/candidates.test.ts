@@ -371,3 +371,108 @@ const el = <div className="rounded" />;`,
 		expect(candidates.some((c) => c.value === "clsx")).toBe(false);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Origin provenance — a JS term is not a class name
+// ---------------------------------------------------------------------------
+// The whole-file token scan's grammar matches bare identifiers, and its tokens
+// sit inside helper/attribute spans. Position alone therefore cannot certify a
+// class: only a token a context-aware collector produced may inherit a certain
+// origin. Values are untouched throughout — every test here goes through
+// assertValueParity, so the generated CSS is provably unchanged.
+
+describe("candidate origin provenance", () => {
+	test("a bare JS identifier in a helper call is not laundered into helper origin", () => {
+		const content = `<svg className={ri(mode == "default" ? "fill-[#fff]" : "fill-white")} />`;
+		const candidates = assertValueParity({ path: "a.tsx", content });
+		expect(byValue(candidates, "mode").origin).toBe("plain");
+		expect(byValue(candidates, "fill-[#fff]").origin).toBe("helper");
+		expect(byValue(candidates, "fill-white").helperName).toBe("ri");
+	});
+
+	test("identifiers in conditional and interpolated helper arguments stay plain", () => {
+		const candidates = assertValueParity({
+			path: "a.tsx",
+			// Assembled so the interpolation is data, not a template placeholder.
+			content: `const a = ri(cond && \`p-2 $\{size}\`);`,
+		});
+		expect(byValue(candidates, "cond").origin).toBe("plain");
+		expect(byValue(candidates, "size").origin).toBe("plain");
+		expect(byValue(candidates, "p-2").origin).toBe("helper");
+	});
+
+	test("an equality operand reports the expression origin, not helper", () => {
+		const candidates = assertValueParity({
+			path: "a.tsx",
+			content: `const a = ri(mode === "default" && "p-2");`,
+		});
+		expect(byValue(candidates, "default").origin).toBe("expression");
+		expect(byValue(candidates, "p-2").origin).toBe("helper");
+	});
+
+	test("an equality operand on the left is flagged too", () => {
+		const candidates = assertValueParity({
+			path: "a.tsx",
+			content: `const a = ri("flex" !== mode && "p-2");`,
+		});
+		expect(byValue(candidates, "flex").origin).toBe("expression");
+		expect(byValue(candidates, "p-2").origin).toBe("helper");
+	});
+
+	test("assignment is not an equality operand — a plain class string keeps its origin", () => {
+		const candidates = assertValueParity({
+			path: "a.tsx",
+			content: `const a = ri("p-2");`,
+		});
+		expect(byValue(candidates, "p-2").origin).toBe("helper");
+	});
+
+	test("real typos in helper arguments still report a certain origin", () => {
+		const candidates = assertValueParity({
+			path: "a.tsx",
+			content: `const a = clsx("p-2", "rouded-lg");`,
+		});
+		expect(byValue(candidates, "rouded-lg").origin).toBe("helper");
+	});
+
+	test("quoted class attributes keep attribute origin", () => {
+		for (const path of ["a.html", "a.vue", "a.svelte", "a.tsx"]) {
+			const candidates = assertValueParity({ path, content: `<div class="flex px-2"></div>` });
+			expect(byValue(candidates, "flex").origin, path).toBe("attribute");
+			expect(byValue(candidates, "px-2").origin, path).toBe("attribute");
+		}
+	});
+
+	test("bare unquoted class attributes keep attribute origin", () => {
+		for (const path of ["a.html", "a.vue", "a.svelte"]) {
+			const candidates = assertValueParity({ path, content: `<div class=flex></div>` });
+			expect(byValue(candidates, "flex").origin, path).toBe("attribute");
+		}
+	});
+
+	test("safelist literals keep safelist origin", () => {
+		const candidates = assertValueParity({
+			path: "a.ts",
+			content: `const s = safelist("stroke-cap-round", "underline");`,
+		});
+		expect(byValue(candidates, "underline").origin).toBe("safelist");
+	});
+
+	test("variant-group members inside a quoted attribute keep attribute origin", () => {
+		const candidates = assertValueParity({
+			path: "a.html",
+			content: `<div class="hover:{px-2 py-1} flex"></div>`,
+		});
+		expect(byValue(candidates, "hover:px-2").origin).toBe("attribute");
+		expect(byValue(candidates, "hover:py-1").origin).toBe("attribute");
+	});
+
+	test("cva/tv config classes keep a certain origin", () => {
+		const candidates = assertValueParity({
+			path: "a.tsx",
+			content: `const v = cva("flex", { variants: { size: { lg: "px-8" } } });`,
+		});
+		expect(byValue(candidates, "px-8").origin).not.toBe("plain");
+		expect(byValue(candidates, "flex").origin).not.toBe("plain");
+	});
+});

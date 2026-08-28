@@ -516,12 +516,11 @@ describe("Directives", () => {
 	});
 
 	it("parses @rounded squircle directive", () => {
-		const src = `@rounded squircle { lg: 0.5rem; }`;
+		const src = `@rounded squircle { --corner-scale: 1.3; }`;
 		const dirs = extractDirectives(src);
 		const theme = resolveDirectives(dirs);
 		expect(theme.roundedShape).toBe("squircle");
-		expect(theme.roundedShapeScale).toBeCloseTo(1.6);
-		expect(theme.rounded.lg).toBe("0.5rem");
+		expect(theme.roundedShapeScale).toBeCloseTo(1.3);
 	});
 
 	it("parses a @font block slot", () => {
@@ -594,7 +593,7 @@ describe("Directives", () => {
       @text { huge: 5rem, 1; }
       @spacing { base: 0.3rem; }
       @breakpoint { tablet: 50rem; }
-      @rounded { xl: 1rem; }
+      @rounded squircle;
       @shadow { brutal: 4px 4px 0 black; }
       @weight { extra: 950; }
       @ease { bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55); }
@@ -609,7 +608,7 @@ describe("Directives", () => {
 		expect(theme.text).toHaveProperty("huge");
 		expect(theme.spacing.base).toBe("0.3rem");
 		expect(theme.breakpoints).toHaveProperty("tablet");
-		expect(theme.rounded).toHaveProperty("xl");
+		expect(theme.roundedShape).toBe("squircle");
 		expect(theme.shadows).toHaveProperty("brutal");
 		expect(theme.weights).toHaveProperty("extra");
 		expect(theme.easing).toHaveProperty("bounce");
@@ -915,8 +914,8 @@ describe("Utility spot checks", () => {
 	});
 
 	// Borders
-	it("rounded-lg → border-radius with scale", () => {
-		const r = resolveUtility("rounded", "lg", false, theme);
+	it("rounded-4 → border-radius with scale", () => {
+		const r = resolveUtility("rounded", "4", false, theme);
 		expect(r!.declarations[0].property).toBe("border-radius");
 		expect(r!.declarations[0].value).toContain("--ri-rounded-scale");
 	});
@@ -1006,7 +1005,6 @@ describe("Shared utilities", () => {
 				usedColorStops: new Map([["theme", new Set([500])]]),
 				usedTextSizes: new Set(["base"]),
 				usedFonts: new Set(["sans"]),
-				usedRounded: new Set(["md"]),
 				usedShadows: new Set(["md"]),
 				usedAnimations: new Set(["spin"]),
 			},
@@ -1029,7 +1027,6 @@ describe("Shared utilities", () => {
 				usedColorStops: new Map(),
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
-				usedRounded: new Set(),
 				usedShadows: new Set(),
 				usedAnimations: new Set(),
 			},
@@ -1052,7 +1049,6 @@ describe("Shared utilities", () => {
 				usedColorStops: new Map(),
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
-				usedRounded: new Set(),
 				usedShadows: new Set(["md"]),
 				usedAnimations: new Set(),
 			},
@@ -1082,7 +1078,6 @@ describe("Shared utilities", () => {
 				usedColorStops: new Map(),
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
-				usedRounded: new Set(),
 				usedShadows: new Set(),
 				usedAnimations: new Set(),
 			},

@@ -12,6 +12,7 @@ describe("package entrypoints", () => {
 				"./index.css": string;
 				"./editor": { types: string; default: string };
 				"./vite": { types: string; default: string };
+				"./oxlint": { types: string; default: string };
 			};
 			bin: { rainbowindex: string };
 		};
@@ -28,16 +29,20 @@ describe("package entrypoints", () => {
 		expect(pkg.exports["./editor"].default).toBe("./dist/editor.mjs");
 		expect(pkg.exports["./vite"].types).toBe("./dist/vite.d.ts");
 		expect(pkg.exports["./vite"].default).toBe("./dist/vite.mjs");
+		expect(pkg.exports["./oxlint"].types).toBe("./dist/oxlint.d.ts");
+		expect(pkg.exports["./oxlint"].default).toBe("./dist/oxlint.mjs");
 		expect(Object.keys(pkg.exports).sort()).toEqual([
 			".",
 			"./editor",
 			"./index.css",
+			"./oxlint",
 			"./package.json",
 			"./vite",
 		]);
 		expect(existsSync(resolve(process.cwd(), "dist/index.mjs"))).toBe(true);
 		expect(existsSync(resolve(process.cwd(), "dist/vite.mjs"))).toBe(true);
 		expect(existsSync(resolve(process.cwd(), "dist/editor.mjs"))).toBe(true);
+		expect(existsSync(resolve(process.cwd(), "dist/oxlint.mjs"))).toBe(true);
 
 		expect(pkg.bin.rainbowindex).toBe("dist/cli.mjs");
 		expect(existsSync(resolve(process.cwd(), "dist/cli.mjs"))).toBe(true);

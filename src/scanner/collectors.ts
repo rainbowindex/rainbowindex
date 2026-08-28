@@ -97,6 +97,21 @@ const INDEX_ACCESS_RE = /\[\d*\]$/;
 const PROPERTY_ACCESS_RE = /^[\w.@]+\[[^\]]+\]$/;
 
 /**
+ * Whitespace inside an arbitrary value makes a class unreachable, not merely
+ * unusual: `class`, `@a`/`@apply`, and `safelist()` all split their input on
+ * whitespace, so `bg-[url('a b')]` reaches the browser as the two tokens
+ * `bg-[url('a` and `b')]` and matches nothing. The scanner has always dropped
+ * these, silently, which leaves the author with no CSS and no reason why.
+ *
+ * Reported once per distinct message: one class is tokenized by both the
+ * attribute collector and any helper collector nested inside it.
+ */
+function warnBracketWhitespace(warnings: string[], cls: string): void {
+	const message = `[RI-1412] Class "${cls}" has whitespace inside its arbitrary value, so it can never match an element — class attributes, @a/@apply, and safelist() all split on whitespace. Use "_" for a space (\`bg-[url('a_b')]\` emits \`url('a b')\`) and "\\_" for a literal underscore. The class was skipped.`;
+	if (!warnings.includes(message)) warnings.push(message);
+}
+
+/**
  * Core token scan: long-line filtering, variant-group expansion, CLASS_RE
  * matching, and candidate filters. `baseOffset` is the absolute offset of
  * `source` within the original document — position-aware sinks receive spans
@@ -173,15 +188,31 @@ export function scanClassTokens(
 		if (!cls) continue;
 		const unbanged = cls.endsWith("!") ? cls.slice(0, -1) : cls;
 		const base = unbanged.replace(VARIANT_STRIP_RE, "");
-		if (HAS_UPPERCASE_RE.test(base.replace(BRACKET_SPAN_RE, ""))) continue;
-		if (BRACKET_WHITESPACE_RE.test(base)) continue;
-		if (INDEX_ACCESS_RE.test(base)) continue;
-		// Reject JS array / property access: `obj[key]`, `rest["aria-invalid"]`,
-		// `state.foo["data-state"]`, etc. CSS utility arbitrary values always
-		// use `utility-[value]` syntax — the character immediately before `[`
-		// must be `-`, and this regex's name part excludes `-`, so anything it
-		// matches is an access expression, never a utility.
-		if (PROPERTY_ACCESS_RE.test(base)) continue;
+		// Every bracket filter (span strip, index/property access, bracket
+		// whitespace — the RI-1412 warning included) needs a literal `[` to
+		// have any effect, so the common bracket-free candidate skips straight
+		// to the uppercase test.
+		if (!base.includes("[")) {
+			if (HAS_UPPERCASE_RE.test(base)) continue;
+		} else {
+			if (HAS_UPPERCASE_RE.test(base.replace(BRACKET_SPAN_RE, ""))) continue;
+			if (INDEX_ACCESS_RE.test(base)) continue;
+			// Reject JS array / property access: `obj[key]`, `rest["aria-invalid"]`,
+			// `state.foo["data-state"]`, etc. CSS utility arbitrary values always
+			// use `utility-[value]` syntax — the character immediately before `[`
+			// must be `-`, and this regex's name part excludes `-`, so anything it
+			// matches is an access expression, never a utility.
+			if (PROPERTY_ACCESS_RE.test(base)) continue;
+			// Ordered last of the four deliberately. All four only `continue`, so
+			// the dropped set is identical whatever the order — but this is the one
+			// rejection worth reporting, and it can only be reported once the JS
+			// access shapes above are out of the way: `styles["my class"]` sits in
+			// a className expression and trips the whitespace test too.
+			if (BRACKET_WHITESPACE_RE.test(base)) {
+				if (warnings && sink.inClassList) warnBracketWhitespace(warnings, cls);
+				continue;
+			}
+		}
 
 		if (!wantsPositions) {
 			sink.add(cls, 0, 0, -1, -1);
@@ -310,6 +341,26 @@ function collectTemplateLiteralClasses(
 	});
 }
 
+/**
+ * Is the string literal spanning [open, close] an operand of `==`/`!=` (and
+ * so `===`/`!==`)? Only equality is matched: a bare `=` is assignment, where
+ * `const base = "px-2"` is a perfectly ordinary class list.
+ */
+function isEqualityOperand(source: string, open: number, close: number): boolean {
+	let before = open - 1;
+	while (before >= 0 && /\s/.test(source[before])) before--;
+	if (
+		before >= 1 &&
+		source[before] === "=" &&
+		(source[before - 1] === "=" || source[before - 1] === "!")
+	) {
+		return true;
+	}
+	let after = close + 1;
+	while (after < source.length && /\s/.test(source[after])) after++;
+	return (source[after] === "=" || source[after] === "!") && source[after + 1] === "=";
+}
+
 export function collectStringLiteralClasses(
 	sink: CandidateSink,
 	source: string,
@@ -324,6 +375,10 @@ export function collectStringLiteralClasses(
 			const raw = source.slice(i + 1, end);
 			const value = raw.trim();
 			if (value) {
+				// The value is still collected — dropping it would change the
+				// generated CSS — but an equality operand is flagged so editors
+				// can tell `mode === "default"` from a real class list.
+				if (isEqualityOperand(source, i, end)) sink.markExpression?.(base + i, base + end + 1);
 				scanClassTokens(
 					sink,
 					value,
@@ -361,14 +416,18 @@ export function collectAssignedValues(
 		if (!value) continue;
 		sink.markContext?.(base + parsed.valueStart, base + parsed.valueStart + raw.length);
 		const valueOffset = base + parsed.valueStart + (raw.length - raw.trimStart().length);
-		// A plain quoted value IS a class list, so tokenize it directly — the
+		// A quoted or bare value IS a class list, so tokenize it directly — the
 		// expression visitors only find literals nested INSIDE a value, and the
-		// whole-file scan that used to cover the quoted case drops
-		// >MAX_LINE_LENGTH lines (e.g. `className` sharing a line with inline
-		// SVG path data), silently losing the classes. The visitor still runs:
-		// a quoted value can carry nested extractables (template chunks), and
-		// duplicate finds dedupe in the sink.
-		if (parsed.quoted && visitor !== scanClassTokens) {
+		// whole-file scan that used to cover these drops >MAX_LINE_LENGTH lines
+		// (e.g. `className` sharing a line with inline SVG path data), silently
+		// losing the classes. Tokenizing here is also what earns these values
+		// their context provenance: a token only the whole-file scan found is
+		// never eligible for an attribute/helper origin (CandidateCollector.add).
+		// Template and `{…}` values are excluded — they carry code, so only the
+		// caller's visitor may decide what inside them is a class. The visitor
+		// still runs: a quoted value can carry nested extractables (template
+		// chunks), and duplicate finds dedupe in the sink.
+		if ((parsed.quoted || parsed.bare) && visitor !== scanClassTokens) {
 			scanClassTokens(sink, value, valueOffset, warnings);
 		}
 		visitor(sink, value, valueOffset, warnings);

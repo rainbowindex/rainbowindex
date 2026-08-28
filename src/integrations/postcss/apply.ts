@@ -3,7 +3,7 @@ import { parseUtility } from "../../utilities/parser.js";
 import {
 	resolveUtilityDeclarations,
 	forEachApplyClass,
-	getCustomUtility,
+	matchCustomUtility,
 } from "../../utilities/index.js";
 import type { CSSDeclaration, UtilityNestedBlock } from "../../utilities/helpers.js";
 import { resolveVariant, type VariantWrapper } from "../../engine/index.js";
@@ -28,16 +28,31 @@ interface NestedBlockEntry {
 }
 
 /**
- * Per-processApply memo for resolveClassName. Duplicate classes across @apply
- * rules (flex, px-4, …) resolve identically — theme and customVariantMap are
- * constant per invocation and downstream only reads the cached structures.
- * Warnings emitted during resolution are cached and replayed on every hit so
- * per-occurrence diagnostics survive; the plugin dedupes them downstream.
+ * Memo for resolveClassName. Duplicate classes across @apply rules (flex,
+ * px-4, …) resolve identically — theme and customVariantMap are constant per
+ * theme and downstream only reads the cached structures. Warnings emitted
+ * during resolution are cached and replayed on every hit so per-occurrence
+ * diagnostics survive; the plugin dedupes them downstream.
  */
 interface ResolveCacheEntry {
 	result: ResolvedDecl | null;
 	warnings: string[];
 }
+
+/**
+ * Cross-rebuild @apply state, keyed on theme identity. The scan analysis and
+ * pipeline theme memos keep the ResolvedTheme object stable across rebuilds,
+ * so cached resolutions stay valid until the theme actually changes — and the
+ * WeakMap entry dies with the old theme object.
+ */
+interface ApplyThemeState {
+	customVariantMap: ReadonlyMap<string, { name: string; selector: string }>;
+	/** [RI-1005] warnings from the top-level body walk, per custom-utility name. */
+	applyRootWarnings: Map<string, string[]>;
+	resolveCache: Map<string, ResolveCacheEntry>;
+}
+
+const applyStateByTheme = new WeakMap<ResolvedTheme, ApplyThemeState>();
 
 /**
  * One source class's declarations, tagged with the sort key that engine/ordering.ts
@@ -182,11 +197,16 @@ export function processApply(root: Root, theme: ResolvedTheme, warnings: string[
 		});
 	}
 
-	const customVariantMap = new Map(theme.customVariants.map((cv) => [cv.name, cv]));
-	// Top-level warning walks already performed for a custom utility this
-	// compile — repeat @apply occurrences would re-emit identical warnings.
-	const checkedApplyRoots = new Set<string>();
-	const resolveCache = new Map<string, ResolveCacheEntry>();
+	let state = applyStateByTheme.get(theme);
+	if (!state) {
+		state = {
+			customVariantMap: new Map(theme.customVariants.map((cv) => [cv.name, cv])),
+			applyRootWarnings: new Map(),
+			resolveCache: new Map(),
+		};
+		applyStateByTheme.set(theme, state);
+	}
+	const { customVariantMap, applyRootWarnings, resolveCache } = state;
 
 	for (let depth = 0; depth < MAX_APPLY_DEPTH; depth++) {
 		// One walk collects the nodes, their expanded class lists, and the group
@@ -218,7 +238,7 @@ export function processApply(root: Root, theme: ResolvedTheme, warnings: string[
 				warnings,
 				customVariantMap,
 				groupRoots,
-				checkedApplyRoots,
+				applyRootWarnings,
 				resolveCache,
 			);
 		}
@@ -246,7 +266,7 @@ function expandApply(
 	warnings: string[],
 	customVariantMap: ReadonlyMap<string, { name: string; selector: string }>,
 	groupRoots: ReadonlySet<Rule>,
-	checkedApplyRoots: Set<string>,
+	applyRootWarnings: Map<string, string[]>,
 	resolveCache: Map<string, ResolveCacheEntry>,
 ): void {
 	const parentRule = atRule.parent;
@@ -282,7 +302,7 @@ function expandApply(
 					theme,
 					entryWarnings,
 					customVariantMap,
-					checkedApplyRoots,
+					applyRootWarnings,
 				),
 				warnings: entryWarnings,
 			};
@@ -383,17 +403,6 @@ function expandApply(
 	}
 
 	// Pre-compute group variant info for each bucket (avoids redundant tree walks).
-	// When any bucket uses group-* variants, all variant rules must be emitted at
-	// the document root with fully-resolved selectors so that source order
-	// (not nesting position) determines the cascade winner.
-	const groupInfoByKey = new Map<string, ReturnType<typeof resolveGroupVariantInfo>>();
-	let hasGroupVariants = false;
-	for (const [key, bucket] of variantBuckets) {
-		const info = resolveGroupVariantInfo(bucket.wrappers, parentRule as Rule, groupRoots);
-		groupInfoByKey.set(key, info);
-		if (info) hasGroupVariants = true;
-	}
-
 	// Loop-invariant lookups, computed at most once across all buckets.
 	let fullSelectorMemo: string | null = null;
 	const fullNestingSelector = () => {
@@ -401,6 +410,23 @@ function expandApply(
 			fullSelectorMemo = resolveFullNestingSelector(parentRule as Rule);
 		return fullSelectorMemo;
 	};
+
+	// When any bucket uses group-* variants, all variant rules must be emitted at
+	// the document root with fully-resolved selectors so that source order
+	// (not nesting position) determines the cascade winner.
+	const groupInfoByKey = new Map<string, ReturnType<typeof resolveGroupVariantInfo>>();
+	let hasGroupVariants = false;
+	for (const [key, bucket] of variantBuckets) {
+		const info = resolveGroupVariantInfo(
+			bucket.wrappers,
+			parentRule as Rule,
+			groupRoots,
+			fullNestingSelector,
+		);
+		groupInfoByKey.set(key, info);
+		if (info) hasGroupVariants = true;
+	}
+
 	let docRootMemo: Root | null = null;
 	const docRoot = () => {
 		if (docRootMemo === null) docRootMemo = parentContainer.root();
@@ -423,7 +449,10 @@ function expandApply(
 			// fullSelector = "[data-slot='sidebar'] nav a:not([data-active])"
 			// groupRootSelector = "[data-slot='sidebar']"
 			// effectiveBase = "nav a:not([data-active])"
-			const rootBranches = splitSelectorList(groupRootSelector);
+			// Stripping is skipped when the rule IS the group root: every branch
+			// would strip to nothing, leaving an empty selector. The rewritten
+			// wrappers already carry `&<pseudo>`, so the element is the base.
+			const rootBranches = groupVariantInfo.isSelf ? [] : splitSelectorList(groupRootSelector);
 			const fullBranches = splitSelectorList(fullSelector);
 			const baseBranches: string[] = [];
 			for (const fb of fullBranches) {
@@ -496,7 +525,8 @@ function resolveGroupVariantInfo(
 	wrappers: VariantWrapper[],
 	parentRule: Rule,
 	groupRoots: ReadonlySet<Rule>,
-): { rewrittenWrappers: VariantWrapper[]; groupRootSelector: string } | null {
+	fullNestingSelector: () => string,
+): { rewrittenWrappers: VariantWrapper[]; groupRootSelector: string; isSelf: boolean } | null {
 	if (groupRoots.size === 0) return null;
 
 	// Check if any wrapper is a group variant
@@ -516,19 +546,27 @@ function resolveGroupVariantInfo(
 	//
 	// Comma-separated group root selectors are expanded so each branch gets
 	// the pseudo independently: ".card, .panel" + ":hover" → ".card:hover &, .panel:hover &"
+	//
+	// The @apply rule can also resolve to the group root itself — the marker and
+	// the variant sharing one rule (`.self { @apply group group-hover:underline }`),
+	// or a nested `&` block inside the root. There is then no descendant path to
+	// separate, so the variant degenerates to a plain `&<pseudo>` on that element.
+	const isSelf = fullNestingSelector() === groupInfo.groupRootSelector;
+
 	const rewrittenWrappers = wrappers.map((w) => {
 		if (!w.selectorSuffix || !w.replaceAmpersand) return w;
 		const match = w.selectorSuffix.match(GROUP_VARIANT_RE);
 		if (!match) return w;
 
 		const pseudo = match[1]; // e.g., ":hover", ":focus"
+		if (isSelf) return { ...w, selectorSuffix: `&${pseudo}` };
 		const rootBranches = splitSelectorList(groupInfo.groupRootSelector);
 		const newSuffix = rootBranches.map((b) => `${b}${pseudo} &`).join(", ");
 
 		return { ...w, selectorSuffix: newSuffix };
 	});
 
-	return { rewrittenWrappers, groupRootSelector: groupInfo.groupRootSelector };
+	return { rewrittenWrappers, groupRootSelector: groupInfo.groupRootSelector, isSelf };
 }
 
 // ---------------------------------------------------------------------------
@@ -542,22 +580,17 @@ const MARKER_CLASSES = new Set(["group"]);
 const MAX_CUSTOM_APPLY_DEPTH = 5;
 
 /**
- * Find the custom utility entry whose name exactly matches a parsed class, if
- * any — backed by the cached map in utilities/index.ts. Match by exact name
- * only: the bare name for a valueless class (`card`), or the reconstructed
- * `utility-value` when the parser split a custom name (`pg-mg` → utility="pg"
- * value="mg"). Never match the bare name while a value is present, or a custom
- * `min-h` would shadow the built-in `min-h-<value>` family and trip a false
- * circular-@apply detection.
+ * Find the custom utility entry that owns a parsed class, static or functional
+ * — backed by the cached index in utilities/custom.ts, so this walk and the
+ * declaration expansion can never disagree about which utility a class hit.
  */
 function findCustomUtility(
 	utility: string,
 	value: string | null,
+	negative: boolean,
 	theme: ResolvedTheme,
-): { body: string; functional: boolean; name: string } | undefined {
-	const target = value === null ? utility : `${utility}-${value}`;
-	const cu = getCustomUtility(theme, target);
-	return cu && !cu.functional ? cu : undefined;
+): { body: string; name: string } | undefined {
+	return matchCustomUtility(utility, value, negative, theme)?.cu;
 }
 
 /**
@@ -597,7 +630,7 @@ function checkCustomApplyWarnings(
 	visiting.add(cu.name);
 	for (const innerClass of innerClasses) {
 		const parsed = parseUtility(innerClass);
-		const innerCu = findCustomUtility(parsed.utility, parsed.value, theme);
+		const innerCu = findCustomUtility(parsed.utility, parsed.value, parsed.negative, theme);
 		if (innerCu) checkCustomApplyWarnings(innerCu, theme, warnings, visiting);
 	}
 	visiting.delete(cu.name);
@@ -608,7 +641,7 @@ function resolveClassName(
 	theme: ResolvedTheme,
 	warnings: string[],
 	customVariantMap: ReadonlyMap<string, { name: string; selector: string }>,
-	checkedApplyRoots: Set<string>,
+	applyRootWarnings: Map<string, string[]>,
 ): ResolvedDecl | null {
 	const parsed = parseUtility(className);
 
@@ -631,11 +664,18 @@ function resolveClassName(
 	// would emit every inner declaration twice. We still walk the body — but only
 	// to surface the circular/depth [RI-1005] warnings that resolveCustomUtility
 	// detects and then handles silently. One top-level walk per utility per
-	// compile: repeats would re-emit the identical warning strings.
-	const cu = findCustomUtility(parsed.utility, parsed.value, theme);
-	if (cu && !checkedApplyRoots.has(cu.name)) {
-		checkedApplyRoots.add(cu.name);
-		checkCustomApplyWarnings(cu, theme, warnings);
+	// theme: the walk's warnings are cached and replayed into every class that
+	// hits the utility, so they survive rebuilds even after the class that
+	// triggered the walk leaves the CSS. The plugin dedupes repeats downstream.
+	const cu = findCustomUtility(parsed.utility, parsed.value, parsed.negative, theme);
+	if (cu) {
+		let cuWarnings = applyRootWarnings.get(cu.name);
+		if (!cuWarnings) {
+			cuWarnings = [];
+			checkCustomApplyWarnings(cu, theme, cuWarnings);
+			applyRootWarnings.set(cu.name, cuWarnings);
+		}
+		warnings.push(...cuWarnings);
 	}
 
 	const variantWrappers: VariantWrapper[] = [];

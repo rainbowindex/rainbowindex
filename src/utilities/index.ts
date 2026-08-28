@@ -106,7 +106,14 @@ export function resolveUtility(
 		}
 	}
 	// Fallback: check custom utilities defined via @utility directive.
-	const customResult = resolveCustomUtility(utility, value, theme, resolveUtility, visiting);
+	const customResult = resolveCustomUtility(
+		utility,
+		value,
+		negative,
+		theme,
+		resolveUtility,
+		visiting,
+	);
 	if (customResult) return customResult;
 
 	return null;
@@ -243,4 +250,4 @@ export function resolveUtilityDeclarations(
 
 // Custom-@utility subsystem re-exports — the machinery lives in custom.ts;
 // existing consumers (engine, PostCSS @apply, tests) keep importing from here.
-export { getCustomUtility, forEachApplyClass, extractCustomUtilityRootInfo } from "./custom.js";
+export { matchCustomUtility, forEachApplyClass, extractCustomUtilityRootInfo } from "./custom.js";

@@ -11,8 +11,6 @@ import {
 	DEFAULT_COLORS,
 	DEFAULT_CORNER_SCALE,
 	DEFAULT_EASING,
-	DEFAULT_ROUNDED,
-	DEFAULT_ROUNDED_ROOF,
 	DEFAULT_SHADOWS,
 	DEFAULT_SUPERELLIPSE_SCALE,
 	DEFAULT_TEXT,
@@ -266,8 +264,6 @@ export function resolveDirectives(
 		text: { ...DEFAULT_TEXT },
 		spacing: { base: "0.25rem" },
 		breakpoints: { ...DEFAULT_BREAKPOINTS },
-		rounded: { ...DEFAULT_ROUNDED },
-		roundedRoof: DEFAULT_ROUNDED_ROOF,
 		roundedShape: null,
 		roundedShapeScale: 1,
 		shadows: { ...DEFAULT_SHADOWS },
@@ -392,22 +388,16 @@ export function resolveDirectives(
 					theme.roundedShapeScale = defaultScaleForShape(shape);
 				}
 				if (directive.body) {
-					const { entries, removals } = parseKeyValueBody(
-						directive.body,
-						theme.warnings,
-						"rounded",
-					);
-					// Single pass: the two option keys peel off (last occurrence wins,
-					// matching every other key-value directive); the rest are overrides.
-					let roofValue: string | undefined;
+					const { entries } = parseKeyValueBody(directive.body, theme.warnings, "rounded");
+					// Last occurrence wins, matching every other key-value directive.
 					let scaleValue: string | undefined;
-					const overrides: Record<string, string> = {};
 					for (const [k, v] of entries) {
-						if (k === "--roof") roofValue = v;
-						else if (k === "--corner-scale") scaleValue = v;
-						else overrides[k] = v;
+						if (k === "--corner-scale") scaleValue = v;
+						else
+							theme.warnings.push(
+								`[RI-1122] Unknown @rounded option "${k}" — supported: --corner-scale. Radii are numeric: rounded-{n} is n * --spacing.`,
+							);
 					}
-					if (roofValue !== undefined) theme.roundedRoof = roofValue;
 					if (scaleValue !== undefined) {
 						const n = Number.parseFloat(scaleValue);
 						if (!Number.isNaN(n) && n > 0) {
@@ -418,13 +408,6 @@ export function resolveDirectives(
 							);
 						}
 					}
-					theme.rounded = mergeWithRemovals(
-						theme.rounded,
-						overrides,
-						removals,
-						theme.warnings,
-						"rounded",
-					);
 				}
 				break;
 			}

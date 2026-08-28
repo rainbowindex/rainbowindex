@@ -19,7 +19,6 @@ function emptyUsage() {
 		usedColorStops: new Map<string, Set<number>>(),
 		usedTextSizes: new Set<string>(),
 		usedFonts: new Set<string>(),
-		usedRounded: new Set<string>(),
 		usedShadows: new Set<string>(),
 		usedAnimations: new Set<string>(),
 	};
@@ -44,13 +43,6 @@ describe("generateTokenLayer deterministic ordering", () => {
 		const usage = emptyUsage();
 		usage.usedTextSizes = new Set(["a", "B"]);
 		expectBBeforeA(generateTokenLayer(theme, usage, new Map()), "--text");
-	});
-
-	it("sorts rounded tokens by codepoint", () => {
-		const theme: ResolvedTheme = { ...baseTheme, rounded: { a: "1px", B: "2px" } };
-		const usage = emptyUsage();
-		usage.usedRounded = new Set(["a", "B"]);
-		expectBBeforeA(generateTokenLayer(theme, usage, new Map()), "--rounded");
 	});
 
 	it("sorts shadow tokens by codepoint", () => {

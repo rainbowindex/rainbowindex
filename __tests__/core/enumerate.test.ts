@@ -76,8 +76,8 @@ describe("enumeration richness", () => {
 		"grid-cols-3",
 		"col-span-2",
 		"stroke-cap-round",
-		"rounded-bs",
-		"rounded-be-lg",
+		"rounded-bs-2",
+		"rounded-be-4",
 	])("enumerates %s", (name) => {
 		expect(names.has(name), `expected "${name}" in enumeration`).toBe(true);
 	});

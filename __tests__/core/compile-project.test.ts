@@ -63,15 +63,11 @@ describe("compileProject", () => {
 });
 
 describe("compileProject — corner-shape block follows the @rounded directive, not radius usage", () => {
-	// Regression: the block (which sets `corner-shape` and defines
-	// --ri-rounded-scale) was gated on usedRounded, which only tracks named token
-	// refs like var(--rounded-lg). Numeric/arbitrary radii — and @apply-inlined
-	// radii, which bypass usedRounded entirely — never populate it, so
-	// `@rounded squircle;` + `rounded-4` silently dropped the shape: corners
-	// rendered round and the scale var was undefined. The block is now emitted
-	// whenever a shape is configured.
+	// The block (which sets `corner-shape` and defines --ri-rounded-scale) follows
+	// the directive alone. A radius reaches the output through several paths —
+	// compiled classes, @apply-inlined declarations, hand-authored CSS — so any
+	// usage-based gate would silently drop the shape for the paths it cannot see.
 	it.each([
-		["named token", "rounded-lg"],
 		["numeric radius", "rounded-4"],
 		["arbitrary radius", "rounded-[2rem]"],
 		["no radius at all", "p-4"],

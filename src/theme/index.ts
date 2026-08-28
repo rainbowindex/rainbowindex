@@ -41,7 +41,6 @@ export interface Theme {
 	colors: Record<string, ColorDefinition>;
 	text: Record<string, TextSize>;
 	breakpoints: Record<string, string>;
-	rounded: Record<string, string>;
 	shadows: Record<string, string>;
 	weights: Record<string, number>;
 	easing: Record<string, string>;
@@ -80,22 +79,6 @@ export const DEFAULT_BREAKPOINTS: Record<string, string> = {
 	md: "48rem",
 	lg: "64rem",
 	xl: "80rem",
-};
-
-// ---------------------------------------------------------------------------
-// Default Rounded
-// ---------------------------------------------------------------------------
-
-export const DEFAULT_ROUNDED_ROOF = "1.5rem";
-
-export const DEFAULT_ROUNDED: Record<string, string> = {
-	"2xs": "max(0px, calc(var(--rounded-roof) - var(--spacing) * 5))",
-	xs: "max(0px, calc(var(--rounded-roof) - var(--spacing) * 4))",
-	sm: "max(0px, calc(var(--rounded-roof) - var(--spacing) * 3))",
-	md: "max(0px, calc(var(--rounded-roof) - var(--spacing) * 2))",
-	lg: "max(0px, calc(var(--rounded-roof) - var(--spacing)))",
-	xl: "var(--rounded-roof)",
-	full: "calc(infinity * 1px)",
 };
 
 // ---------------------------------------------------------------------------
@@ -358,7 +341,6 @@ export const defaultTheme: Theme = Object.freeze({
 	colors: DEFAULT_COLORS,
 	text: DEFAULT_TEXT,
 	breakpoints: DEFAULT_BREAKPOINTS,
-	rounded: DEFAULT_ROUNDED,
 	shadows: DEFAULT_SHADOWS,
 	weights: DEFAULT_WEIGHTS,
 	easing: DEFAULT_EASING,

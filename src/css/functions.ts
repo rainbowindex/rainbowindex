@@ -303,7 +303,6 @@ const RE_COLOR_SINGLE = /^color-([\w-]+)$/;
 const RE_ANIMATE = /^animate-([\w-]+)$/;
 const RE_TEXT = /^text-([\w-]+)$/;
 const RE_TEXT_LEADING = /^text-([\w-]+)-leading$/;
-const RE_ROUNDED = /^rounded-([\w-]+)$/;
 const RE_SHADOW = /^shadow-([\w-]+)$/;
 const RE_BREAKPOINT = /^breakpoint-([\w-]+)$/;
 const RE_FONT_SUB_VAR = /--(?:features|variations)$/;
@@ -369,14 +368,6 @@ function lookupThemeValue(varName: string, theme: ResolvedTheme, inline = false)
 		if (getFontSlots(theme).has(baseSlot)) return inline ? null : `var(${varName})`;
 		return null;
 	}
-
-	// Rounded roof anchor: --rounded-roof
-	if (name === "rounded-roof") return theme.roundedRoof;
-
-	// Rounded: --rounded-{size}
-	const roundedMatch = name.startsWith("rounded-") ? name.match(RE_ROUNDED) : null;
-	if (roundedMatch && Object.hasOwn(theme.rounded, roundedMatch[1]))
-		return theme.rounded[roundedMatch[1]];
 
 	// Shadow: --shadow-{size}
 	const shadowMatch = name.startsWith("shadow-") ? name.match(RE_SHADOW) : null;
@@ -445,11 +436,6 @@ function collectThemeVariableNames(theme: ResolvedTheme): string[] {
 	for (const size of Object.keys(theme.text)) {
 		names.push(`--text-${size}`);
 		names.push(`--text-${size}-leading`);
-	}
-
-	names.push("--rounded-roof");
-	for (const name of Object.keys(theme.rounded)) {
-		names.push(`--rounded-${name}`);
 	}
 
 	for (const name of Object.keys(theme.shadows)) {

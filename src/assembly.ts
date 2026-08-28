@@ -28,7 +28,6 @@ interface TokenUsage {
 	usedColorStops: Map<string, Set<number>>;
 	usedTextSizes: Set<string>;
 	usedFonts: Set<string>;
-	usedRounded: Set<string>;
 	usedShadows: Set<string>;
 	usedAnimations: Set<string>;
 }
@@ -140,17 +139,6 @@ export function generateTokenLayer(
 	)) {
 		if (!configuredSlots.has(slot) && usage.usedFonts.has(slot)) {
 			vars.push(`--font-${slot}: ${stack};`);
-		}
-	}
-
-	// Rounded roof anchor + tokens (only if any rounded value is used, sorted by key)
-	if (usage.usedRounded.size > 0) {
-		vars.push(`--rounded-roof: ${theme.roundedRoof};`);
-		for (const [name, val] of Object.entries(theme.rounded).sort(([a], [b]) =>
-			codepointCompare(a, b),
-		)) {
-			if (!usage.usedRounded.has(name)) continue;
-			vars.push(`--rounded-${name}: ${val};`);
 		}
 	}
 
@@ -400,12 +388,9 @@ export function assembleSections(
 	}
 
 	// Corner-shape + fallback compensation block. Gated only on whether an @rounded
-	// shape was configured (generateCornerShapeBlock returns null otherwise) — not
-	// on per-utility radius usage. A radius reaches the output through several paths
-	// (compiled utility classes, @apply-inlined declarations, hand-authored CSS),
-	// and only the first populates usedRounded; gating on it silently dropped the
-	// shape for numeric/arbitrary radii and for @apply. The block is small and the
-	// directive is an explicit opt-in, so emit it whenever a shape is set.
+	// shape was configured — generateCornerShapeBlock returns null otherwise. The
+	// block is small and the directive is an explicit opt-in, so emit it whenever
+	// a shape is set.
 	const cornerShape = generateCornerShapeBlock(theme);
 	if (cornerShape) baseSections.push(cornerShape);
 

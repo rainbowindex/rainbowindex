@@ -723,7 +723,7 @@ addAll(
 	["border-style"],
 );
 // Rounded (static)
-addAll(["rounded", "rounded-none", "rounded-full"], ["border-radius"]);
+addAll(["rounded-none", "rounded-full"], ["border-radius"]);
 // Corner shape (static) — each utility also resets --ri-rounded-scale,
 // so conflict resolution must claim both properties.
 addAll(

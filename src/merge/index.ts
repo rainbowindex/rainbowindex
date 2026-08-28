@@ -37,15 +37,17 @@ import {
 	hasFinalizedSnapshot,
 	resolveProps,
 	resolverFor,
+	RI_CACHE_MAX,
+	RiCache,
 } from "./context.js";
 import { scanBracketAware } from "../brackets.js";
 import { devWarn, IS_DEV } from "../runtime.js";
 
 // ---------------------------------------------------------------------------
-// LRU cache for ri() — avoids re-computing conflict resolution for repeated calls
+// Result cache for ri() — avoids re-computing conflict resolution for repeated
+// calls. Two-generation design: see RiCache in context.ts.
 // ---------------------------------------------------------------------------
 
-const RI_CACHE_MAX = 500;
 /** Maximum cache key length — oversized inputs bypass the cache to prevent memory waste. */
 const RI_CACHE_KEY_MAX_LEN = 2048;
 
@@ -212,44 +214,11 @@ export function mergeUncached(
 	return result.join(" ");
 }
 
-/**
- * Evict the oldest 25% of entries from a Map when it reaches `maxSize`.
- * ES6 Map iterates in insertion order, so the first entries are the oldest.
- * Call this BEFORE inserting a new entry. Exported for its unit tests.
- */
-export function evictLRU<K, V>(cache: Map<K, V>, maxSize: number): void {
-	if (cache.size < maxSize) return;
-	const evictCount = maxSize >> 2; // 25%
-	let count = 0;
-	for (const key of cache.keys()) {
-		if (count >= evictCount) break;
-		cache.delete(key);
-		count++;
-	}
-}
-
-/** LRU read: move a hit to the end so Map insertion order tracks recency. */
-function lruGet(cache: Map<string, string>, key: string): string | undefined {
-	const cached = cache.get(key);
-	if (cached !== undefined) {
-		cache.delete(key);
-		cache.set(key, cached);
-	}
-	return cached;
-}
-
-/** LRU write with batch eviction — evict oldest 25% when full to amortize
- *  eviction cost and avoid per-call iterator allocation. */
-function lruPut(cache: Map<string, string>, key: string, value: string): void {
-	evictLRU(cache, RI_CACHE_MAX);
-	cache.set(key, value);
-}
-
 /** Cached wrapper around mergeUncached, keyed by the tokenized class list. */
 function mergeClasses(
 	classes: string[],
 	resolve: (utility: string) => readonly string[] | null,
-	cache: Map<string, string>,
+	cache: RiCache,
 ): string {
 	// Join with "\x00" — tokens can contain spaces (bracket-aware splitting
 	// preserves them), so a space join would let a malformed call poison the
@@ -258,13 +227,13 @@ function mergeClasses(
 	// Bypass cache for oversized inputs to prevent memory waste from huge keys
 	const useCache = cacheKey.length <= RI_CACHE_KEY_MAX_LEN;
 	if (useCache) {
-		const cached = lruGet(cache, cacheKey);
+		const cached = cache.get(cacheKey);
 		if (cached !== undefined) return cached;
 	}
 
 	const output = mergeUncached(classes, resolve);
 
-	if (useCache) lruPut(cache, cacheKey, output);
+	if (useCache) cache.put(cacheKey, output);
 
 	return output;
 }
@@ -287,7 +256,7 @@ function mergeClasses(
 function mergeFrom(
 	inputs: ClassInput[],
 	resolve: (utility: string) => readonly string[] | null,
-	cache: Map<string, string>,
+	cache: RiCache,
 ): string {
 	let fastPath = true;
 	let rawKey = "";
@@ -309,7 +278,7 @@ function mergeFrom(
 		// All inputs falsy (or none) — flattening would yield no classes.
 		if (rawKey === "") return "";
 		if (rawKey.length <= RI_CACHE_KEY_MAX_LEN) {
-			const cached = lruGet(cache, rawKey);
+			const cached = cache.get(rawKey);
 			if (cached !== undefined) return cached;
 			const classes = flattenInputs(inputs);
 			const output =
@@ -318,7 +287,7 @@ function mergeFrom(
 					: classes.length === 1
 						? classes[0]
 						: mergeUncached(classes, resolve);
-			lruPut(cache, rawKey, output);
+			cache.put(rawKey, output);
 			return output;
 		}
 	}
@@ -426,7 +395,7 @@ export function ri(...inputs: ClassInput[]): string {
  */
 export function createRi(snapshot?: CompilationSnapshot): (...inputs: ClassInput[]) => string {
 	const resolve = resolverFor(snapshot);
-	const cache = new Map<string, string>();
+	const cache = new RiCache(RI_CACHE_MAX);
 
 	return function boundRi(...inputs: ClassInput[]): string {
 		return mergeFrom(inputs, resolve, cache);

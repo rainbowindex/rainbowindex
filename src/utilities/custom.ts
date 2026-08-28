@@ -13,6 +13,7 @@
 import type { CustomUtility, ResolvedTheme } from "../directives/foundation.js";
 import { APPLY_LIKE_MATCH_RE, hasApplyLikeDirective } from "../directives/apply-aliases.js";
 import { parseUtility } from "./parser.js";
+import { extractArbitrary } from "./helpers.js";
 import type { CSSDeclaration, UtilityNestedBlock, UtilityResult } from "./helpers.js";
 
 /** Signature of the injected built-in resolver — exactly resolveUtility's. */
@@ -26,25 +27,97 @@ export type ResolveUtilityFn = (
 	dataType?: string | null,
 ) => UtilityResult | null;
 
-const customUtilityMapCache = new WeakMap<ResolvedTheme, Map<string, CustomUtility>>();
-
-/** Cached name → CustomUtility lookup (also used by the PostCSS @apply layer). */
-export function getCustomUtility(theme: ResolvedTheme, name: string): CustomUtility | undefined {
-	return getCustomUtilityMap(theme).get(name);
+/**
+ * Statics keyed by exact name, functional roots in longest-first order so
+ * `@utility tab-size-*` answers `tab-size-4` even when `@utility tab-*` also
+ * exists. The two live in separate tables because `@utility glow` and
+ * `@utility glow-*` share the name `glow` and must both stay reachable.
+ */
+interface CustomUtilityIndex {
+	statics: Map<string, CustomUtility>;
+	functional: CustomUtility[];
 }
 
-function getCustomUtilityMap(theme: ResolvedTheme): Map<string, CustomUtility> {
-	let map = customUtilityMapCache.get(theme);
-	if (!map) {
-		map = new Map();
+const customUtilityIndexCache = new WeakMap<ResolvedTheme, CustomUtilityIndex>();
+
+function getCustomUtilityIndex(theme: ResolvedTheme): CustomUtilityIndex {
+	let index = customUtilityIndexCache.get(theme);
+	if (!index) {
+		const statics = new Map<string, CustomUtility>();
+		const functional = new Map<string, CustomUtility>();
 		for (const cu of theme.customUtilities) {
 			// Theme objects are deep-frozen by the resolver, so the entries can be
-			// stored directly instead of cloned.
-			map.set(cu.name, cu);
+			// stored directly instead of cloned. A redefined name replaces the
+			// earlier one in both tables — last declaration wins.
+			(cu.functional ? functional : statics).set(cu.name, cu);
 		}
-		customUtilityMapCache.set(theme, map);
+		index = {
+			statics,
+			functional: [...functional.values()].sort((a, b) => b.name.length - a.name.length),
+		};
+		customUtilityIndexCache.set(theme, index);
 	}
-	return map;
+	return index;
+}
+
+/** Functional bodies substitute the class suffix wherever they read this. */
+const VALUE_PLACEHOLDER = "var(--value)";
+
+/** Characters that would end the declaration and start a new rule. Bracket
+ *  suffixes were already sanitized by the parser; a bare suffix arrives
+ *  straight from scanned markup, so it is checked here. */
+const UNSAFE_SUFFIX_RE = /[;{}]/;
+
+/** The text a functional utility substitutes for `var(--value)`, or null when
+ *  the suffix cannot be trusted. `[2px_4px]` decodes to `2px 4px`; a bare `4`
+ *  is used as written. */
+function functionalValue(suffix: string): string | null {
+	const arbitrary = extractArbitrary(suffix);
+	if (arbitrary !== null) return arbitrary;
+	return UNSAFE_SUFFIX_RE.test(suffix) ? null : suffix;
+}
+
+/** A custom utility that answers a parsed class, plus the text its body
+ *  substitutes for `var(--value)` (null for a static utility). */
+export interface CustomUtilityMatch {
+	cu: CustomUtility;
+	substitution: string | null;
+}
+
+/**
+ * Resolve a parsed class to the custom utility that owns it.
+ *
+ * A static utility matches its exact name only: the bare name when the class
+ * carries no value (`card`), or the reconstructed `utility-value` when it does
+ * (`pg-mg` parsed as utility="pg" value="mg"). Matching the bare name while a
+ * value is present would let a static custom utility named `min-h` swallow
+ * `min-h-<value>` classes that belong to the built-in `min-h-*` family.
+ *
+ * A functional utility (`@utility glow-*`) matches any class that extends its
+ * root by a `-` and a suffix. An exact static name wins over a functional
+ * match, the longest functional root wins among themselves, and a negated
+ * class never matches a functional root.
+ */
+export function matchCustomUtility(
+	utility: string,
+	value: string | null,
+	negative: boolean,
+	theme: ResolvedTheme,
+): CustomUtilityMatch | null {
+	const index = getCustomUtilityIndex(theme);
+	const full = value === null ? utility : `${utility}-${value}`;
+
+	const exact = index.statics.get(full);
+	if (exact) return { cu: exact, substitution: null };
+
+	if (negative || value === null) return null;
+	for (const cu of index.functional) {
+		if (full.length <= cu.name.length + 1) continue;
+		if (!full.startsWith(cu.name) || full.charCodeAt(cu.name.length) !== 45 /* - */) continue;
+		const substitution = functionalValue(full.slice(cu.name.length + 1));
+		return substitution === null ? null : { cu, substitution };
+	}
+	return null;
 }
 
 /** One level of a parsed custom-utility body: declarations and @apply classes
@@ -250,20 +323,14 @@ function buildNestedBlock(
 export function resolveCustomUtility(
 	utility: string,
 	value: string | null,
+	negative: boolean,
 	theme: ResolvedTheme,
 	resolve: ResolveUtilityFn,
 	visiting?: Set<string>,
 ): UtilityResult | null {
-	const map = getCustomUtilityMap(theme);
-
-	// A custom utility matches a class by its exact name only: the bare name when
-	// the class carries no value (`card`), or the reconstructed `utility-value`
-	// when it does (`pg-mg` parsed as utility="pg" value="mg"). Matching the bare
-	// name while a value is present would let a static custom utility named `min-h`
-	// swallow `min-h-<value>` classes that belong to the built-in `min-h-*` family.
-	const cu = value === null ? map.get(utility) : map.get(`${utility}-${value}`);
-
-	if (!cu || cu.functional) return null;
+	const match = matchCustomUtility(utility, value, negative, theme);
+	if (!match) return null;
+	const { cu, substitution } = match;
 
 	const tree = getParsedBody(cu.body);
 
@@ -294,10 +361,32 @@ export function resolveCustomUtility(
 	}
 	if (expansion) expansion.delete(cu.name);
 
+	if (substitution !== null) substituteValue(declarations, nested, substitution);
+
 	if (declarations.length === 0 && nested.length === 0) return null;
 	if (nested.length === 0) return { declarations };
 
 	return { declarations, nested };
+}
+
+/** Replace `var(--value)` throughout a built result. Declaration objects are
+ *  shared with the cached body tree, so a match writes a new object into the
+ *  (already copied) array instead of editing the shared one. */
+function substituteValue(
+	declarations: CSSDeclaration[],
+	nested: UtilityNestedBlock[],
+	value: string,
+): void {
+	for (let i = 0; i < declarations.length; i++) {
+		const d = declarations[i];
+		if (d.value.includes(VALUE_PLACEHOLDER)) {
+			declarations[i] = {
+				property: d.property,
+				value: d.value.replaceAll(VALUE_PLACEHOLDER, value),
+			};
+		}
+	}
+	for (const block of nested) substituteValue(block.declarations, block.nested, value);
 }
 
 /**

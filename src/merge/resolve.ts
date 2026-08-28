@@ -23,6 +23,11 @@ import {
 } from "./props.js";
 import { scanBracketAware } from "../brackets.js";
 
+/** One functional `@utility name-*` root and the properties it claims. Declared
+ *  here rather than in context.ts so this layer keeps taking its state as
+ *  parameters instead of importing the context module. */
+export type CustomFunctionalEntry = readonly [root: string, properties: readonly string[]];
+
 // ---------------------------------------------------------------------------
 // Dual-mode utilities
 // ---------------------------------------------------------------------------
@@ -250,6 +255,7 @@ const DIRECTIONAL_BORDER_COLOR_PROPS: ReadonlyMap<string, readonly string[]> = n
 export function resolvePropsWith(
 	utility: string,
 	customStaticProps: Readonly<Record<string, string[]>>,
+	customFunctionalProps: readonly CustomFunctionalEntry[],
 	textSizes: ReadonlySet<string>,
 	fontFamilies: ReadonlySet<string>,
 	colorNames: ReadonlySet<string>,
@@ -281,7 +287,16 @@ export function resolvePropsWith(
 	const builtin = BUILTIN_STATIC_PROPS[name];
 	if (builtin !== undefined) return builtin;
 
-	// 3. Try prefix-based match (longest prefix wins)
+	// 3. Try custom functional roots (@utility name-*), longest root first. They
+	// rank below every exact name so a functional `text-*` cannot claim
+	// `text-center`, and above the built-in prefixes so a custom root wins the
+	// family it declares.
+	for (const [root, properties] of customFunctionalProps) {
+		if (name.length <= root.length) continue;
+		if (name.startsWith(root) && name.charCodeAt(root.length) === 45 /* '-' */) return properties;
+	}
+
+	// 4. Try prefix-based match (longest prefix wins)
 	// Uses first-segment dispatch via PREFIX_FIRST_SEGMENT_MAP for O(1) lookup
 	// of candidate prefixes instead of O(N) linear scan over all prefixes.
 	const firstDash = name.indexOf("-");

@@ -1,41 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { scanBracketAware } from "../../src/brackets.js";
-// evictLRU is the merge runtime's cache-eviction policy — it lives with the
-// ri() cache it serves, not with the bracket scanner it used to share a file with.
-import { evictLRU } from "../../src/merge/index.js";
-
-describe("evictLRU", () => {
-	it("does nothing while the cache is still below max size", () => {
-		const cache = new Map([
-			["a", 1],
-			["b", 2],
-			["c", 3],
-		]);
-		evictLRU(cache, 4);
-		expect([...cache.entries()]).toEqual([
-			["a", 1],
-			["b", 2],
-			["c", 3],
-		]);
-	});
-
-	it("evicts the oldest 25% of entries once max size is reached", () => {
-		const cache = new Map([
-			["a", 1],
-			["b", 2],
-			["c", 3],
-			["d", 4],
-		]);
-		evictLRU(cache, 4);
-		expect([...cache.keys()]).toEqual(["b", "c", "d"]);
-	});
-
-	it("evicts multiple entries for larger caches", () => {
-		const cache = new Map(Array.from({ length: 8 }, (_, i) => [`k${i}`, i] as const));
-		evictLRU(cache, 8);
-		expect([...cache.keys()]).toEqual(["k2", "k3", "k4", "k5", "k6", "k7"]);
-	});
-});
 
 describe("scanBracketAware", () => {
 	it("tracks depth while scanning left to right", () => {

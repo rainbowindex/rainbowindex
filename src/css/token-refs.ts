@@ -28,8 +28,5 @@ export const TEXT_VAR_REF_RE = /var\(--text-([a-z0-9]+(?:-[a-z0-9]+)*?)(?:-leadi
 /** `var(--font-<slot>)` references; group 1 is the slot name. */
 export const FONT_VAR_REF_RE = /var\(--font-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\)/g;
 
-/** `var(--rounded-<name>)` references; group 1 is the token name. */
-export const ROUNDED_VAR_REF_RE = /var\(--rounded-([a-z0-9]+(?:-[a-z0-9]+)*)\)/g;
-
 /** `var(--animate-<name>)` references; group 1 is the animation name. */
 export const ANIMATE_VAR_REF_RE = /var\(--animate-([a-z0-9]+(?:-[a-z0-9]+)*)\)/g;

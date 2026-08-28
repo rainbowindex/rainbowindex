@@ -28,7 +28,10 @@ function build(contexts: ContextSpec[], spans: Array<[string, number, number]>):
 		if (context.helper) collector.setHelper(context.helper);
 		collector.markContext(context.start, context.end);
 	}
-	collector.setOrigin("plain");
+	// Non-plain: these tests pin CONTAINMENT, so the spans must be eligible for
+	// it. Only a candidate a context-aware collector tokenized inherits a
+	// context's origin — a plain-scan token never does, whatever contains it.
+	collector.setOrigin("attribute");
 	for (const [value, start, end] of spans) {
 		collector.add(value, start, end, -1, -1);
 	}
@@ -177,5 +180,57 @@ describe("CandidateCollector delete", () => {
 		collector.delete("drop");
 		collector.add("drop", 5, 9, -1, -1);
 		expect(collector.finish().map((c) => c.value)).toEqual(["drop"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Provenance — containment alone must not certify a class
+// ---------------------------------------------------------------------------
+
+describe("origin provenance", () => {
+	test("a whole-file-scan token never inherits a context it sits inside", () => {
+		const collector = new CandidateCollector();
+		collector.setOrigin("helper");
+		collector.setHelper("ri");
+		collector.markContext(0, 40);
+		collector.setOrigin("plain");
+		collector.add("mode", 3, 7, -1, -1); // loose identifier from the file scan
+		collector.setOrigin("helper");
+		collector.setHelper("ri");
+		collector.add("p-2", 10, 13, -1, -1); // tokenized inside the call
+		expect(assignments(collector.finish())).toEqual([
+			{ value: "mode", origin: "plain", helperName: undefined, callId: undefined },
+			{ value: "p-2", origin: "helper", helperName: "ri", callId: 0 },
+		]);
+	});
+
+	test("a span the file scan claimed first is upgraded by the collector's re-add", () => {
+		// The plain scan runs first and wins the keep-first dedupe, so
+		// eligibility has to be raised on the repeat add or every quoted
+		// attribute value would stay plain.
+		const collector = new CandidateCollector();
+		collector.setOrigin("attribute");
+		collector.markContext(0, 40);
+		collector.setOrigin("plain");
+		collector.add("flex", 5, 9, -1, -1);
+		collector.setOrigin("attribute");
+		collector.add("flex", 5, 9, -1, -1);
+		expect(assignments(collector.finish())).toEqual([
+			{ value: "flex", origin: "attribute", helperName: undefined, callId: undefined },
+		]);
+	});
+
+	test("markExpression wins over the enclosing helper context by width", () => {
+		const collector = new CandidateCollector();
+		collector.setOrigin("helper");
+		collector.setHelper("ri");
+		collector.markContext(0, 40);
+		collector.markExpression(8, 17);
+		collector.add("default", 9, 16, -1, -1);
+		collector.add("p-2", 20, 23, -1, -1);
+		expect(assignments(collector.finish())).toEqual([
+			{ value: "default", origin: "expression", helperName: undefined, callId: undefined },
+			{ value: "p-2", origin: "helper", helperName: "ri", callId: 0 },
+		]);
 	});
 });

@@ -39,7 +39,7 @@ describe("custom utility resolution", () => {
 	});
 
 	it("resolves a custom utility mixing declarations and @apply via resolveUtility", () => {
-		const dirs = extractDirectives("@utility card { @apply rounded-lg; background: white; }", []);
+		const dirs = extractDirectives("@utility card { @apply rounded-4; background: white; }", []);
 		const theme = resolveDirectives(dirs);
 		const r = resolveUtility("card", null, false, theme);
 		expect(r).not.toBeNull();
@@ -74,7 +74,7 @@ describe("custom utility resolution", () => {
 
 	it("expands @apply of a custom utility mixing declarations and @apply", () => {
 		const dirs = extractDirectives(
-			"@utility card { @apply rounded-lg shadow-md; background: white; }",
+			"@utility card { @apply rounded-4 shadow-md; background: white; }",
 			[],
 		);
 		const theme = resolveDirectives(dirs);
@@ -348,7 +348,7 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 
 	it("emits each declaration once when a custom utility mixes raw decls and @apply", () => {
 		const theme = resolveDirectives(
-			extractDirectives("@utility card { @apply rounded-lg; background: white; }", []),
+			extractDirectives("@utility card { @apply rounded-4; background: white; }", []),
 		);
 		const root = postcss.parse(".box { @apply card; }");
 		const warnings: string[] = [];

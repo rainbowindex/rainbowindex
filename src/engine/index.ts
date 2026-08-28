@@ -25,7 +25,6 @@ import {
 	ANIMATE_VAR_REF_RE,
 	COLOR_STOP_REF_RE,
 	FONT_VAR_REF_RE,
-	ROUNDED_VAR_REF_RE,
 	SHADOW_VAR_REF_RE,
 	TEXT_VAR_REF_RE,
 } from "../css/token-refs.js";
@@ -60,7 +59,6 @@ export interface CompilationResult {
 	/** Set of used font slot names (for token pruning). */
 	usedFonts: Set<string>;
 	/** Set of used rounded value names (for token pruning). */
-	usedRounded: Set<string>;
 	/** Set of used shadow names (for token pruning). */
 	usedShadows: Set<string>;
 	/** Set of used animation shorthand names (for token pruning). */
@@ -266,11 +264,6 @@ function scanStringForTokenUsage(str: string, result: CompilationResult): void {
 			result.usedFonts.add(m[1]);
 		}
 	}
-	if (str.includes("var(--rounded-")) {
-		for (const m of str.matchAll(ROUNDED_VAR_REF_RE)) {
-			result.usedRounded.add(m[1]);
-		}
-	}
 	if (str.includes("var(--shadow-")) {
 		for (const m of str.matchAll(SHADOW_VAR_REF_RE)) {
 			result.usedShadows.add(m[1]);
@@ -349,7 +342,6 @@ export function createEmptyCompilationResult(): CompilationResult {
 		usedColorStops: new Map(),
 		usedTextSizes: new Set(),
 		usedFonts: new Set(),
-		usedRounded: new Set(),
 		usedShadows: new Set(),
 		usedAnimations: new Set(),
 		warnings: [],
@@ -365,10 +357,12 @@ export function createEmptyCompilationResult(): CompilationResult {
 interface ClassCompileEntry {
 	rule: CompiledRule | null;
 	warnings: readonly string[];
+	/** RI-1002 text, held back because it is only emitted for authored classes.
+	 *  Kept off `warnings` so one memo entry serves both provenances. */
+	arbitraryWarning: string | null;
 	usedColorStops: ReadonlyMap<string, ReadonlySet<number>>;
 	usedTextSizes: ReadonlySet<string>;
 	usedFonts: ReadonlySet<string>;
-	usedRounded: ReadonlySet<string>;
 	usedShadows: ReadonlySet<string>;
 	usedAnimations: ReadonlySet<string>;
 	support: readonly boolean[];
@@ -386,6 +380,12 @@ interface ClassCompileEntry {
  * objects are not mutated between compiles.
  */
 const classCompileMemo = new WeakMap<ResolvedTheme, Map<string, ClassCompileEntry>>();
+
+/** Cleared wholesale at the cap (inspector.ts RESOLUTION_CACHE_CAP pattern).
+ *  Steady-state size is the project's whole scanned token vocabulary, so the
+ *  cap sits well above it — a lower cap would clear mid-compile on every
+ *  rebuild and defeat the memo. */
+const CLASS_COMPILE_MEMO_CAP = 50_000;
 
 /** Compile one class into a self-contained memo entry via a scratch result. */
 function compileClassEntry(
@@ -407,6 +407,7 @@ function compileClassEntry(
 		variantMemo,
 	);
 	const support: boolean[] = new Array(SUPPORT_BLOCKS.length).fill(false);
+	let arbitraryWarning: string | null = null;
 	if (rule) {
 		for (let i = 0; i < SUPPORT_BLOCKS.length; i++) {
 			const block = SUPPORT_BLOCKS[i];
@@ -418,18 +419,16 @@ function compileClassEntry(
 		const bracketContent = parsed.value.replace(/^\[|\]$/g, "");
 		if (shouldWarnUnresolvedArbitrary(bracketContent)) {
 			const truncated = parsed.raw.length > 100 ? `${parsed.raw.slice(0, 100)}...` : parsed.raw;
-			scratch.warnings.push(
-				`[RI-1002] Could not resolve arbitrary utility "${truncated}". Arbitrary utilities use \`[property:value]\` syntax — e.g. \`[padding:1rem]\` or \`[mask-type:luminance]\`. Check that the property name is a known CSS property and the value is well-formed (no stray spaces, quoted strings escaped). If you meant to set a CSS variable, use \`[--my-var:value]\`.`,
-			);
+			arbitraryWarning = `[RI-1002] Could not resolve arbitrary utility "${truncated}". Arbitrary utilities use \`[property:value]\` syntax — e.g. \`[padding:1rem]\` or \`[mask-type:luminance]\`. Check that the property name is a known CSS property and the value is well-formed (no stray spaces, quoted strings escaped). If you meant to set a CSS variable, use \`[--my-var:value]\`.`;
 		}
 	}
 	return {
 		rule,
 		warnings: scratch.warnings,
+		arbitraryWarning,
 		usedColorStops: scratch.usedColorStops,
 		usedTextSizes: scratch.usedTextSizes,
 		usedFonts: scratch.usedFonts,
-		usedRounded: scratch.usedRounded,
 		usedShadows: scratch.usedShadows,
 		usedAnimations: scratch.usedAnimations,
 		support,
@@ -492,7 +491,7 @@ export function registerThemeOnContext(
 			}
 		}
 		if (properties.length > 0) {
-			registerCustomUtility(ctx, cu.name, properties);
+			registerCustomUtility(ctx, cu.name, properties, cu.functional);
 		}
 	}
 }
@@ -514,6 +513,7 @@ function compileInternal(
 	classNames: Iterable<string>,
 	theme: ResolvedTheme,
 	variantMapCache: WeakMap<ResolvedTheme, ReadonlyMap<string, { name: string; selector: string }>>,
+	authored?: ReadonlySet<string>,
 ): { result: CompilationResult; ctx: ReturnType<typeof createCompilationContext> } {
 	const ctx = createCompilationContext();
 	registerThemeOnContext(ctx, theme);
@@ -555,6 +555,7 @@ function compileInternal(
 
 		let entry = classMemo.get(raw);
 		if (!entry) {
+			if (classMemo.size >= CLASS_COMPILE_MEMO_CAP) classMemo.clear();
 			entry = compileClassEntry(raw, theme, customVariantMap, breakpointWeights, variantMemo);
 			classMemo.set(raw, entry);
 		}
@@ -563,6 +564,12 @@ function compileInternal(
 		// memoized containers themselves are never handed out.
 		if (entry.warnings.length > 0) {
 			pushWarningsDeduped(result.warnings, entry.warnings as string[], warnSeen);
+		}
+		// An unresolved arbitrary value is a typo worth reporting only when the
+		// author wrote the class. Scanning reads whole files, prose comments
+		// included, where a bracket token like `min-[437px]` is just text.
+		if (entry.arbitraryWarning !== null && (authored === undefined || authored.has(raw))) {
+			pushWarningsDeduped(result.warnings, [entry.arbitraryWarning], warnSeen);
 		}
 		for (const [hue, stops] of entry.usedColorStops) {
 			let set = result.usedColorStops.get(hue);
@@ -574,7 +581,6 @@ function compileInternal(
 		}
 		for (const v of entry.usedTextSizes) result.usedTextSizes.add(v);
 		for (const v of entry.usedFonts) result.usedFonts.add(v);
-		for (const v of entry.usedRounded) result.usedRounded.add(v);
 		for (const v of entry.usedShadows) result.usedShadows.add(v);
 		for (const v of entry.usedAnimations) result.usedAnimations.add(v);
 
@@ -687,7 +693,14 @@ export function renderCSS(result: CompilationResult): string {
  * ```
  */
 export function createCompiler(): {
-	compile: (classNames: Iterable<string>, theme: ResolvedTheme) => CompilationResult;
+	/** `authored` names the classes the user wrote by hand (`@source inline`,
+	 *  `@apply`, a caller-supplied list). Omit it to treat every class as
+	 *  authored — correct for callers who assembled the list themselves. */
+	compile: (
+		classNames: Iterable<string>,
+		theme: ResolvedTheme,
+		authored?: ReadonlySet<string>,
+	) => CompilationResult;
 	createRi: () => (...inputs: (string | false | null | undefined)[]) => string;
 	/** Isolated font output cache for this compiler instance. Pass to
 	 *  `assembleSections()` to avoid sharing module-level font state. */
@@ -708,7 +721,11 @@ export function createCompiler(): {
 	return {
 		fontOutputCache,
 
-		compile(classNames: Iterable<string>, theme: ResolvedTheme): CompilationResult {
+		compile(
+			classNames: Iterable<string>,
+			theme: ResolvedTheme,
+			authored?: ReadonlySet<string>,
+		): CompilationResult {
 			// A bare string is iterable per-character — treat it as a
 			// whitespace-separated class list instead of silently compiling nothing.
 			const list =
@@ -724,7 +741,7 @@ export function createCompiler(): {
 				);
 			}
 			// No module-level merge state is touched here.
-			const { result, ctx } = compileInternal(list, theme, variantMapCache);
+			const { result, ctx } = compileInternal(list, theme, variantMapCache, authored);
 
 			// Snapshot without publishing to module-level globals.
 			latestSnapshot = snapshotCompilationContext(ctx);

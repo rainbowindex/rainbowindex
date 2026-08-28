@@ -5,6 +5,203 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-28
+
+### Fixed
+
+- **Inline SVG path data is no longer scanned for classes.** Raising the
+  line-length guard to 10,000 characters in 0.5.0 let a multi-KB `d="…"`
+  attribute reach the whole-file token scan, where path data tokenizes
+  cleanly against the class grammar: one 10 KB icon component went from 33
+  candidates to 845, the extra 812 being fragments like `9.17-57.2` and
+  `40c-.35-1.1-1.04`. They matched no utility and carried the `plain` origin
+  editors skip, so nothing rendered wrong and nothing was reported — each
+  one just cost a compile lookup and a cache entry on every build. `d` and
+  `points` values are now blanked before extraction, in every file type.
+  Only quoted values are matched, so `d={expr}` bindings still yield their
+  classes.
+- **A JavaScript term is no longer reported as a class.** Candidate origins
+  were assigned purely by span containment, so any token the whole-file scan
+  matched inside a helper call or class attribute inherited that context's
+  origin. The token scan's grammar also matches bare identifiers, so
+  `ri(mode === "default" ? "fill-white" : "fill-black")` reported `mode` with
+  `origin: "helper"` — and editors, which read a certain origin as "this is a
+  class", flagged it as an unknown class. A candidate now inherits a context's
+  origin only when a context-aware collector tokenized it; containment still
+  decides which context wins. Extracted values are unchanged, so no generated
+  CSS moves.
+- **Bare unquoted class attributes keep their `attribute` origin.**
+  `collectAssignedValues` now tokenizes an undelimited value (`class=flex` in
+  HTML, Vue and Svelte) the same way it already tokenized a quoted one. Without
+  this they would have lost provenance and demoted to `plain`.
+- **`@apply` no longer emits a rule with no selector.** A rule carrying both
+  the `group` marker and a `group-*` variant resolved its group root to
+  itself, so stripping the root prefix off the resolved selector left nothing:
+  `.self { @apply group group-hover:underline; }` emitted a bare
+  ` { text-decoration-line: underline; }`, which a browser discards as a parse
+  error, taking the declarations with it. The group root is the element, so
+  the variant now targets the element — `.self:hover`. The same shape reached
+  by climbing rather than matching in place, a nested `&` block inside the
+  group root, is fixed with it.
+- **RI-1002 no longer fires for a bracket token the scanner merely read.** An
+  unresolved arbitrary value is a typo worth reporting when the author wrote
+  the class, but the scanner reads whole files, comments and prose included,
+  where `min-[437px]` is just text — and every such token warned. Classes
+  written by hand still warn: `@source inline(...)`, `@apply`, and a
+  caller-supplied `classNames` list. Provenance is not baked into the compile
+  memo, so a class that is both scanned and authored warns once rather than
+  never.
+
+### Added
+
+- **RI-1412 — whitespace in an arbitrary value now warns.** A class name
+  cannot contain whitespace: `class`, `@a`/`@apply`, and `safelist()` all
+  split on it, so `bg-[url('a b')]` reaches the browser as the two tokens
+  `bg-[url('a` and `b')]` and matches nothing. The scanner has always dropped
+  these, silently, leaving no CSS and no reason why. The warning names the
+  class and points at the `_` escape (`bg-[url('a_b')]` emits `url('a b')`).
+  It fires only where a collector treats its input as a class list — an
+  attribute value, a helper argument, a `safelist()` argument — so ordinary
+  JS and prose stay quiet, `styles["my class"]` in a `className` expression
+  included. Extracted values are unchanged.
+- **`"expression"` candidate origin.** A string literal that is an operand of
+  `==`/`!=` (so also `===`/`!==`) cannot be a class list: in
+  `mode === "default"`, `"default"` is a value being compared. Such literals
+  are still extracted — dropping them would change generated CSS — but they
+  now report `origin: "expression"` instead of `"helper"`/`"attribute"`.
+  Editors should treat it like `"plain"` and never report it as a bad class.
+  Assignment is deliberately not matched: `const base = "px-2"` is an ordinary
+  class list.
+- **`candidate-origin-provenance` capability.** Feature-detect both behaviours
+  above through `editorCapabilities`, never a version compare.
+- **Functional custom utilities — `@utility name-* { … }`.** The body reads
+  `var(--value)` and the class suffix replaces it, nested blocks included:
+  `@utility glow-* { box-shadow: 0 0 var(--value) gold; }` answers `glow-4`
+  and `glow-[3px]`, with `[2px_4px]` decoding to `2px 4px`. An exact static
+  name beats a functional match, so `@utility card` and `@utility card-*`
+  coexist; the longest root wins between functional entries (`a-b-*` over
+  `a-*` for `a-b-4`); and neither a bare root (`glow`) nor a negated class
+  (`-glow-4`) matches. A suffix carrying `;`, `{`, or `}` is rejected rather
+  than allowed to break out of the declaration. `ri()` treats two suffixes of
+  one root as conflicting, so `ri("glow-4 glow-8")` keeps `glow-8`.
+- **Consumer documentation in [`docs/`](docs/README.md).** One page per
+  subject — getting started, class syntax, utilities, theming, fonts, source
+  scanning, class merging, diagnostics, environment variables — and one per
+  integration surface — CLI, PostCSS plugin, Vite plugin, Vite+, Node API,
+  editor API. The README keeps the overview and links out.
+- **Vite+ support.** The Vite plugin now adds every stylesheet that activates
+  Rainbow Index to `fmt.ignorePatterns`, so `vp check` no longer stops at
+  `Syntax error: component value is expected` before it can lint or type
+  check. Directive bodies are not valid CSS — a `@font` entry carries a block
+  after a declaration, a scale removes a token with `!name;`, `@fluid` takes
+  bare keywords, and `@apply` takes variant groups — and Oxfmt parses CSS
+  strictly. Vite+ reads its `fmt` block off the resolved Vite config, so the
+  plugin contributes the patterns from its `config` hook; plain Vite ignores
+  the extra key. Projects without the Vite plugin add the patterns by hand.
+  See [docs/vite-plus.md](docs/vite-plus.md).
+- **`rainbowindex/oxlint`.** A new entry point with one Oxlint rule,
+  `prefer-ri`, which reports an import of `clsx`, `classnames`, or
+  `tailwind-merge`. Each merges classes against a Tailwind utility table, so
+  it resolves conflicts against the wrong utility set and never sees the
+  theme. The rule is off until a project enables it, and the plugin has no
+  dependencies.
+
+### Changed
+
+- **`ri()` caches results in two generations instead of an LRU.** The old
+  cache moved every hit to the end of a `Map` so insertion order tracked
+  recency, which made the steady state — the same class lists on every render
+  — pay a delete and a re-insert per call. The new cache keeps a current and a
+  previous generation: a hit in the current one is a single `Map.get`, and
+  when the current fills it becomes the previous and a fresh one starts. A hit
+  on a previous entry promotes it, so hot keys survive the swap while cold
+  ones age out with the dropped generation. The cache now holds at most twice
+  `RI_CACHE_MAX` (500) entries instead of evicting the oldest quarter at the
+  cap, and `evictLRU` is gone with the design that needed it.
+- **The per-class compile memo is bounded.** Keyed on theme identity, it grew
+  for the life of the process, so a long dev session could hold every class
+  ever compiled against a still-live theme. It now clears wholesale at 50,000
+  entries. Steady state is the project's whole scanned vocabulary, which sits
+  far below the cap — a lower one would clear mid-compile on every rebuild and
+  defeat the memo.
+- **`@apply` resolution is cached per theme, not per invocation.** Every
+  rebuild re-resolved every `@apply` class from scratch, although the scan
+  analysis and pipeline memos keep the theme object stable across rebuilds, so
+  the old results were still valid. The cache is a `WeakMap` keyed on the
+  theme and dies with it. The `[RI-1005]` walk of a custom utility body is
+  cached alongside: its warnings are now replayed into every class that hits
+  the utility rather than emitted once per compile, so they survive a rebuild
+  in which the class that first triggered the walk is gone. The plugin still
+  dedupes repeats downstream.
+- **The resolved source-file list is cached while a watcher runs.** Each
+  rebuild re-globbed the project to find the same files. A cached list is only
+  correct while something reacts to file adds and deletes, so caching is
+  opt-in: the Vite plugin arms it and clears it from the dev-server watcher
+  (`add`, `unlink`, `unlinkDir`). One-shot builds and `postcss-cli --watch`,
+  which has no watcher hook, keep the always-fresh glob. A glob already in
+  flight when an invalidation arrives is not cached.
+- **A source edit that changes no class no longer re-transforms the CSS.** The
+  Vite plugin now keeps a sorted candidate list per source file and compares it
+  on every hot update. An edit to logic, comments, or copy leaves that list
+  identical, and identical candidates produce byte-identical CSS — so the
+  Rainbow Index stylesheets stay out of the update and only the edited module
+  reloads. A first sighting or an unreadable file invalidates conservatively.
+- **`preload-fonts --help` names the faces that produce a tag.** Only local
+  file and raw-URL faces marked `preload` do. Google serves CSS rather than the
+  font binary, so a Google or system slot never emits one — but the help text
+  claimed `@font-face` was covered too. Text only; the command is unchanged.
+
+### Removed
+
+- **The named radius scale.** `rounded-2xs` through `rounded-xl`, the bare
+  `rounded` / `rounded-t` / `rounded-tl` shorthands, the `--rounded-*`
+  variables, the `--rounded-roof` anchor, and the token body of `@rounded` are
+  all gone. A radius is now a spacing multiple: `rounded-4` is
+  `calc(var(--spacing) * 4 * var(--ri-rounded-scale, 1))`. `rounded-none`,
+  `rounded-full`, `rounded-scale-*`, arbitrary values, and every logical side
+  and corner (`rounded-t-4`, `rounded-ss-2`) are unchanged.
+
+  Two scales set the same shape, so they drifted apart: the named tokens hung
+  off `--rounded-roof` while the numeric forms hung off `--spacing`, and
+  `rounded-lg` next to `rounded-4` mixed two rhythms in one component. One
+  scale, anchored to spacing, keeps the whole system in step.
+
+  Migration: replace each named token with the spacing step you want. A
+  `@rounded` body that sets radius tokens now warns with `[RI-1122]`; keep
+  `--corner-scale` and drop the rest. `--roof` is gone — set the radius you
+  want on the element.
+
+### Notes for integrators
+
+`ResolvedTheme` lost `rounded` and `roundedRoof`, `Theme` lost `rounded`,
+`listThemeTokens()` no longer returns a `rounded` record, and
+`CompilationResult` lost `usedRounded`. Nothing prunes `--rounded-*` any more,
+because the token layer no longer emits it. `roundedShape` and
+`roundedShapeScale` stay — `@rounded <shape>` is unchanged.
+
+`CandidateOrigin` gained a member. Code that switches on it exhaustively must
+handle `"expression"`; code that tests `origin !== "plain"` to mean "this is a
+class" was already wrong and is now wrong in a new way — test for the origins
+you trust instead.
+
+`CompilationSnapshot` gained `customFunctionalProps`, the roots of functional
+`@utility` entries and the properties each one claims. `createThemeSnapshot()`
+fills it in; a snapshot built by hand needs the field.
+
+`createCompiler().compile()` takes an optional third argument, the set of
+classes the caller wrote by hand. Omit it and every class counts as authored,
+which is what a caller assembling its own list wants. `compileProject()`
+applies the same split on its own: `classNames` is authored, `sources` content
+is scanned.
+
+`getCustomUtility(theme, name)` is replaced by
+`matchCustomUtility(utility, value, negative, theme)`, which returns the
+matching entry and the text a functional body substitutes for `var(--value)`.
+The `@apply` walk and the declaration expansion both go through it, so they
+can never disagree about which utility a class hit. The old function resolved
+static entries only. Neither name is exported from the package entry, so only
+code importing the internal module path is affected.
+
 ## [0.5.0] - 2026-08-27
 
 ### Added

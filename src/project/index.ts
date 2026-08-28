@@ -29,11 +29,13 @@ export async function compileProject(
 ): Promise<CompileProjectResult> {
 	const analysis = analyzeProjectCSS(options.css);
 	const classNames = new Set<string>();
+	// A caller-supplied list is authored; `sources` content is scanned text.
 	if (options.classNames) {
 		for (const cls of options.classNames) {
 			classNames.add(cls);
 		}
 	}
+	const authored = new Set(classNames);
 	if (options.sources) {
 		const extractionWarnings: string[] = [];
 		for (const source of options.sources) {
@@ -46,6 +48,7 @@ export async function compileProject(
 	return finalizeProjectCompilation({
 		css: options.css,
 		classNames,
+		authoredClassNames: authored,
 		analysis,
 		// Default to resolving google font weights so headless callers aren't silently
 		// stuck with "100 900" defaults; opt out with RI_OFFLINE / RI_FETCH_FONTS.

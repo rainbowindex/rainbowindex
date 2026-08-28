@@ -97,7 +97,7 @@ export async function compileScannedProject(
 		surfaceSources.push({ pattern, negated: false, inline: false });
 	}
 
-	const classNames = await collectProjectClasses(
+	const { classes: classNames, authored } = await collectProjectClasses(
 		analysis.theme.sources,
 		surfaceSources,
 		options.cwd,
@@ -108,6 +108,7 @@ export async function compileScannedProject(
 	const compiled = await finalizeProjectCompilation({
 		css: options.css,
 		classNames,
+		authoredClassNames: authored,
 		analysis,
 		resolveFonts: () => fontsReady,
 	});

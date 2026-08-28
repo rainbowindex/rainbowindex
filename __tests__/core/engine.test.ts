@@ -139,7 +139,7 @@ describe("compile", () => {
 	});
 
 	it("physical infix works with border-radius", () => {
-		const result = compile(["rounded-tl-physical-lg"], theme);
+		const result = compile(["rounded-tl-physical-4"], theme);
 		expect(result.rules).toHaveLength(1);
 		expect(result.rules[0].css).toContain("border-top-left-radius");
 		expect(result.rules[0].css).not.toContain("border-start-start-radius");
@@ -244,7 +244,7 @@ describe("compile", () => {
 				"gap-2",
 				"bg-white",
 				"text-black",
-				"rounded-lg",
+				"rounded-4",
 				"shadow-md",
 			],
 			theme,

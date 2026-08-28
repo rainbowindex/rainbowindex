@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_BREAKPOINTS,
 	DEFAULT_COLORS,
-	DEFAULT_ROUNDED,
 	DEFAULT_SHADOWS,
 	DEFAULT_TEXT,
 	DEFAULT_WEIGHTS,
@@ -92,20 +91,6 @@ describe("DEFAULT_BREAKPOINTS", () => {
 	});
 });
 
-describe("DEFAULT_ROUNDED", () => {
-	it("has sm key (default radius)", () => {
-		expect(DEFAULT_ROUNDED["sm"]).toBeDefined();
-	});
-
-	it("has xs key", () => {
-		expect(DEFAULT_ROUNDED["xs"]).toBeDefined();
-	});
-
-	it("has full as calc(infinity * 1px)", () => {
-		expect(DEFAULT_ROUNDED["full"]).toBe("calc(infinity * 1px)");
-	});
-});
-
 describe("DEFAULT_SHADOWS", () => {
 	it("has none as transparent", () => {
 		expect(DEFAULT_SHADOWS["none"]).toBe("0 0 #0000");
@@ -165,7 +150,6 @@ describe("defaultTheme", () => {
 		expect(defaultTheme.colors).toBeDefined();
 		expect(defaultTheme.text).toBeDefined();
 		expect(defaultTheme.breakpoints).toBeDefined();
-		expect(defaultTheme.rounded).toBeDefined();
 		expect(defaultTheme.shadows).toBeDefined();
 		expect(defaultTheme.weights).toBeDefined();
 		expect(defaultTheme.easing).toBeDefined();

@@ -116,13 +116,9 @@ export const ROUNDED_CORNER_NAMES: readonly string[] = Object.freeze(Object.keys
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveRadius(name: string, theme: ResolvedTheme): string | null {
+function resolveRadius(name: string): string | null {
 	if (name === "none") return "0px";
 	if (name === "full") return "calc(infinity * 1px)";
-	if (Object.hasOwn(theme.rounded, name)) {
-		const base = `var(--rounded-${name})`;
-		return `calc(${base} * var(--ri-rounded-scale, 1))`;
-	}
 	// Numeric: rounded-4 = calc(var(--spacing) * 4)
 	if (DECIMAL_RE.test(name)) {
 		const n = Number.parseFloat(normalizeDecimalToken(name));
@@ -196,7 +192,7 @@ export function borderGenerator(
 	_value: string | null,
 	full: string,
 	negative: boolean,
-	theme: ResolvedTheme,
+	_theme: ResolvedTheme,
 	_warnings?: string[],
 	dataType?: string | null,
 ): UtilityResult | null {
@@ -216,39 +212,25 @@ export function borderGenerator(
 		}
 	}
 
-	// rounded (bare — sm radius)
-	if (full === "rounded") {
-		const r = resolveRadius("sm", theme) ?? "0.25rem";
-		return single("border-radius", r);
-	}
-
 	// rounded-{...}: border-radius
 	if (full.startsWith("rounded-")) {
 		const rest = full.slice(8);
 
-		// Check for corner: rounded-tl-lg, rounded-ss, etc.
+		// Check for corner: rounded-tl-4, rounded-ss-2, etc.
 		// `rest.startsWith(suffix + "-")` via charCode — no per-entry template.
 		for (const [suffix, prop] of ROUNDED_CORNER_ENTRIES) {
-			if (rest === suffix) {
-				const r = resolveRadius("sm", theme);
-				if (r) return single(prop, r);
-			}
 			if (rest.startsWith(suffix) && rest.charCodeAt(suffix.length) === 45 /* '-' */) {
 				const size = rest.slice(suffix.length + 1);
-				const r = resolveRadius(size, theme);
+				const r = resolveRadius(size);
 				if (r) return single(prop, r);
 			}
 		}
 
-		// Check for side: rounded-t-lg, rounded-s, etc.
+		// Check for side: rounded-t-4, rounded-s-2, etc.
 		for (const [suffix, props] of ROUNDED_SIDE_ENTRIES) {
-			if (rest === suffix) {
-				const r = resolveRadius("sm", theme);
-				if (r) return multi(...props.map((p) => [p, r] as [string, string]));
-			}
 			if (rest.startsWith(suffix) && rest.charCodeAt(suffix.length) === 45 /* '-' */) {
 				const size = rest.slice(suffix.length + 1);
-				const r = resolveRadius(size, theme);
+				const r = resolveRadius(size);
 				if (r) return multi(...props.map((p) => [p, r] as [string, string]));
 			}
 		}
@@ -266,7 +248,7 @@ export function borderGenerator(
 		}
 
 		// Full border-radius
-		const r = resolveRadius(rest, theme);
+		const r = resolveRadius(rest);
 		if (r) return single("border-radius", r);
 	}
 

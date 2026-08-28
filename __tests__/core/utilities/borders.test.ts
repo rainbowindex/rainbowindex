@@ -29,40 +29,52 @@ describe("border utilities", () => {
 		expect(r!.declarations[0].value).toBe("2px");
 	});
 
-	it("rounded → border-radius from theme", () => {
-		const r = resolveUtility("rounded", null, false, theme);
+	it("rounded-4 → border-radius from the spacing step", () => {
+		const r = resolveUtility("rounded-4", null, false, theme);
 		expect(r!.declarations[0].property).toBe("border-radius");
+		expect(r!.declarations[0].value).toBe("calc(var(--spacing) * 4 * var(--ri-rounded-scale, 1))");
 	});
 
-	it("rounded-lg → themed radius", () => {
-		const r = resolveUtility("rounded-lg", null, false, theme);
-		expect(r!.declarations[0].value).toContain("--rounded-lg");
+	it("rounded-1_5 → fractional spacing step", () => {
+		const r = resolveUtility("rounded-1_5", null, false, theme);
+		expect(r!.declarations[0].value).toBe(
+			"calc(var(--spacing) * 1.5 * var(--ri-rounded-scale, 1))",
+		);
 	});
+
+	// The named scale (2xs…xl) and its bare shorthands are gone: a radius is a
+	// spacing multiple, `none`, `full`, or arbitrary.
+	test.each(["rounded", "rounded-t", "rounded-tl", "rounded-lg", "rounded-t-lg"])(
+		"%s no longer resolves",
+		(className) => {
+			expect(resolveUtility(className, null, false, theme)).toBeNull();
+		},
+	);
 
 	it("rounded-full → calc(infinity * 1px)", () => {
 		const r = resolveUtility("rounded-full", null, false, theme);
 		expect(r!.declarations[0].value).toBe("calc(infinity * 1px)");
 	});
 
-	it("rounded-t-lg → logical start-start + start-end radius", () => {
-		const r = resolveUtility("rounded-t-lg", null, false, theme);
+	it("rounded-t-4 → logical start-start + start-end radius", () => {
+		const r = resolveUtility("rounded-t-4", null, false, theme);
 		expect(r!.declarations).toHaveLength(2);
 		expect(r!.declarations[0].property).toBe("border-start-start-radius");
 		expect(r!.declarations[1].property).toBe("border-start-end-radius");
 	});
 
-	it("rounded-tl-md → border-start-start-radius", () => {
-		const r = resolveUtility("rounded-tl-md", null, false, theme);
+	it("rounded-tl-2 → border-start-start-radius", () => {
+		const r = resolveUtility("rounded-tl-2", null, false, theme);
 		expect(r!.declarations[0].property).toBe("border-start-start-radius");
 	});
 
-	it("rounded-ss-md → explicit logical start-start", () => {
-		const r = resolveUtility("rounded-ss-md", null, false, theme);
+	it("rounded-ss-2 → explicit logical start-start", () => {
+		const r = resolveUtility("rounded-ss-2", null, false, theme);
 		expect(r!.declarations[0].property).toBe("border-start-start-radius");
 	});
 
-	it("rounded-ee-md → explicit logical end-end", () => {
-		const r = resolveUtility("rounded-ee-md", null, false, theme);
+	it("rounded-ee-2 → explicit logical end-end", () => {
+		const r = resolveUtility("rounded-ee-2", null, false, theme);
 		expect(r!.declarations[0].property).toBe("border-end-end-radius");
 	});
 
@@ -117,10 +129,10 @@ describe("border utilities", () => {
 	});
 
 	test.each([
-		["rounded-s-md", ["border-start-start-radius", "border-end-start-radius"]],
-		["rounded-e-md", ["border-start-end-radius", "border-end-end-radius"]],
-		["rounded-bs-md", ["border-start-start-radius", "border-start-end-radius"]],
-		["rounded-be-md", ["border-end-start-radius", "border-end-end-radius"]],
+		["rounded-s-2", ["border-start-start-radius", "border-end-start-radius"]],
+		["rounded-e-2", ["border-start-end-radius", "border-end-end-radius"]],
+		["rounded-bs-2", ["border-start-start-radius", "border-start-end-radius"]],
+		["rounded-be-2", ["border-end-start-radius", "border-end-end-radius"]],
 	])("%s resolves both logical radii", (className, props) => {
 		const r = resolveUtility(className, null, false, theme);
 		expect(r).not.toBeNull();
@@ -128,11 +140,11 @@ describe("border utilities", () => {
 	});
 
 	test.each([
-		["rounded-tr-md", "border-start-end-radius"],
-		["rounded-bl-md", "border-end-start-radius"],
-		["rounded-br-md", "border-end-end-radius"],
-		["rounded-se-md", "border-start-end-radius"],
-		["rounded-es-md", "border-end-start-radius"],
+		["rounded-tr-2", "border-start-end-radius"],
+		["rounded-bl-2", "border-end-start-radius"],
+		["rounded-br-2", "border-end-end-radius"],
+		["rounded-se-2", "border-start-end-radius"],
+		["rounded-es-2", "border-end-start-radius"],
 	])("%s resolves the correct corner radius", (className, property) => {
 		const r = resolveUtility(className, null, false, theme);
 		expect(r!.declarations[0].property).toBe(property);

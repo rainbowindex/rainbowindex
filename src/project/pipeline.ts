@@ -25,6 +25,8 @@ export type FontResolver = (
 export interface FinalizeProjectOptions {
 	css: string;
 	classNames: Iterable<string>;
+	/** Classes the user wrote by hand. Omit to treat every class as authored. */
+	authoredClassNames?: ReadonlySet<string>;
 	analysis: ProjectAnalysis;
 	resolveFonts?: FontResolver;
 	processCssFunctions?: boolean;
@@ -88,13 +90,17 @@ export async function finalizeProjectCompilation(
 	const expansionWarnings: string[] = [];
 	// Dedup without the throwaway concat array — Set takes the iterables directly.
 	const classNameSet = new Set(options.classNames);
+	// A class written in `@apply` is authored by definition, so it joins the
+	// authored set alongside the `@source inline(...)` names.
+	const authored = options.authoredClassNames && new Set(options.authoredClassNames);
 	for (const cls of collectApplyClassNames(options.css, expansionWarnings)) {
 		classNameSet.add(cls);
+		authored?.add(cls);
 	}
 	const classNames = [...classNameSet];
 	pushWarningsDeduped(analysis.warnings, expansionWarnings, analysis.warningSeen);
 	const compiler = createCompiler();
-	const compilation = compiler.compile(classNames, effectiveTheme);
+	const compilation = compiler.compile(classNames, effectiveTheme, authored);
 
 	// Scan user CSS for token references (e.g. var(--text-lg), var(--font-sans))
 	// before assembly so the token layer includes variables referenced by user CSS.
