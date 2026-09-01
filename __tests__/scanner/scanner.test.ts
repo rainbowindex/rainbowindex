@@ -1,3 +1,6 @@
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
 	expandApplyGroups,
@@ -5,10 +8,13 @@ import {
 	extractClasses,
 } from "../../src/scanner/class-extraction.js";
 import { MAX_LINE_LENGTH } from "../../src/scanner/collectors.js";
-import { resolveSourceFilesAsync, scanSourceFilesAsync } from "../../src/scanner/sources.js";
-import { writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import {
+	disableScanChangeTracking,
+	enableScanChangeTracking,
+	markSourceFileChanged,
+	resolveSourceFilesAsync,
+	scanSourceFilesAsync,
+} from "../../src/scanner/sources.js";
 
 // ---------------------------------------------------------------------------
 // Variant group expansion
@@ -75,14 +81,51 @@ describe("expandVariantGroups", () => {
 		expect(warnings).toEqual([expect.stringContaining("[RI-1407]")]);
 	});
 
-	test("warns when expanded output exceeds the safety limit", () => {
-		const input = "hover:{x} ".repeat(20_001);
+	test("warns when expansion growth exceeds the safety limit", () => {
+		// Each group copies a 12-character prefix onto 5,000 members and consumes
+		// 10,014 characters of input, so it adds 59,985. The first fits; the second
+		// would reach 119,970, so it and everything after it stay verbatim.
+		const group = `hover:focus:{${"a ".repeat(5_000)}}`;
+		const input = `${group} ${group} ${group}`;
 		const warnings: string[] = [];
 		const expanded = expandVariantGroups(input, warnings);
 
 		expect(warnings).toEqual([expect.stringContaining("[RI-1408]")]);
-		expect(expanded).toContain("hover:x");
-		expect(expanded).toContain("hover:{x}");
+		expect(expanded).toContain("hover:focus:a");
+		// An unexpanded group keeps its brace, so the brace count is how many were
+		// left alone — the assertion the old comment's "third" claim needed.
+		expect(expanded.split("hover:focus:{").length - 1).toBe(2);
+	});
+
+	// The budget bounds what expansion ADDS. Counting plain pass-through text
+	// against it made every source file over 100,000 characters warn, since a
+	// lone `{` anywhere is enough to start the walk.
+	test("does not warn on a large file that holds no variant groups", () => {
+		const input = `const x = { a: 1 };\n${"// a plain line with no variant group in it\n".repeat(4_000)}`;
+		const warnings: string[] = [];
+
+		expect(input.length).toBeGreaterThan(100_000);
+		expect(expandVariantGroups(input, warnings)).toBe(input);
+		expect(warnings).toEqual([]);
+	});
+
+	// One group copies its prefix onto every member, so it can outgrow the whole
+	// budget by itself. Sizing it only between groups would build the string the
+	// budget exists to prevent before noticing.
+	test("leaves a single over-budget group unexpanded", () => {
+		const prefix = `${"x".repeat(2_000)}:`;
+		const input = `${prefix}{${"a ".repeat(2_000)}}`;
+		const warnings: string[] = [];
+
+		expect(expandVariantGroups(input, warnings)).toBe(input);
+		expect(warnings).toEqual([expect.stringContaining("[RI-1408]")]);
+	});
+
+	test("names the source file in expansion warnings", () => {
+		const warnings: string[] = [];
+		expandVariantGroups("a:{a:{a:{a:{a:{a:{a:{a:{a:{a:{a:{x}}}}}}}}}}}", warnings, "src/App.tsx");
+
+		expect(warnings).toEqual([expect.stringContaining("[RI-1409] src/App.tsx:")]);
 	});
 
 	test("warns and leaves overly nested groups unexpanded", () => {
@@ -457,6 +500,116 @@ describe("resolveSourceFilesAsync", () => {
 			expect(files.some((f) => f.includes("/app/"))).toBe(false);
 		} finally {
 			cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Cross-rebuild caches
+// ---------------------------------------------------------------------------
+
+describe("incremental class union", () => {
+	const dir = join(tmpdir(), `ri-scanner-union-${Date.now()}`);
+	const fileA = join(dir, "src/A.tsx");
+	const fileB = join(dir, "src/B.tsx");
+	const sources = [{ pattern: "src/**/*.tsx", negated: false, inline: false }];
+
+	// Rewrites change the byte length, so the scan cache sees a new size even
+	// when two writes land in the same millisecond.
+	const scan = () => scanSourceFilesAsync(sources, dir);
+
+	test("drops a class only when the last file using it stops", async () => {
+		mkdirSync(join(dir, "src"), { recursive: true });
+		try {
+			writeFileSync(fileA, '<div className="flex underline">');
+			writeFileSync(fileB, '<div className="flex italic">');
+			let { classes } = await scan();
+			expect(classes).toContain("flex");
+			expect(classes).toContain("underline");
+			expect(classes).toContain("italic");
+
+			// A alone had "underline", so dropping it there drops it everywhere.
+			writeFileSync(fileA, '<div className="flex">');
+			({ classes } = await scan());
+			expect(classes).not.toContain("underline");
+			expect(classes).toContain("flex");
+			expect(classes).toContain("italic");
+
+			// A gives up "flex" too, but B still has it — the count, not the edit,
+			// decides. This is what a plain "remove what the file had" would break.
+			writeFileSync(fileA, '<div className="truncate">');
+			({ classes } = await scan());
+			expect(classes).toContain("flex");
+			expect(classes).toContain("truncate");
+
+			// Now the last mention goes.
+			writeFileSync(fileB, '<div className="italic">');
+			({ classes } = await scan());
+			expect(classes).not.toContain("flex");
+			expect(classes).toContain("italic");
+			expect(classes).toContain("truncate");
+
+			// A file appearing changes the list length, restarting the union.
+			writeFileSync(join(dir, "src/C.tsx"), '<div className="underline">');
+			({ classes } = await scan());
+			expect(classes).toContain("underline");
+			expect(classes).toContain("italic");
+			expect(classes).not.toContain("flex");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("scan change tracking", () => {
+	const dir = join(tmpdir(), `ri-scanner-track-${Date.now()}`);
+	const file = join(dir, "src/App.tsx");
+	const sources = [{ pattern: "src/**/*.tsx", negated: false, inline: false }];
+
+	test("trusts cached files until the watcher reports them changed", async () => {
+		mkdirSync(join(dir, "src"), { recursive: true });
+		try {
+			writeFileSync(file, '<div className="flex">');
+			enableScanChangeTracking();
+			expect((await scanSourceFilesAsync(sources, dir)).classes).toContain("flex");
+
+			// Armed tracking skips the stat, so an unreported edit stays invisible —
+			// this is the bargain that lets a rebuild skip one stat per file.
+			writeFileSync(file, '<div className="underline italic">');
+			let { classes } = await scanSourceFilesAsync(sources, dir);
+			expect(classes).toContain("flex");
+			expect(classes).not.toContain("underline");
+
+			markSourceFileChanged(file);
+			({ classes } = await scanSourceFilesAsync(sources, dir));
+			expect(classes).toContain("underline");
+			expect(classes).not.toContain("flex");
+
+			// Disarmed, the stat is back and an unreported edit is seen again.
+			disableScanChangeTracking();
+			writeFileSync(file, '<div className="truncate">');
+			({ classes } = await scanSourceFilesAsync(sources, dir));
+			expect(classes).toContain("truncate");
+			expect(classes).not.toContain("underline");
+		} finally {
+			disableScanChangeTracking();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("resolves a watcher-relative path against its cwd", async () => {
+		mkdirSync(join(dir, "src"), { recursive: true });
+		try {
+			writeFileSync(file, '<div className="flex">');
+			enableScanChangeTracking();
+			expect((await scanSourceFilesAsync(sources, dir)).classes).toContain("flex");
+
+			writeFileSync(file, '<div className="underline italic">');
+			markSourceFileChanged("src/App.tsx", dir);
+			expect((await scanSourceFilesAsync(sources, dir)).classes).toContain("underline");
+		} finally {
+			disableScanChangeTracking();
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

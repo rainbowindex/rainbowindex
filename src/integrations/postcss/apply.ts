@@ -1,8 +1,9 @@
 import postcss, { type AtRule, type ChildNode, type Node, type Root, type Rule } from "postcss";
 import { parseUtility } from "../../utilities/parser.js";
 import {
+	checkAppliedFontWeights,
 	resolveUtilityDeclarations,
-	forEachApplyClass,
+	forEachApplyClassList,
 	matchCustomUtility,
 } from "../../utilities/index.js";
 import type { CSSDeclaration, UtilityNestedBlock } from "../../utilities/helpers.js";
@@ -189,7 +190,12 @@ function resolveFullNestingSelector(rule: Rule): string {
 // Main entry
 // ---------------------------------------------------------------------------
 
-export function processApply(root: Root, theme: ResolvedTheme, warnings: string[]): void {
+export function processApply(
+	root: Root,
+	theme: ResolvedTheme,
+	warnings: string[],
+	cssPath?: string,
+): void {
 	// Normalize @apply aliases before processing.
 	for (const alias of APPLY_ALIASES) {
 		root.walkAtRules(alias, (atRule) => {
@@ -217,7 +223,7 @@ export function processApply(root: Root, theme: ResolvedTheme, warnings: string[
 		const groupRoots = new Set<Rule>();
 		root.walkAtRules("apply", (atRule) => {
 			applyNodes.push(atRule);
-			const params = expandVariantGroups(atRule.params, warnings);
+			const params = expandVariantGroups(atRule.params, warnings, cssPath);
 			const classNames = params.trim().split(/\s+/).filter(Boolean);
 			classListByNode.set(atRule, classNames);
 			if (classNames.includes("group")) {
@@ -290,6 +296,11 @@ function expandApply(
 		atRule.remove();
 		return;
 	}
+
+	// This list names its own family, so a font-<number> beside a font-<slot> is
+	// checked against that slot alone — the per-class resolve below sees one
+	// class at a time and can only answer the weaker union question.
+	checkAppliedFontWeights(classNames, theme, warnings);
 
 	const resolved: ResolvedDecl[] = [];
 	for (const className of classNames) {
@@ -611,7 +622,12 @@ function checkCustomApplyWarnings(
 ): void {
 	if (!hasApplyLikeDirective(cu.body)) return;
 	const innerClasses: string[] = [];
-	forEachApplyClass(cu.body, (cls) => innerClasses.push(cls));
+	// Per directive, so the family check never pairs classes from two separate
+	// @apply lines; the recursion walk below wants them flat.
+	forEachApplyClassList(cu.body, (classes) => {
+		checkAppliedFontWeights(classes, theme, warnings);
+		innerClasses.push(...classes);
+	});
 	if (innerClasses.length === 0) return;
 
 	if (visiting.has(cu.name)) {

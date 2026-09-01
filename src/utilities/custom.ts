@@ -263,10 +263,20 @@ const APPLY_CLASS_SPLIT_RE = /\s+/;
  * via the parsed body tree, so this flat walk must never emit declarations.
  */
 export function forEachApplyClass(body: string, visit: (cls: string) => void): void {
+	forEachApplyClassList(body, (classes) => {
+		for (const cls of classes) visit(cls);
+	});
+}
+
+/**
+ * Same walk, one directive at a time. A check that reads sibling classes —
+ * the per-family font-weight check — must not merge two separate `@apply`
+ * directives into one list, since they can sit in different nested blocks.
+ */
+export function forEachApplyClassList(body: string, visit: (classes: string[]) => void): void {
 	for (const m of body.matchAll(APPLY_LIKE_MATCH_RE)) {
-		for (const cls of m[1].trim().split(APPLY_CLASS_SPLIT_RE)) {
-			if (cls) visit(cls);
-		}
+		const classes = m[1].trim().split(APPLY_CLASS_SPLIT_RE).filter(Boolean);
+		if (classes.length > 0) visit(classes);
 	}
 }
 

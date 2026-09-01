@@ -32,19 +32,6 @@ export type CustomFunctionalEntry = readonly [root: string, properties: readonly
 // Dual-mode utilities
 // ---------------------------------------------------------------------------
 
-// Default text sizes used as initial state and reset baseline.
-// Also used by engine.ts (BUILTIN_TEXT_SIZES) — single source of truth.
-export const DEFAULT_TEXT_SIZES = [
-	"xs",
-	"sm",
-	"base",
-	"lg",
-	"xl",
-	"2xl",
-	"3xl",
-	"4xl",
-	"5xl",
-] as const;
 /** Default font family slots — initial state and reset baseline (context.ts). */
 export const DEFAULT_FONT_FAMILIES = ["sans", "serif", "mono"];
 

@@ -116,7 +116,11 @@ export const ROUNDED_CORNER_NAMES: readonly string[] = Object.freeze(Object.keys
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveRadius(name: string): string | null {
+function resolveRadius(name: string, theme: ResolvedTheme): string | null {
+	// Theme radii come first so a consumer can replace a built-in keyword:
+	// `@rounded { full: 30px; }` means rounded-full, and RI-1124 says so at
+	// definition time. Same order every named scale uses.
+	if (Object.hasOwn(theme.radii, name)) return theme.radii[name];
 	if (name === "none") return "0px";
 	if (name === "full") return "calc(infinity * 1px)";
 	// Numeric: rounded-4 = calc(var(--spacing) * 4)
@@ -192,7 +196,7 @@ export function borderGenerator(
 	_value: string | null,
 	full: string,
 	negative: boolean,
-	_theme: ResolvedTheme,
+	theme: ResolvedTheme,
 	_warnings?: string[],
 	dataType?: string | null,
 ): UtilityResult | null {
@@ -201,8 +205,14 @@ export function borderGenerator(
 	// values the user explicitly marked as a color.
 	if (dataType === "color") return null;
 
-	// Static utilities
-	if (Object.hasOwn(STATIC_BORDER, full)) return STATIC_BORDER[full];
+	// Static utilities. `rounded-none`/`rounded-full` step aside when the theme
+	// names that radius — otherwise the static would win before resolveRadius
+	// ever looked.
+	if (Object.hasOwn(STATIC_BORDER, full)) {
+		if (!(full.startsWith("rounded-") && Object.hasOwn(theme.radii, full.slice(8)))) {
+			return STATIC_BORDER[full];
+		}
+	}
 
 	// corner-[superellipse(2)] — arbitrary corner-shape value
 	if (full.startsWith("corner-")) {
@@ -221,7 +231,7 @@ export function borderGenerator(
 		for (const [suffix, prop] of ROUNDED_CORNER_ENTRIES) {
 			if (rest.startsWith(suffix) && rest.charCodeAt(suffix.length) === 45 /* '-' */) {
 				const size = rest.slice(suffix.length + 1);
-				const r = resolveRadius(size);
+				const r = resolveRadius(size, theme);
 				if (r) return single(prop, r);
 			}
 		}
@@ -230,7 +240,7 @@ export function borderGenerator(
 		for (const [suffix, props] of ROUNDED_SIDE_ENTRIES) {
 			if (rest.startsWith(suffix) && rest.charCodeAt(suffix.length) === 45 /* '-' */) {
 				const size = rest.slice(suffix.length + 1);
-				const r = resolveRadius(size);
+				const r = resolveRadius(size, theme);
 				if (r) return multi(...props.map((p) => [p, r] as [string, string]));
 			}
 		}
@@ -248,7 +258,7 @@ export function borderGenerator(
 		}
 
 		// Full border-radius
-		const r = resolveRadius(rest);
+		const r = resolveRadius(rest, theme);
 		if (r) return single("border-radius", r);
 	}
 

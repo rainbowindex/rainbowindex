@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+const pkgRoot = resolve(import.meta.dirname, "..");
+
 describe("package entrypoints", () => {
 	it("exports, types, style, and bin paths target built dist artifacts", () => {
-		const pkgPath = resolve(process.cwd(), "package.json");
+		const pkgPath = resolve(pkgRoot, "package.json");
 		const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
 			style: string;
 			exports: {
@@ -39,13 +41,13 @@ describe("package entrypoints", () => {
 			"./package.json",
 			"./vite",
 		]);
-		expect(existsSync(resolve(process.cwd(), "dist/index.mjs"))).toBe(true);
-		expect(existsSync(resolve(process.cwd(), "dist/vite.mjs"))).toBe(true);
-		expect(existsSync(resolve(process.cwd(), "dist/editor.mjs"))).toBe(true);
-		expect(existsSync(resolve(process.cwd(), "dist/oxlint.mjs"))).toBe(true);
+		expect(existsSync(resolve(pkgRoot, "dist/index.mjs"))).toBe(true);
+		expect(existsSync(resolve(pkgRoot, "dist/vite.mjs"))).toBe(true);
+		expect(existsSync(resolve(pkgRoot, "dist/editor.mjs"))).toBe(true);
+		expect(existsSync(resolve(pkgRoot, "dist/oxlint.mjs"))).toBe(true);
 
 		expect(pkg.bin.rainbowindex).toBe("dist/cli.mjs");
-		expect(existsSync(resolve(process.cwd(), "dist/cli.mjs"))).toBe(true);
-		expect(existsSync(resolve(process.cwd(), "dist/index.css"))).toBe(true);
+		expect(existsSync(resolve(pkgRoot, "dist/cli.mjs"))).toBe(true);
+		expect(existsSync(resolve(pkgRoot, "dist/index.css"))).toBe(true);
 	});
 });

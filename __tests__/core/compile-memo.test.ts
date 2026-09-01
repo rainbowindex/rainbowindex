@@ -27,7 +27,11 @@ describe("per-class compile memo", () => {
 	const classes = ["p-4", "text-lg", "rounded-4", "shadow-md", "hover:p-2", "notavariant:p-4"];
 
 	it("recompiling with the same theme reuses rules and replays warnings/token usage", () => {
-		const theme = analyzeProjectCSS("").theme;
+		// text-lg and shadow-md must resolve for the token-usage replay to have
+		// anything to assert, and neither scale ships.
+		const theme = analyzeProjectCSS(
+			"@text { lg: 1.25rem, 1.4; }\n@shadow { md: 0 4px 8px oklch(0 0 0 / 0.15); }",
+		).theme;
 		const compiler = createCompiler();
 		const r1 = compiler.compile(classes, theme);
 		const r2 = compiler.compile(classes, theme);

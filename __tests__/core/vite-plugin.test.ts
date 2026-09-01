@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -230,7 +230,27 @@ describe("vite plugin — transform", () => {
 		// 11 nested groups exceeds MAX_VARIANT_GROUP_DEPTH (10).
 		const deep = `hover:{${"focus:{".repeat(11)}px-2${"}".repeat(11)}}`;
 		hooks(plugin).transform(`@import "rainbowindex";\n.x { @apply ${deep}; }\n`, "/a/x.css");
-		expect(f.warn).toHaveBeenCalledWith(expect.stringContaining("[RI-1409]"), expect.anything());
+		expect(f.warn).toHaveBeenCalledWith(
+			expect.stringContaining("[RI-1409] /a/x.css:"),
+			expect.anything(),
+		);
+	});
+
+	// This pass runs before the compile, so it has no analysis to read the
+	// entry's suppressions from — it must read them out of the text in hand.
+	it("honours a `ri-disable` comment in the entry it is transforming", () => {
+		const plugin = rainbowindexVite();
+		const f = fakeServer(dir, []);
+		hooks(plugin).configureServer(f.server);
+		const deep = `hover:{${"focus:{".repeat(11)}px-2${"}".repeat(11)}}`;
+		hooks(plugin).transform(
+			`@import "rainbowindex";\n/* ri-disable RI-1409 */\n.x { @apply ${deep}; }\n`,
+			"/a/x.css",
+		);
+		expect(f.warn).not.toHaveBeenCalledWith(
+			expect.stringContaining("[RI-1409]"),
+			expect.anything(),
+		);
 	});
 
 	it("falls back to console.warn for expansion warnings before a server exists", () => {

@@ -5,14 +5,14 @@
 
 import type { ResolvedTheme } from "../../directives/foundation.js";
 import {
-	type UtilityResult,
-	single,
-	multi,
+	deepFreezeUtilityMap,
 	extractArbitrary,
 	INTEGER_RE,
-	deepFreezeUtilityMap,
+	multi,
+	single,
+	type UtilityResult,
 } from "../helpers.js";
-import { resolveScaledShadowFamily } from "./shadows.js";
+import { resolveShadowFamily } from "./shadows.js";
 
 // ---------------------------------------------------------------------------
 // Composable filter / backdrop-filter via CSS variables
@@ -55,19 +55,6 @@ const FILTER_TABLE: readonly FilterTableEntry[] = [
 	{ prefix: "sepia-", fn: "sepia", bare100: true },
 	{ prefix: "hue-rotate-", fn: "hue-rotate", negative: true },
 ];
-
-// drop-shadow scale — inline, color-parameterized via --ri-drop-shadow-color (so
-// drop-shadow-{color} recolors it) with a light-dark default. Mirrors inset-shadow.
-const DROP_SHADOW_COLOR =
-	"var(--ri-drop-shadow-color, light-dark(oklch(0 0 0 / 0.1), oklch(0 0 0 / 0.4)))";
-const DROP_SHADOWS: Readonly<Record<string, string>> = Object.freeze({
-	xs: `0 1px 1px ${DROP_SHADOW_COLOR}`,
-	sm: `0 1px 2px ${DROP_SHADOW_COLOR}`,
-	md: `0 3px 3px ${DROP_SHADOW_COLOR}`,
-	lg: `0 4px 4px ${DROP_SHADOW_COLOR}`,
-	xl: `0 9px 7px ${DROP_SHADOW_COLOR}`,
-	"2xl": `0 25px 25px ${DROP_SHADOW_COLOR}`,
-});
 
 /**
  * Resolve one filter-table entry against a utility name. Shared by the
@@ -131,7 +118,10 @@ export function resolveBlur(full: string, theme: ResolvedTheme): UtilityResult |
 	const name = full === "blur" ? "DEFAULT" : full.slice(5);
 	// blur-none composes via the slot var; backdrop-blur-none stays the
 	// backdrop-filter:none static in FILTER_STATICS (deliberate asymmetry).
-	if (name === "none") return multi(["--ri-blur", "blur(0)"], ["filter", FILTER_COMPOSED]);
+	// A theme entry named `none` replaces the reset rather than losing to it
+	// — every named scale resolves theme-first, and RI-1124 warns at definition.
+	if (name === "none" && !Object.hasOwn(theme.blur, name))
+		return multi(["--ri-blur", "blur(0)"], ["filter", FILTER_COMPOSED]);
 	return resolveBlurValue(name, theme, "--ri-blur", "filter", FILTER_COMPOSED);
 }
 
@@ -146,9 +136,8 @@ export function resolveFilter(
 		if (r !== undefined) return r;
 	}
 	if (full.startsWith("drop-shadow-")) {
-		return resolveScaledShadowFamily(
+		return resolveShadowFamily(
 			full.slice(12), // "drop-shadow-".length
-			DROP_SHADOWS,
 			"0 0 #0000",
 			"--ri-drop-shadow-color",
 			theme,

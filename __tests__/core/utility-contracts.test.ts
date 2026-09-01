@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
 	createCompilationContext,
-	registerCustomUtility,
 	finalizeCompilationContext,
+	registerCustomUtility,
 } from "../../src/merge/context.js";
 import { createRi } from "../../src/merge/index.js";
 import { BUILTIN_STATIC_KEYS, PREFIX_PROP_KEYS } from "../../src/merge/props.js";
+import { PREFIX_DISPATCH, resolveUtility } from "../../src/utilities/index.js";
 import {
+	MULTI_SEGMENT_PREFIXES,
 	parseUtility,
 	STATIC_UTILITIES,
-	MULTI_SEGMENT_PREFIXES,
 } from "../../src/utilities/parser.js";
-import { resolveDirectives } from "../../src/directives/index.js";
-import { resolveUtility, PREFIX_DISPATCH } from "../../src/utilities/index.js";
+import { scalesTheme } from "../helpers/fixture-scales.js";
+import { typographyTheme } from "../helpers/fixture-typography.js";
 
 describe("STATIC_UTILITIES ↔ BUILTIN_STATIC_PROPS parity", () => {
 	it("every BUILTIN_STATIC_PROPS key is parseable as a known utility", () => {
@@ -79,7 +80,7 @@ describe("createRi() isolation", () => {
 });
 
 describe("PREFIX_DISPATCH covers all resolvable utilities", () => {
-	const theme = resolveDirectives([]);
+	const theme = scalesTheme(typographyTheme());
 	const sampleUtilities: Array<[string, string | null]> = [
 		["p", "4"],
 		["px", "2"],
@@ -114,7 +115,7 @@ describe("PREFIX_DISPATCH covers all resolvable utilities", () => {
 		["rounded", "4"],
 		["outline", null],
 		["divide-y", null],
-		["shadow", "lg"],
+		["shadow", "none"],
 		["opacity", "50"],
 		["blur", "md"],
 		["duration", "300"],

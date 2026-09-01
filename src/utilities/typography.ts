@@ -4,7 +4,13 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import { fluidBoundExprs, fluidInterpolation, parseRemValue } from "../css/fluid.js";
+import { fluidBoundExprs, fluidInterpolation, fluidRange, parseRemValue } from "../css/fluid.js";
+import {
+	type FontSlot,
+	describeLoadedWeights,
+	describeSlotWeights,
+	weightIsLoaded,
+} from "../integrations/font-providers/model.js";
 import { isFontFamilyValue } from "../merge/props.js";
 import { devWarn } from "../runtime.js";
 import { isBracketedColor } from "./color.js";
@@ -17,7 +23,7 @@ import {
 	deepFreezeUtilityMap,
 	INTEGER_RE,
 } from "./helpers.js";
-import { decodeArbitraryValue, sanitizeArbitraryValue } from "./parser.js";
+import { decodeArbitraryValue, parseUtility, sanitizeArbitraryValue } from "./parser.js";
 
 // ---------------------------------------------------------------------------
 // Static utilities
@@ -224,10 +230,13 @@ function buildSortedTextScale(theme: ResolvedTheme): Array<{ name: string; rem: 
 
 function generateFluidText(
 	size: string,
+	endSize: string | null,
+	lhModifier: string | null,
 	theme: ResolvedTheme,
 	warnings?: string[],
 ): UtilityResult | null {
 	if (!Object.hasOwn(theme.text, size)) return null;
+	if (endSize !== null && !Object.hasOwn(theme.text, endSize)) return null;
 
 	// RI-15xx are documented compile warnings — routed to the caller's sink
 	// when one exists (so builds surface them), dev console otherwise.
@@ -236,51 +245,62 @@ function generateFluidText(
 		else devWarn(message);
 	};
 
-	const maxRaw = parseRemValue(theme.text[size].fontSize);
-	if (maxRaw === null) {
-		warn(
-			`[RI-1501] text-fluid-${size} requires a rem-based font size, but "${theme.text[size].fontSize}" is not in rem.`,
-		);
-		return null;
+	const label = endSize === null ? `text-fluid-${size}` : `text-fluid-${size}/${endSize}`;
+
+	// A modifier that resolves to nothing makes the whole class invalid.
+	const lh = lhModifier !== null ? resolveLineHeightModifier(lhModifier, theme) : null;
+	if (lhModifier !== null && lh === null) return null;
+
+	// RI-1501 on every *stated* size; a derived step comes from the rem-only
+	// sorted scale and cannot fail this check.
+	for (const stated of endSize === null ? [size] : [size, endSize]) {
+		if (parseRemValue(theme.text[stated].fontSize) === null) {
+			warn(
+				`[RI-1501] ${label} requires a rem-based font size, but "${theme.text[stated].fontSize}" is not in rem.`,
+			);
+			return null;
+		}
 	}
 
-	const scale = buildSortedTextScale(theme);
-	const idx = scale.findIndex((entry) => entry.name === size);
-	if (idx === -1) return null;
-
-	let minSize: string | null = null;
-	if (isDisplayScaleName(size)) {
-		const minIdx = idx - 2;
-		minSize = minIdx >= 0 ? scale[minIdx].name : null;
+	// An explicit pair states both ends of the ramp; a single size keeps the
+	// derived lower step — one below, or two below for display sizes.
+	let startName: string;
+	if (endSize !== null) {
+		startName = size;
 	} else {
-		const minIdx = idx - 1;
-		minSize = minIdx >= 0 ? scale[minIdx].name : null;
+		const scale = buildSortedTextScale(theme);
+		const idx = scale.findIndex((entry) => entry.name === size);
+		if (idx === -1) return null;
+		const minIdx = idx - (isDisplayScaleName(size) ? 2 : 1);
+		if (minIdx < 0) {
+			warn(
+				`[RI-1502] text-fluid-${size} has no smaller size to interpolate from — fluid typography requires at least one step below.`,
+			);
+			return null;
+		}
+		startName = scale[minIdx].name;
 	}
+	const endName = endSize ?? size;
 
-	if (!minSize || !Object.hasOwn(theme.text, minSize)) {
-		warn(
-			`[RI-1502] text-fluid-${size} has no smaller size to interpolate from — fluid typography requires at least one step below.`,
-		);
-		return null;
-	}
+	const startRaw = parseRemValue(theme.text[startName].fontSize);
+	const endRaw = parseRemValue(theme.text[endName].fontSize);
+	if (startRaw === null || endRaw === null) return null;
 
-	const minRaw = parseRemValue(theme.text[minSize].fontSize);
-	if (minRaw === null) return null;
+	const bounds = fluidRange(theme, "text");
+	if (bounds === null || bounds.max - bounds.min <= 0) return null;
 
-	const fluidMinRaw = parseRemValue(theme.textFluid?.min ?? theme.fluid.min);
-	const fluidMaxRaw = parseRemValue(theme.textFluid?.max ?? theme.fluid.max);
-	if (fluidMinRaw === null || fluidMaxRaw === null) return null;
-
-	const range = fluidMaxRaw - fluidMinRaw;
-	if (range <= 0) return null;
-
-	const diff = Math.round((maxRaw - minRaw) * 1000) / 1000;
+	// Descending pairs are legal: clamp() bounds are ordered by rem while the
+	// ramp keeps its signed slope, so the output stays bounded either way.
+	const diff = Math.round((endRaw - startRaw) * 1000) / 1000;
+	const lowerName = startRaw <= endRaw ? startName : endName;
+	const upperName = startRaw <= endRaw ? endName : startName;
 
 	const unit = theme.textFluid?.unit ?? theme.fluid.unit ?? "vi";
 	const { min: minExpr, range: rangeExpr } = fluidBoundExprs("text");
-	const fontSize = `clamp(var(--text-${minSize}), ${fluidInterpolation(minRaw, diff, unit, minExpr, rangeExpr)}, var(--text-${size}))`;
+	const fontSize = `clamp(var(--text-${lowerName}), ${fluidInterpolation(startRaw, diff, unit, minExpr, rangeExpr)}, var(--text-${upperName}))`;
 
-	return multi(["font-size", fontSize], ["line-height", `var(--text-${size}-leading)`]);
+	// The last size named wins the line-height, unless a modifier overrides it.
+	return multi(["font-size", fontSize], ["line-height", lh ?? `var(--text-${endName}-leading)`]);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,10 +319,26 @@ export function typographyGenerator(
 	// Static utilities
 	if (Object.hasOwn(STATIC_TEXT, full)) return STATIC_TEXT[full];
 
-	// text-fluid-{size}: fluid font-size + line-height
+	// text-fluid-{size}[/{size}][/{line-height}]: fluid font-size. One size
+	// ramps from the derived step below; a second theme size makes an explicit
+	// endpoint pair. A trailing segment that is not a theme size is the
+	// line-height modifier, like text-lg/7.
 	if (full.startsWith("text-fluid-")) {
-		const sizeName = full.slice(11);
-		return generateFluidText(sizeName, theme, warnings);
+		const { base: startSize, modifier: rest } = splitLineHeightModifier(full.slice(11));
+		let endSize: string | null = null;
+		let lhModifier: string | null = null;
+		if (rest !== null) {
+			const { base: restBase, modifier: restMod } = splitLineHeightModifier(rest);
+			if (Object.hasOwn(theme.text, restBase)) {
+				endSize = restBase;
+				lhModifier = restMod;
+			} else if (restMod === null) {
+				lhModifier = restBase;
+			} else {
+				return null;
+			}
+		}
+		return generateFluidText(startSize, endSize, lhModifier, theme, warnings);
 	}
 
 	// text-{size}[/{line-height}]: font-size + line-height from theme, with an
@@ -338,6 +374,18 @@ export function typographyGenerator(
 		const name = full.slice(5);
 		if (Object.hasOwn(theme.weights, name)) {
 			return single("font-weight", String(theme.weights[name]));
+		}
+		// font-{number}: a raw numeric weight. CSS accepts 1-1000; anything
+		// outside that is not a weight at all, so it stays an unknown class.
+		if (INTEGER_RE.test(name)) {
+			const value = Number(name);
+			if (value < 1 || value > 1000) return null;
+			if (!weightIsLoaded(value, theme.fonts)) {
+				const message = `[RI-1504] ${full} — no loaded font provides weight ${value}. Available: ${describeLoadedWeights(theme.fonts)}. Use one of those, or add the weight to the @font block.`;
+				if (warnings) warnings.push(message);
+				else devWarn(message);
+			}
+			return single("font-weight", name);
 		}
 		// font-{family} from loaded fonts — also applies the slot's feature/variation
 		// settings when defined, so the @font directive is the single source of truth.
@@ -498,4 +546,69 @@ export function typographyGenerator(
 	}
 
 	return null;
+}
+
+// ---------------------------------------------------------------------------
+// Per-family weight check
+// ---------------------------------------------------------------------------
+
+/**
+ * Check the `font-<number>` classes in one applied class list against the
+ * family the same list names.
+ *
+ * A standalone `font-<number>` carries no family, so the generator can only
+ * ask whether ANY loaded font provides the weight. A class list is different:
+ * `@a font-mono font-550` states both halves, so the named family alone
+ * decides. Classes pair only within a variant group, since `md:font-mono`
+ * does not set the family for a plain `font-550`; an unpaired weight keeps the
+ * generator's union verdict.
+ *
+ * This check and the generator's union check are disjoint, so neither has to
+ * silence the other: a weight no font provides is reported once by the union
+ * check, and this one speaks only for the weights some other font does have.
+ */
+export function checkAppliedFontWeights(
+	classes: readonly string[],
+	theme: ResolvedTheme,
+	warnings: string[],
+): void {
+	const familyByGroup = new Map<string, FontSlot>();
+	const weightsByGroup = new Map<string, Array<{ raw: string; value: number }>>();
+
+	for (const raw of classes) {
+		const parsed = parseUtility(raw);
+		if (parsed.utility !== "font" || parsed.value === null) continue;
+		const group = parsed.variants.join(":");
+
+		if (INTEGER_RE.test(parsed.value)) {
+			const value = Number(parsed.value);
+			if (value < 1 || value > 1000) continue;
+			let list = weightsByGroup.get(group);
+			if (!list) {
+				list = [];
+				weightsByGroup.set(group, list);
+			}
+			list.push({ raw, value });
+			continue;
+		}
+		// A named @weight token is a weight, not a family.
+		if (Object.hasOwn(theme.weights, parsed.value)) continue;
+		// Last family wins within a group — the order the cascade resolves.
+		const slot = theme.fonts.find((f) => f.slot === parsed.value);
+		if (slot) familyByGroup.set(group, slot);
+	}
+
+	for (const [group, list] of weightsByGroup) {
+		const slot = familyByGroup.get(group);
+		if (!slot) continue;
+		for (const { raw, value } of list) {
+			if (weightIsLoaded(value, [slot])) continue;
+			// No font at all provides it — the union warning already says so, and
+			// says it better. Speak only for the weight this family alone lacks.
+			if (!weightIsLoaded(value, theme.fonts)) continue;
+			warnings.push(
+				`[RI-1504] ${raw} — ${slot.family} does not provide weight ${value}. It has ${describeSlotWeights(slot)}. Use one of those, or name a font that does.`,
+			);
+		}
+	}
 }

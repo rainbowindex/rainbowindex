@@ -1,12 +1,12 @@
 /**
  * Shadow-family utilities — shadow, inset-shadow, ring, inset-ring,
- * text-shadow — plus the shared scaled-shadow template the drop-shadow
- * filter also composes.
+ * text-shadow — plus the shared family template the drop-shadow filter
+ * also composes.
  */
 
 import type { ResolvedTheme } from "../../directives/foundation.js";
-import { type UtilityResult, single, multi, extractArbitrary, INTEGER_RE } from "../helpers.js";
-import { resolveColor, isBracketedColor } from "../color.js";
+import { isBracketedColor, resolveColor } from "../color.js";
+import { extractArbitrary, INTEGER_RE, multi, single, type UtilityResult } from "../helpers.js";
 
 // ---------------------------------------------------------------------------
 // Composable box-shadow (shadow · inset-shadow · ring · inset-ring)
@@ -24,22 +24,6 @@ const SHADOW_COMPOSITION =
 function composedShadow(slot: string, value: string): UtilityResult {
 	return multi([slot, value], ["box-shadow", SHADOW_COMPOSITION]);
 }
-
-// inset-shadow scale — self-contained values that bake in --ri-inset-shadow-color
-// (so inset-shadow-{color} recolors them) with a light-dark default. Unlike the
-// bespoke `shadow-*` depth scale, this new scale is color-parameterized.
-const INSET_SHADOW_COLOR =
-	"var(--ri-inset-shadow-color, light-dark(oklch(0 0 0 / 0.05), oklch(0 0 0 / 0.2)))";
-const INSET_SHADOWS: Readonly<Record<string, string>> = Object.freeze({
-	px: `inset 0 0 0 1px ${INSET_SHADOW_COLOR}`,
-	"2xs": `inset 0 1px ${INSET_SHADOW_COLOR}`,
-	xs: `inset 0 1px 1px ${INSET_SHADOW_COLOR}`,
-	sm: `inset 0 2px 4px ${INSET_SHADOW_COLOR}`,
-	md: `inset 0 4px 6px ${INSET_SHADOW_COLOR}`,
-	lg: `inset 0 8px 10px ${INSET_SHADOW_COLOR}`,
-	xl: `inset 0 12px 16px ${INSET_SHADOW_COLOR}`,
-	"2xl": `inset 0 16px 24px ${INSET_SHADOW_COLOR}`,
-});
 
 // Shared color-or-arbitrary tail for the shadow / ring / text-shadow / drop-shadow
 // families: a bracketed/themed color sets `colorVar`; a non-color arbitrary or
@@ -69,13 +53,11 @@ function resolveColorOrArbitrary(
 	return null;
 }
 
-// Shared template for the color-parameterized shadow scales (inset-shadow,
-// text-shadow, drop-shadow): `none` and scale names go through the same
-// family-specific `wrap` as a color/arbitrary tail, so the three families
-// can't drift in how they treat the scale.
-export function resolveScaledShadowFamily(
+// Shared template for the scale-less shadow families (inset-shadow,
+// text-shadow, drop-shadow): each accepts `none`, a color, or an arbitrary
+// value, and routes all three through the same family-specific `wrap`.
+export function resolveShadowFamily(
 	name: string,
-	scale: Readonly<Record<string, string>>,
 	noneValue: string,
 	colorVar: string,
 	theme: ResolvedTheme,
@@ -83,7 +65,6 @@ export function resolveScaledShadowFamily(
 	wrap: (value: string) => UtilityResult,
 ): UtilityResult | null {
 	if (name === "none") return wrap(noneValue);
-	if (Object.hasOwn(scale, name)) return wrap(scale[name]);
 	return resolveColorOrArbitrary(name, colorVar, theme, dataType, wrap);
 }
 
@@ -100,9 +81,11 @@ export function resolveShadow(
 					? "md"
 					: ""
 			: full.slice(7);
-	if (name === "none") return composedShadow("--ri-shadow", "0 0 #0000");
+	// Theme first: `@shadow { none: … }` replaces the built-in reset instead of
+	// being silently dropped. RI-1124 warns at definition time.
 	if (Object.hasOwn(theme.shadows, name))
 		return composedShadow("--ri-shadow", `var(--shadow-${name})`);
+	if (name === "none") return composedShadow("--ri-shadow", "0 0 #0000");
 	// A color value sets the family's color var; a non-color arbitrary or
 	// custom property sets the composed shadow slot.
 	return resolveColorOrArbitrary(name, "--ri-shadow-color", theme, dataType, (arb) =>
@@ -115,9 +98,8 @@ function resolveInsetShadow(
 	theme: ResolvedTheme,
 	dataType?: string | null,
 ): UtilityResult | null {
-	return resolveScaledShadowFamily(
+	return resolveShadowFamily(
 		full.slice(13), // "inset-shadow-".length
-		INSET_SHADOWS,
 		"inset 0 0 #0000",
 		"--ri-inset-shadow-color",
 		theme,
@@ -188,26 +170,13 @@ export function resolveInset(
 
 // text-shadow — independent of box-shadow; color uses its own
 // --ri-text-shadow-color so it never collides with shadow-{color} in the merger.
-// Scale values bake in that var (with a light-dark default) so text-shadow-{color}
-// recolors them.
-const TEXT_SHADOW_COLOR =
-	"var(--ri-text-shadow-color, light-dark(oklch(0 0 0 / 0.12), oklch(0 0 0 / 0.45)))";
-const TEXT_SHADOWS: Readonly<Record<string, string>> = Object.freeze({
-	"2xs": `0 1px 1px ${TEXT_SHADOW_COLOR}`,
-	xs: `0 1px 2px ${TEXT_SHADOW_COLOR}`,
-	sm: `0 1px 3px ${TEXT_SHADOW_COLOR}, 0 1px 2px ${TEXT_SHADOW_COLOR}`,
-	md: `0 1px 2px ${TEXT_SHADOW_COLOR}, 0 2px 4px ${TEXT_SHADOW_COLOR}`,
-	lg: `0 2px 4px ${TEXT_SHADOW_COLOR}, 0 4px 8px ${TEXT_SHADOW_COLOR}`,
-});
-
 export function resolveTextShadow(
 	full: string,
 	theme: ResolvedTheme,
 	dataType?: string | null,
 ): UtilityResult | null {
-	return resolveScaledShadowFamily(
+	return resolveShadowFamily(
 		full.slice(12), // "text-shadow-".length
-		TEXT_SHADOWS,
 		"none",
 		"--ri-text-shadow-color",
 		theme,

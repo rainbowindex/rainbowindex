@@ -99,7 +99,7 @@ Scan results cache per file, keyed on path plus modification time plus size. Wat
 | Source file size | 1 MB | File skipped, `[RI-1405]`. |
 | Inline `@source` content | 100 KB | Directive skipped, `[RI-1406]`. |
 | Line length in the token scan | 10,000 characters | Line dropped, `[RI-1411]`. Quoted class attributes and helper calls on the line still work. |
-| Variant-group expansion | 500,000 in, 100,000 out, depth 10 | `[RI-1407]`, `[RI-1408]`, `[RI-1409]`. |
+| Variant-group expansion | 500,000 in, 100,000 added, depth 10 | `[RI-1407]`, `[RI-1408]`, `[RI-1409]`. Each names the file it came from. |
 | Glob resolution | 30 seconds | `[RI-1402]`. |
 | File read | 10 seconds | `[RI-1403]`. |
 

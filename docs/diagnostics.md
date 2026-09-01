@@ -10,6 +10,7 @@ How diagnostics behave:
 - The `ri()` runtime warnings throttle to one per kind per 60 seconds.
 - Dev-only messages (`RI-1301`, `RI-1302`, the console half of `RI-2003`) are silent when `NODE_ENV=production`.
 - `[RI-DEBUG]` and `[RI-DEV]` messages have no number and never count against the cap. `RI_DEBUG=1` turns the first group on.
+- Scanner codes that point at one file name it directly after the code: `RI-1407`, `RI-1408`, `RI-1409`, `RI-1411`. Deduplication is on the full text, so you get one warning per file, not one per project.
 
 Where warnings surface:
 
@@ -36,6 +37,52 @@ Where warnings surface:
 | 20xx | CSS functions, `ri()` runtime, and `compile()` validation. |
 
 There is no 21xx range.
+
+## Disabling a diagnostic
+
+Two CSS comments silence a code. Both are ordinary comments, so the stylesheet stays valid CSS for every other tool.
+
+### Whole file
+
+```css
+/* ri-disable RI-1124 */
+```
+
+Anywhere in the CSS entry. It silences that code everywhere, whatever raised it. This is the only form that reaches the scanner and compile codes (14xx, 15xx), because those carry no position in your CSS.
+
+One comment may name several codes:
+
+```css
+/* ri-disable RI-1124, RI-1122 */
+```
+
+### Next line
+
+```css
+@rounded {
+	roof: 24px;
+	/* ri-disable-next-line RI-1124 */
+	full: 30px;
+	hut: 8px;
+}
+```
+
+Only `full` is silenced. `roof` and `hut` stay checked. This is the point of the form: a warning like `RI-1124` earns its keep by catching the change you did **not** mean to make, so silencing the whole code would throw away the value.
+
+Inside a scale body the comment guards the **entry** that follows. Outside a body it guards the **directive** that follows:
+
+```css
+/* ri-disable-next-line RI-1124 */
+@rounded { full: 30px; }
+
+@shadow { none: 0 0 1px red; }   /* still warns */
+```
+
+Entry precision is available where the emitter knows the entry — `RI-1035`, `RI-1121`, `RI-1122`, and `RI-1124`. Every other code falls back to the directive.
+
+### What cannot be silenced
+
+`RI-00xx` and `RI-20xx`. They report a broken build or a broken call, not a style choice, and a stylesheet that could hide them would hide the reason the build failed. Naming one warns with `RI-1040` and changes nothing.
 
 ## 00xx — Plugin bootstrap (thrown)
 
@@ -68,9 +115,9 @@ There is no 21xx range.
 | `RI-1022` | An invalid `@fluid` `min`. | Use a rem length. |
 | `RI-1023` | An invalid `@fluid` `max`. | Use a rem length. |
 | `RI-1024` | `@fluid` `max` is not above `min`. | Make `max` larger. |
-| `RI-1025` | An invalid `@fluid` unit. | Use `vw`, `vi`, `vmin`, or `vmax`. |
-| `RI-1026` | A `multiplier` on `@fluid text`, or a value of 1 or less. | Use it only on spacing, with a number above 1. |
-| `RI-1027` | An unknown `@fluid` modifier. | Use `text` or `spacing`. |
+| `RI-1025` | An invalid `@fluid` unit. | Use `vw`, `vi`, `vmin`, `vmax`, `cqw`, `cqi`, `cqmin`, or `cqmax`. |
+| `RI-1026` | A `multiplier` on `@fluid text` or on a named range, or a value of 1 or less. | Use it only on spacing, with a number above 1. |
+| `RI-1027` | An invalid `@fluid` range name. | Use letters, digits, hyphens, and underscores. |
 | `RI-1028` | An `@register` name without `--`. | Add the `--` prefix. |
 | `RI-1029` | A typed `@register` entry without `initial-value`. Browsers ignore it, so it was dropped. | Add `initial-value` or use `syntax: "*"`. |
 | `RI-1030` | An `@register` name declared twice. The last wins. | Remove the earlier one. |
@@ -81,6 +128,8 @@ There is no 21xx range.
 | `RI-1036` | A directive nested inside `@media` or a similar at-rule. It applies globally. | Move it to the top level. |
 | `RI-1037` | `@slot` outside a `@custom` block. | Move it inside `@custom`, or write `[data-slot="name"] { ... }`. |
 | `RI-1038` | An uppercase `@utility` name. Markup never triggers it. | Use a lowercase name. |
+| `RI-1039` | A `unit` on a named `@fluid` range. | Set the unit on `@fluid`, `@fluid text`, or `@fluid spacing`. |
+| `RI-1040` | A `ri-disable` comment you cannot read, or one naming a code that cannot be silenced. | Name one or more codes, such as `RI-1124`. See [Disabling a diagnostic](#disabling-a-diagnostic). |
 
 ## 11xx — Colors and resolver catch-alls
 
@@ -97,7 +146,10 @@ There is no 21xx range.
 | `RI-1110` | An internal resolver bug. | Report it upstream. |
 | `RI-1120` | An unknown `@layer` option. | Use `order`, `utilities`, or `base`. |
 | `RI-1121` | An invalid `--corner-scale`. | Use a positive number. |
-| `RI-1122` | An unknown key in the `@rounded` body. | Use `--corner-scale`. Radii are numeric: `rounded-{n}` is `n * --spacing`. |
+| `RI-1122` | An unknown `--` key in the `@rounded` body. | Use `--corner-scale`. A key without `--` names a radius. |
+| `RI-1123` | A `@shadow` alias points to an undefined shadow token. | Define the target token, or write the value out. |
+| `RI-1124` | A named scale entry clashes with a built-in class of the same name, such as `@rounded { full: 30px; }` over `rounded-full`. The message says which side wins: your value replaces the built-in, unless the built-in belongs to another utility family (`blur-in`), in which case your value never applies. | Rename the entry if the clash was not intended. |
+| `RI-1125` | A circular `@shadow` alias chain. The `var()` references point at each other, so the shadow resolves to nothing. | Break the cycle. |
 
 ## 12xx — Fonts
 
@@ -142,7 +194,7 @@ There is no 21xx range.
 | `RI-1405` | A source file above 1 MB. Skipped. | Exclude it or split it. |
 | `RI-1406` | Inline `@source` content above 100 KB. Skipped. | Shrink it. |
 | `RI-1407` | Variant-group input above 500,000 characters. | Split the input. |
-| `RI-1408` | Variant-group output above 100,000 characters. | Use fewer or smaller groups. |
+| `RI-1408` | Variant-group expansion exceeds the 100,000 character growth limit. Plain text does not count. | Use fewer or smaller groups. |
 | `RI-1409` | Variant-group brace depth above 10. | Chain prefixes instead of braces. |
 | `RI-1410` | A dependency's `safelistSources` field is invalid. | Fix that dependency's `package.json`. |
 | `RI-1411` | Lines above 10,000 characters were skipped. | Exclude minified files or split the lines. |
@@ -154,6 +206,8 @@ There is no 21xx range.
 | --- | --- | --- |
 | `RI-1501` | `text-fluid-*` on a font size that is not in rem. | Express the size in rem. |
 | `RI-1502` | `text-fluid-*` on the smallest size. There is no step below. | Add a smaller step, or do not use fluid there. |
+| `RI-1503` | `fluid-<name>` with no `@fluid` range of that name. | Define the range, or fix the name. |
+| `RI-1504` | `font-<number>` names a weight no loaded `@font` face provides — or, next to a `font-<slot>` in one `@apply` list, one that family lacks. | Use a weight the font has, add it to the `@font` block, or name a font that has it. |
 
 ## 16xx — Integrations
 

@@ -7,6 +7,7 @@
  */
 
 import type { PropertyRegistration, ResolvedTheme } from "./directives/foundation.js";
+import type { FluidConfig } from "./theme/index.js";
 import {
 	checkPaletteContrast,
 	generateAllColorVariables,
@@ -44,16 +45,18 @@ export function generateTokenLayer(
 	const vars: string[] = [];
 	vars.push(`--spacing: ${theme.spacing.base};`);
 
-	// Fluid scaling bounds
-	vars.push(`--fluid-min: ${theme.fluid.min};`);
-	vars.push(`--fluid-max: ${theme.fluid.max};`);
-	if (theme.textFluid) {
-		vars.push(`--fluid-text-min: ${theme.textFluid.min};`);
-		vars.push(`--fluid-text-max: ${theme.textFluid.max};`);
-	}
-	if (theme.spacingFluid) {
-		vars.push(`--fluid-spacing-min: ${theme.spacingFluid.min};`);
-		vars.push(`--fluid-spacing-max: ${theme.spacingFluid.max};`);
+	// Fluid scaling bounds — only what @fluid declares. No range ships, and a
+	// fluid utility does not resolve without one, so an absent bound has
+	// nothing left to reference it.
+	const pushBounds = (prefix: string, config?: Readonly<FluidConfig>): void => {
+		if (config?.min !== undefined) vars.push(`${prefix}-min: ${config.min};`);
+		if (config?.max !== undefined) vars.push(`${prefix}-max: ${config.max};`);
+	};
+	pushBounds("--fluid", theme.fluid);
+	pushBounds("--fluid-text", theme.textFluid);
+	pushBounds("--fluid-spacing", theme.spacingFluid);
+	for (const [name, range] of Object.entries(theme.fluidRanges)) {
+		pushBounds(`--fluid-${name}`, range);
 	}
 
 	// Color variables (only used hue+suffix pairs)
@@ -142,16 +145,27 @@ export function generateTokenLayer(
 		}
 	}
 
-	// Shadow tokens — walk the var(--shadow-*) graph so that a class-facing
-	// shadow (e.g. `shadow-md`) transitively pulls in every building-block
-	// token it composes (`--shadow-layer-1`, `--shadow-ring`, `--shadow-drop`,
-	// etc.). Without this, layered shadows would render with undefined vars.
+	// Shadow tokens — walk the var(--shadow-*) graph so that a used token
+	// transitively pulls in every token it references (`@shadow alias: shadow-md`
+	// emits `--shadow-md` too). Without this, a referencing token would render
+	// with an undefined var.
 	const shadowsToEmit = resolveTransitiveShadowDeps(theme.shadows, usage.usedShadows);
 	for (const [name, val] of Object.entries(theme.shadows).sort(([a], [b]) =>
 		codepointCompare(a, b),
 	)) {
 		if (!shadowsToEmit.has(name)) continue;
 		vars.push(`--shadow-${name}: ${val};`);
+	}
+
+	// Radius tokens. Emitted whole, not usage-gated like the scales above: a
+	// `@rounded { roof-minus-* { … } }` body reads `var(--rounded-roof)` as raw
+	// CSS that no usage pass can see, and consumers declare a handful of radii.
+	// ponytail: emit-all; gate on usage if a project ever declares enough radii
+	// for the dead tokens to matter.
+	for (const [name, val] of Object.entries(theme.radii).sort(([a], [b]) =>
+		codepointCompare(a, b),
+	)) {
+		vars.push(`--rounded-${name}: ${val};`);
 	}
 
 	// Animation shorthand tokens (only used animations, sorted by key for deterministic output)

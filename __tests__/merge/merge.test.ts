@@ -1,17 +1,27 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
 	createCompilationContext,
-	registerCustomUtility,
 	finalizeCompilationContext,
+	registerCustomTextSizes,
+	registerCustomUtility,
 } from "../../src/merge/context.js";
 import { ri } from "../../src/merge/index.js";
 import { BUILTIN_STATIC_KEYS } from "../../src/merge/props.js";
-import { assertPrefixPropParity, assertStaticUtilityParity } from "../helpers/merge-parity.js";
 import {
-	STATIC_UTILITIES,
 	MULTI_SEGMENT_PREFIXES,
 	PARSER_ONLY_STATICS,
+	STATIC_UTILITIES,
 } from "../../src/utilities/parser.js";
+import { assertPrefixPropParity, assertStaticUtilityParity } from "../helpers/merge-parity.js";
+
+// No type scale ships, so ri() learns text size names when a theme compiles.
+// Register the ones the dual-mode checks use, as a project's @text would.
+// The describes that manage their own context overwrite this and reset after.
+beforeEach(() => {
+	const ctx = createCompilationContext();
+	registerCustomTextSizes(ctx, ["xs", "sm", "base", "lg", "xl"]);
+	finalizeCompilationContext(ctx);
+});
 
 // ---------------------------------------------------------------------------
 // Edge cases from REFACTOR.md spec
@@ -271,6 +281,16 @@ describe("ri() spacing conflicts", () => {
 		expect(ri("gap-x-2 gap-y-4")).toBe("gap-x-2 gap-y-4");
 	});
 
+	test("fluid pair conflicts with plain spacing — rightmost wins", () => {
+		expect(ri("p-fluid-4/8", "p-4")).toBe("p-4");
+		expect(ri("p-4", "p-fluid-4/8")).toBe("p-fluid-4/8");
+	});
+
+	test("fluid scope classes conflict with each other — rightmost wins", () => {
+		expect(ri("fluid-compact", "fluid-wide")).toBe("fluid-wide");
+		expect(ri("fluid-compact", "p-4")).toBe("fluid-compact p-4");
+	});
+
 	test("width conflict", () => {
 		expect(ri("w-full", "w-1/2")).toBe("w-1/2");
 	});
@@ -375,6 +395,15 @@ describe("ri() text dual-mode", () => {
 describe("ri() font dual-mode", () => {
 	test("font-bold and font-sans don't conflict", () => {
 		expect(ri("font-bold font-sans")).toBe("font-bold font-sans");
+	});
+
+	test("font-bold and font-350 conflict (both weights)", () => {
+		expect(ri("font-bold font-350")).toBe("font-350");
+		expect(ri("font-350 font-bold")).toBe("font-bold");
+	});
+
+	test("font-350 and font-sans don't conflict", () => {
+		expect(ri("font-350 font-sans")).toBe("font-350 font-sans");
 	});
 
 	test("font-bold and font-semibold conflict (both weights)", () => {

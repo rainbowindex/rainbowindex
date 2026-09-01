@@ -4,6 +4,7 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
+import { topLevelIndexOf } from "../directives/foundation.js";
 // Direction maps (logical by default) — shared with the merge's claim tables
 // (merge/props.ts) so the properties this generator emits and the properties
 // ri() claims for conflict resolution can never drift apart.
@@ -15,7 +16,8 @@ import {
 	SCROLL_MARGIN_MAP,
 	SCROLL_PADDING_MAP,
 } from "../merge/props.js";
-import { fluidBoundExprs, fluidInterpolation, parseRemValue } from "../css/fluid.js";
+import { fluidBoundExprs, fluidInterpolation, fluidRange } from "../css/fluid.js";
+import { devWarn } from "../runtime.js";
 import { type UtilityResult, single, multi, spacingLookup, extractArbitrary } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -87,11 +89,10 @@ function fluidSpacingClamp(val: string, theme: ResolvedTheme): string | null {
 	const maxRem = Math.round(n * multiplier * base * 1000) / 1000;
 	const diff = Math.round((maxRem - minRem) * 1000) / 1000;
 
-	const fluidMinRaw = parseRemValue(theme.spacingFluid?.min ?? theme.fluid.min);
-	const fluidMaxRaw = parseRemValue(theme.spacingFluid?.max ?? theme.fluid.max);
-	if (fluidMinRaw === null || fluidMaxRaw === null) return null;
+	const bounds = fluidRange(theme, "spacing");
+	if (bounds === null) return null;
 
-	const range = fluidMaxRaw - fluidMinRaw;
+	const range = bounds.max - bounds.min;
 	// Reject zero/negative range and degenerate near-zero ranges that would
 	// produce wildly oversized clamp scale factors (e.g. range=0.001 → 1000x).
 	// Build-time guard only: a runtime override of the bound vars can still make
@@ -114,6 +115,7 @@ function fluidSpacingClamp(val: string, theme: ResolvedTheme): string | null {
  * never invalid CSS, so it cannot be validated away at build time.
  */
 function fluidSpacingClampExpr(base: string, theme: ResolvedTheme): string | null {
+	if (fluidRange(theme, "spacing") === null) return null;
 	const multiplier = theme.spacingFluid?.multiplier ?? theme.fluid.multiplier ?? 2;
 	if (multiplier <= 1) return null;
 
@@ -125,6 +127,76 @@ function fluidSpacingClampExpr(base: string, theme: ResolvedTheme): string | nul
 	return `clamp(${base}, ${interp}, ${max})`;
 }
 
+/** Resolve one pair endpoint: a spacing step to a rem count, or an arbitrary
+ *  `[…]` / `(--var)` value to a CSS expression. Zero is a legal endpoint. */
+function fluidEndpoint(raw: string, base: number): { rem: number } | { expr: string } | null {
+	const arb = extractArbitrary(raw);
+	if (arb !== null) return { expr: arb };
+	if (raw.startsWith("(") && raw.endsWith(")")) {
+		const inner = raw.slice(1, -1);
+		return /^--[a-zA-Z_][\w-]*$/.test(inner) ? { expr: `var(${inner})` } : null;
+	}
+	if (raw.length === 0) return null;
+	const n = Number(raw.replaceAll("_", "."));
+	if (Number.isNaN(n) || n < 0) return null;
+	return { rem: Math.round(n * base * 1000) / 1000 };
+}
+
+/**
+ * Fluid clamp() between two explicit endpoints — `p-fluid-4/8`. Two steps bake
+ * to rem literals; an arbitrary/var endpoint switches the whole expression to
+ * CSS arithmetic. Descending pairs are legal (the value shrinks as the
+ * viewport grows): the clamp() bounds are ordered while the ramp keeps its
+ * signed slope, so the output stays bounded either way.
+ */
+function fluidPairClamp(rawA: string, rawB: string, theme: ResolvedTheme): string | null {
+	const base = Number.parseFloat(theme.spacing.base);
+	if (Number.isNaN(base) || base <= 0) return null;
+	const a = fluidEndpoint(rawA, base);
+	const b = fluidEndpoint(rawB, base);
+	if (a === null || b === null) return null;
+	const bounds = fluidRange(theme, "spacing");
+	if (bounds === null) return null;
+
+	const unit = theme.spacingFluid?.unit ?? theme.fluid.unit ?? "vw";
+	const { min: minExpr, range: rangeExpr } = fluidBoundExprs("spacing");
+
+	if ("rem" in a && "rem" in b) {
+		// Same degenerate-range guard as the multiplier path above.
+		if (bounds.max - bounds.min < 1) return null;
+		const diff = Math.round((b.rem - a.rem) * 1000) / 1000;
+		const lower = Math.min(a.rem, b.rem);
+		const upper = Math.max(a.rem, b.rem);
+		return `clamp(${lower}rem, ${fluidInterpolation(a.rem, diff, unit, minExpr, rangeExpr)}, ${upper}rem)`;
+	}
+
+	const exprA = "rem" in a ? `${a.rem}rem` : a.expr;
+	const exprB = "rem" in b ? `${b.rem}rem` : b.expr;
+	const interp = `calc(${exprA} + (${exprB} - ${exprA}) * ((100${unit} - ${minExpr}) / ${rangeExpr}))`;
+	return `clamp(min(${exprA}, ${exprB}), ${interp}, max(${exprA}, ${exprB}))`;
+}
+
+/** `fluid-<name>` — point every fluid ramp on the element (and, through
+ *  custom-property inheritance, its descendants) at a named @fluid range. */
+function resolveFluidScope(
+	name: string,
+	negative: boolean,
+	theme: ResolvedTheme,
+	warnings?: string[],
+): UtilityResult | null {
+	if (negative || name.length === 0) return null;
+	if (!Object.hasOwn(theme.fluidRanges, name)) {
+		const message = `[RI-1503] fluid-${name}: no @fluid range named "${name}" — define one with @fluid ${name} { min: …; max: …; }.`;
+		if (warnings) warnings.push(message);
+		else devWarn(message);
+		return null;
+	}
+	return multi(
+		["--fluid-scope-min", `var(--fluid-${name}-min)`],
+		["--fluid-scope-max", `var(--fluid-${name}-max)`],
+	);
+}
+
 function resolveFluidSpacing(
 	basePrefix: string,
 	val: string | null,
@@ -133,11 +205,17 @@ function resolveFluidSpacing(
 ): UtilityResult | null {
 	if (val === null) return null;
 
-	// A var/arbitrary base (p-fluid-(--x), p-fluid-[10px]) arrives as `[expr]` and
-	// builds a runtime clamp(); numeric steps stay on the baked-rem fast path.
-	const arb = extractArbitrary(val);
-	const clampValue =
-		arb !== null ? fluidSpacingClampExpr(arb, theme) : fluidSpacingClamp(val, theme);
+	// `a/b` picks both endpoints; a bare value keeps the multiplier ramp. A
+	// var/arbitrary base (p-fluid-(--x), p-fluid-[10px]) builds a runtime
+	// clamp(); numeric steps stay on the baked-rem fast path.
+	const slash = topLevelIndexOf(val, "/");
+	let clampValue: string | null;
+	if (slash !== -1) {
+		clampValue = fluidPairClamp(val.slice(0, slash), val.slice(slash + 1), theme);
+	} else {
+		const arb = extractArbitrary(val);
+		clampValue = arb !== null ? fluidSpacingClampExpr(arb, theme) : fluidSpacingClamp(val, theme);
+	}
 	if (clampValue === null) return null;
 
 	// Padding (negative padding is invalid CSS — reject)
@@ -175,13 +253,17 @@ function resolveFluidSpacing(
 export function spacingGenerator(
 	utility: string,
 	value: string | null,
-	// The one generator that wants the split (prefix, value) form, not the
-	// reassembled class name.
-	_full: string,
+	// This generator mostly wants the split (prefix, value) form; `full` is
+	// read only for the fluid scope classes, whose names may carry dashes.
+	full: string,
 	negative: boolean,
 	theme: ResolvedTheme,
 	warnings?: string[],
 ): UtilityResult | null {
+	// fluid-<name>: scope class from a named @fluid range.
+	if (full.startsWith("fluid-")) {
+		return resolveFluidScope(full.slice(6), negative, theme, warnings);
+	}
 	// Split utility-value: "p-4" → prefix="p", val="4"
 	// But utility may already be split by parser, with value passed separately
 	let prefix: string;

@@ -191,6 +191,12 @@ export interface ThemeTokens {
 	tracking: Record<string, string>;
 	opacity: Record<string, string>;
 	duration: Record<string, string>;
+	/** Named radii from `@rounded { roof: 24px; }` — the class is `rounded-roof`.
+	 *  Unnamed radii are spacing multiples and carry no token. */
+	radii: Record<string, string>;
+	/** Named ranges from `@fluid <name> { min; max; }` — each one makes the scope
+	 *  class `fluid-<name>`. A bound absent from the block is absent here. */
+	fluidRanges: Record<string, { min?: string; max?: string }>;
 	fonts: Array<{ slot: string; family: string }>;
 	animations: string[];
 }
@@ -217,6 +223,13 @@ export function listThemeTokens(theme: ResolvedTheme): ThemeTokens {
 		tracking: { ...theme.tracking },
 		opacity: { ...theme.opacity },
 		duration: { ...theme.duration },
+		radii: { ...theme.radii },
+		fluidRanges: Object.fromEntries(
+			Object.entries(theme.fluidRanges).map(([name, range]) => [
+				name,
+				{ min: range.min, max: range.max },
+			]),
+		),
 		fonts: theme.fonts.map((slot) => ({ slot: slot.slot, family: slot.family })),
 		animations: Object.keys(theme.animations),
 	};

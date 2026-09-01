@@ -1282,9 +1282,12 @@ describe("resolveDirectives", () => {
 	});
 
 	it("merges text overrides", () => {
-		const theme = resolveDirectives([{ type: "text", body: "huge: 5rem, 1;" }]);
+		const theme = resolveDirectives([
+			{ type: "text", body: "md: 1rem, 1.5;" },
+			{ type: "text", body: "huge: 5rem, 1;" },
+		]);
 		expect(theme.text["huge"]).toEqual({ fontSize: "5rem", lineHeight: "1" });
-		expect(theme.text["md"]).toBeDefined(); // default kept
+		expect(theme.text["md"]).toBeDefined(); // earlier block kept
 	});
 
 	it("updates spacing base", () => {
@@ -1298,9 +1301,12 @@ describe("resolveDirectives", () => {
 	});
 
 	it("adds breakpoints", () => {
-		const theme = resolveDirectives([{ type: "breakpoint", body: "tablet: 50rem;" }]);
+		const theme = resolveDirectives([
+			{ type: "breakpoint", body: "sm: 40rem;" },
+			{ type: "breakpoint", body: "tablet: 50rem;" },
+		]);
 		expect(theme.breakpoints["tablet"]).toBe("50rem");
-		expect(theme.breakpoints["sm"]).toBeDefined(); // default kept
+		expect(theme.breakpoints["sm"]).toBe("40rem"); // earlier block kept
 	});
 
 	it("handles radius with squircle shape", () => {
@@ -1309,11 +1315,19 @@ describe("resolveDirectives", () => {
 		expect(theme.roundedShapeScale).toBe(1.6);
 	});
 
-	it("warns on a radius token in the body (RI-1122)", () => {
+	it("names a radius alongside a shape modifier", () => {
 		const theme = resolveDirectives([
 			{ type: "rounded", body: "sm: 0.125rem;", modifier: "squircle" },
 		]);
+		expect(theme.radii["sm"]).toBe("0.125rem");
+		expect(theme.roundedShape).toBe("squircle");
+		expect(theme.warnings).toEqual([]);
+	});
+
+	it("warns on an unknown -- option (RI-1122)", () => {
+		const theme = resolveDirectives([{ type: "rounded", body: "--corner-radius: 4px;" }]);
 		expect(theme.warnings.some((w) => w.includes("RI-1122"))).toBe(true);
+		expect(theme.radii).toEqual({});
 	});
 
 	it("handles superellipse with custom exponent", () => {
@@ -1434,12 +1448,12 @@ describe("resolveDirectives", () => {
 		});
 	});
 
-	it("warns for invalid fluid ranges, units, multipliers, and modifiers", () => {
+	it("warns for invalid fluid ranges, units, multipliers, and range names", () => {
 		const theme = resolveDirectives([
 			{ type: "fluid", body: "min: 40px; max: 20rem; unit: vh; multiplier: 1;" },
 			{ type: "fluid", body: "min: 80rem; max: 20rem;", modifier: "text" },
 			{ type: "fluid", body: "multiplier: 1.5;", modifier: "text" },
-			{ type: "fluid", body: "min: 20rem; max: 80rem;", modifier: "layout" },
+			{ type: "fluid", body: "min: 20rem; max: 80rem;", modifier: "bad name" },
 		]);
 		const warnings = theme.warnings.join("\n");
 		expect(warnings).toContain("[RI-1022]");
@@ -1447,6 +1461,37 @@ describe("resolveDirectives", () => {
 		expect(warnings).toContain("[RI-1025]");
 		expect(warnings).toContain("[RI-1026]");
 		expect(warnings).toContain("[RI-1027]");
+	});
+
+	it("resolves named fluid ranges, seeded from the global range", () => {
+		const theme = resolveDirectives([
+			{ type: "fluid", body: "min: 22rem; max: 88rem;" },
+			{ type: "fluid", body: "max: 48rem;", modifier: "compact" },
+			{ type: "fluid", body: "min: 48rem; max: 120rem;", modifier: "wide" },
+			// Consecutive bodies for one name accumulate.
+			{ type: "fluid", body: "min: 24rem;", modifier: "compact" },
+		]);
+		expect(theme.fluidRanges.compact).toEqual({ min: "24rem", max: "48rem" });
+		expect(theme.fluidRanges.wide).toEqual({ min: "48rem", max: "120rem" });
+		expect(theme.warnings).toEqual([]);
+	});
+
+	it("warns for a unit or multiplier on a named fluid range", () => {
+		const theme = resolveDirectives([
+			{ type: "fluid", body: "min: 20rem; max: 48rem; unit: vw;", modifier: "compact" },
+			{ type: "fluid", body: "min: 20rem; max: 48rem; multiplier: 3;", modifier: "hero" },
+		]);
+		const warnings = theme.warnings.join("\n");
+		expect(warnings).toContain("[RI-1039]");
+		expect(warnings).toContain("[RI-1026]");
+		expect(theme.fluidRanges.compact).toEqual({ min: "20rem", max: "48rem" });
+		expect(theme.fluidRanges.hero).toEqual({ min: "20rem", max: "48rem" });
+	});
+
+	it("accepts container-query units on @fluid", () => {
+		const theme = resolveDirectives([{ type: "fluid", body: "unit: cqi;", modifier: "text" }]);
+		expect(theme.textFluid?.unit).toBe("cqi");
+		expect(theme.warnings).toEqual([]);
 	});
 });
 
@@ -1595,5 +1640,108 @@ describe("@layer directive", () => {
 			const theme = resolveDirectives(ds);
 			expect(theme.layer!.wrapAll).toBe("utilities");
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// @rounded named scale and utility blocks
+// ---------------------------------------------------------------------------
+
+describe("@rounded named scale", () => {
+	const resolve = (css: string) => resolveDirectives(extractDirectives(css, []));
+
+	it("turns a named entry into a radius token", () => {
+		const theme = resolve("@rounded { roof: 24px; }");
+		expect(theme.radii).toEqual({ roof: "24px" });
+		expect(theme.warnings).toEqual([]);
+	});
+
+	it("keeps --corner-scale as an option, not a radius", () => {
+		const theme = resolve("@rounded { roof: 24px; --corner-scale: 1.2; }");
+		expect(theme.radii).toEqual({ roof: "24px" });
+		expect(theme.roundedShapeScale).toBe(1.2);
+	});
+
+	it("removes a radius with !name", () => {
+		// Removal targets the scale built so far, as in every key-value directive —
+		// so it lands in a later block, not beside the entry it removes.
+		const theme = resolve("@rounded { roof: 24px; hut: 8px; }\n@rounded { !roof; }");
+		expect(theme.radii).toEqual({ hut: "8px" });
+	});
+
+	it("reads a functional block as a rounded- utility", () => {
+		const theme = resolve(
+			"@rounded { roof: 24px; roof-minus-* { border-radius: calc(var(--rounded-roof) - var(--value) * var(--spacing)); } }",
+		);
+		expect(theme.radii).toEqual({ roof: "24px" });
+		expect(theme.customUtilities).toEqual([
+			{
+				name: "rounded-roof-minus",
+				functional: true,
+				body: "border-radius: calc(var(--rounded-roof) - var(--value) * var(--spacing));",
+			},
+		]);
+	});
+
+	it("reads a static block as a rounded- utility", () => {
+		const theme = resolve("@rounded { roof { border-radius: 24px; } }");
+		expect(theme.customUtilities).toEqual([
+			{ name: "rounded-roof", functional: false, body: "border-radius: 24px;" },
+		]);
+	});
+
+	it("a brace does not swallow the entry after it", () => {
+		const theme = resolve("@rounded { roof-minus-* { border-radius: 0; } hut: 8px; }");
+		expect(theme.radii).toEqual({ hut: "8px" });
+		expect(theme.warnings).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// RI-1124 — a named entry replaces a built-in class name
+// ---------------------------------------------------------------------------
+
+describe("RI-1124 built-in shadowing", () => {
+	const warnings = (css: string) => {
+		const collected: string[] = [];
+		const theme = resolveDirectives(extractDirectives(css, collected));
+		return [...collected, ...theme.warnings].filter((w) => w.includes("RI-1124"));
+	};
+
+	it.each([
+		["@rounded { full: 30px; }", "rounded-full"],
+		["@shadow { none: 0 0 9px lime; }", "shadow-none"],
+		["@blur { none: 7px; }", "blur-none"],
+		["@z { auto: 42; }", "z-auto"],
+		["@duration { initial: 5s; }", "duration-initial"],
+		["@ease { linear: steps(3); }", "ease-linear"],
+		["@color { transparent: #fff; }", "bg-transparent"],
+	])("warns for %s", (css, shadowed) => {
+		const found = warnings(css);
+		expect(found).toHaveLength(1);
+		expect(found[0]).toContain(`"${shadowed}"`);
+	});
+
+	it("stays quiet for a name that is not built in", () => {
+		expect(warnings("@rounded { roof: 24px; }\n@shadow { glow: 0 0 2px red; }")).toEqual([]);
+	});
+
+	it("stays quiet when a default theme token is replaced", () => {
+		// The palette is the one scale that ships tokens, and `red` is one of
+		// them — replacing it is ordinary theming, not a built-in takeover.
+		expect(warnings("@color { red: #f00; }")).toEqual([]);
+	});
+
+	it("stays quiet for defaults the consumer never wrote", () => {
+		expect(warnings("@blur { soft: 3px; }")).toEqual([]);
+	});
+
+	it("says the built-in still wins when the clash crosses families", () => {
+		// `blur-in` is an enter-animation utility that only shares the `blur-`
+		// prefix, so `@blur { in: … }` cannot take that class.
+		const found = warnings("@blur { in: 3px; }");
+		expect(found).toHaveLength(1);
+		expect(found[0]).toContain("still wins");
+		expect(found[0]).toContain("never applies");
 	});
 });

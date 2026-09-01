@@ -33,7 +33,7 @@ ri(...inputs: ClassInput[]): string;
 - An arbitrary property claims its named property: `[border:1px_solid_red]` drops `border-t-2`.
 - An unknown class always passes through. It is never dropped.
 - A custom utility with several properties survives a partial override: `ri("card p-8")` keeps `card` when `card` also sets a background.
-- Prefixes with two meanings resolve by value shape. `text-lg` is a size and `text-brand-500` is a color, so they do not conflict.
+- Prefixes with two meanings resolve by value shape. `text-lg` is a size and `text-brand-500` is a color, so they do not conflict. No text scale ships, so `ri()` learns the size names when the theme compiles. Before the first compile, or with a name that no `@text` defines, `text-{name}` reads as a color.
 
 ## `ri()` versus `createRi()`
 

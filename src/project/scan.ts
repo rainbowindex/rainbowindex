@@ -21,16 +21,17 @@ import { collectProjectClasses } from "../scanner/sources.js";
 import { validateGlobPattern } from "../scanner/glob-utils.js";
 import { pushWarningsDeduped } from "../warnings.js";
 import {
-	analyzeProjectCSS,
-	finalizeProjectCompilation,
+	analyzeProjectCSSMemo,
 	type FinalizeProjectResult,
 	type FontResolver,
-	type ProjectAnalysis,
+	finalizeProjectCompilation,
 } from "./pipeline.js";
 
 export interface CompileScannedProjectOptions {
 	css: string;
 	cwd: string;
+	/** Path of the CSS entry, named by the `@apply` expansion diagnostics. */
+	cssPath?: string;
 	/** Surface-provided glob patterns (CLI positional globs, plugin `sources`). */
 	surfacePatterns?: readonly string[];
 	/**
@@ -40,29 +41,6 @@ export interface CompileScannedProjectOptions {
 	 */
 	onInvalidPattern: (error: string) => string | undefined;
 	resolveFonts?: FontResolver;
-}
-
-/**
- * Single-entry analysis memo — watch/HMR rebuilds triggered by source edits
- * re-enter with byte-identical CSS, and re-analyzing would mint a fresh theme
- * object each build, missing every theme-identity-keyed cache downstream
- * (custom-utility maps, variant maps, the per-class compile memo). The theme
- * and directives keep their identity; `warnings`/`warningSeen`/`diagnostics`
- * are mutated by callers, so fresh containers are cloned out per call.
- */
-let lastAnalysis: { css: string; analysis: ProjectAnalysis } | null = null;
-
-function analyzeProjectCSSMemo(css: string): ProjectAnalysis {
-	if (lastAnalysis === null || lastAnalysis.css !== css) {
-		lastAnalysis = { css, analysis: analyzeProjectCSS(css) };
-	}
-	const cached = lastAnalysis.analysis;
-	return {
-		...cached,
-		warnings: [...cached.warnings],
-		warningSeen: new Set(cached.warningSeen),
-		diagnostics: [...cached.diagnostics],
-	};
 }
 
 export async function compileScannedProject(
@@ -90,7 +68,12 @@ export async function compileScannedProject(
 		if (error) {
 			const warning = options.onInvalidPattern(error);
 			if (warning !== undefined) {
-				pushWarningsDeduped(analysis.warnings, [warning], analysis.warningSeen);
+				pushWarningsDeduped(
+					analysis.warnings,
+					[warning],
+					analysis.warningSeen,
+					analysis.suppressed,
+				);
 			}
 			continue;
 		}
@@ -103,10 +86,12 @@ export async function compileScannedProject(
 		options.cwd,
 		analysis.warnings,
 		analysis.warningSeen,
+		analysis.suppressed,
 	);
 
 	const compiled = await finalizeProjectCompilation({
 		css: options.css,
+		cssPath: options.cssPath,
 		classNames,
 		authoredClassNames: authored,
 		analysis,

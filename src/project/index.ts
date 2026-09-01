@@ -2,7 +2,7 @@ import { extractClassesFromSource } from "../scanner/class-extraction.js";
 import { resolveGoogleFonts } from "../integrations/font-providers/index.js";
 import { pushWarningsDeduped } from "../warnings.js";
 import {
-	analyzeProjectCSS,
+	analyzeProjectCSSMemo,
 	finalizeProjectCompilation,
 	type FinalizeProjectResult,
 	type FontResolver,
@@ -27,7 +27,7 @@ export type CompileProjectResult = FinalizeProjectResult;
 export async function compileProject(
 	options: CompileProjectOptions,
 ): Promise<CompileProjectResult> {
-	const analysis = analyzeProjectCSS(options.css);
+	const analysis = analyzeProjectCSSMemo(options.css);
 	const classNames = new Set<string>();
 	// A caller-supplied list is authored; `sources` content is scanned text.
 	if (options.classNames) {
@@ -43,7 +43,12 @@ export async function compileProject(
 				classNames.add(cls);
 			}
 		}
-		pushWarningsDeduped(analysis.warnings, extractionWarnings, analysis.warningSeen);
+		pushWarningsDeduped(
+			analysis.warnings,
+			extractionWarnings,
+			analysis.warningSeen,
+			analysis.suppressed,
+		);
 	}
 	return finalizeProjectCompilation({
 		css: options.css,

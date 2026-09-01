@@ -17,6 +17,9 @@ const theme = analyzeProjectCSS(`
 	surface: oklch(0.98 0.01 260) / oklch(0.15 0.01 260);
 	primary: brand;
 }
+@text { lg: 1.25rem, 1.4; }
+@breakpoint { sm: 40rem; md: 48rem; }
+@weight { bold: 700; }
 `).theme;
 
 describe("oklch → hex", () => {

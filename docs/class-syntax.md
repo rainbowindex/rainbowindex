@@ -112,13 +112,13 @@ Dark mode uses the media query `prefers-color-scheme`. There is no class strateg
 
 | Variant | Condition |
 | --- | --- |
-| `sm` / `md` / `lg` / `xl` | `@media (min-width: 40rem / 48rem / 64rem / 80rem)` |
-| `@sm`, `@md`, ... | `@container (min-width: <breakpoint>)` |
-| `@sidebar/sm` | `@container sidebar (min-width: 40rem)` |
+| `<name>` | `@media (min-width: <breakpoint>)` |
+| `@<name>` | `@container (min-width: <breakpoint>)` |
+| `@sidebar/<name>` | `@container sidebar (min-width: <breakpoint>)` |
 | `min-[600px]` | `@media (width >= 600px)` |
 | `max-[40rem]` | `@media (width < 40rem)` — exclusive |
 
-There is no `2xl` breakpoint by default. Change the set with the `@breakpoint` directive.
+No breakpoint ships. Each name comes from the `@breakpoint` directive: `@breakpoint { sm: 40rem; }` makes `sm:` and `@sm:`. The `min-[…]` and `max-[…]` forms need no token.
 
 `min-[...]` and `max-[...]` accept only a number with one of these units: `px`, `em`, `rem`, `ch`, `vw`, `vh`, `svw`, `svh`, `dvw`, `dvh`, `cqw`, `cqh`. Percentages, `calc()`, and negatives are not accepted. There is no arbitrary container size. Instead of `@[600px]`, write `[@container(min-width:600px)]`.
 
@@ -236,7 +236,7 @@ Rules and limits:
 - A group prefix accepts only letters, digits, `_`, `@`, and `-` in each segment. `hover:`, `dark:`, `@md:`, and `sm:hover:` work.
 - Bracketed variants cannot prefix a group. `data-[state=open]:{...}`, `aria-[...]:{...}`, `[&_p]:{...}`, `*:{...}`, and `**:{...}` do not expand. Write those classes without a group.
 - Braces do not nest. `sm:{hover:{a b} c}` does not expand the inner group. Chain the prefixes instead.
-- Input limit 500,000 characters (`[RI-1407]`). Output limit 100,000 characters (`[RI-1408]`). Brace depth limit 10 (`[RI-1409]`).
+- Input limit 500,000 characters (`[RI-1407]`). Growth limit 100,000 characters (`[RI-1408]`) — this counts only what expansion adds, so file size alone never trips it. Brace depth limit 10 (`[RI-1409]`).
 
 ## Error behavior
 
@@ -253,7 +253,7 @@ A bad class never stops the compile:
 | `RI-1002` | An arbitrary utility did not resolve. |
 | `RI-1004` | Unknown variant. The class was dropped. |
 | `RI-1407` | Variant-group input above 500,000 characters. |
-| `RI-1408` | Variant-group output above 100,000 characters. |
+| `RI-1408` | Variant-group expansion exceeds the 100,000 character growth limit. |
 | `RI-1409` | Variant-group brace depth above 10. |
 | `RI-1412` | Whitespace inside an arbitrary value. The class was dropped. |
 

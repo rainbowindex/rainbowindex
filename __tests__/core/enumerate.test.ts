@@ -52,7 +52,11 @@ describe("enumeration validity", () => {
 });
 
 describe("enumeration richness", () => {
-	const { classes, templates } = enumerateClassNames(defaultTheme);
+	// Named scales are enumerated from the theme, and none ships, so this theme
+	// defines the tokens the checks below name.
+	const { classes, templates } = enumerateClassNames(
+		analyzeProjectCSS("@text { lg: 1.25rem, 1.4; }\n@weight { bold: 700; }").theme,
+	);
 	const names = new Set(classes.map((c) => c.name));
 
 	test.each([
@@ -94,6 +98,13 @@ describe("enumeration richness", () => {
 		expect(p).toMatchObject({ kind: "spacing", example: "p-4" });
 		const gap = templates.find((t) => t.root === "gap");
 		expect(gap).toMatchObject({ kind: "spacing" });
+	});
+
+	test("font weights enumerate as the nine steps plus an open number template", () => {
+		for (const step of ["100", "400", "900"]) {
+			expect(classes.some((c) => c.name === `font-${step}`)).toBe(true);
+		}
+		expect(templates.find((t) => t.root === "font")).toMatchObject({ kind: "number" });
 	});
 
 	test("custom utilities enumerate as classes or templates", () => {

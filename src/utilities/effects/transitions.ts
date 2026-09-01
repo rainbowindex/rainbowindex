@@ -5,12 +5,12 @@
 
 import type { ResolvedTheme } from "../../directives/foundation.js";
 import {
-	type UtilityResult,
-	single,
-	multi,
+	deepFreezeUtilityMap,
 	extractArbitrary,
 	INTEGER_RE,
-	deepFreezeUtilityMap,
+	multi,
+	single,
+	type UtilityResult,
 } from "../helpers.js";
 
 export const TRANSITION_STATICS: Readonly<Record<string, UtilityResult>> = {
@@ -74,7 +74,9 @@ function resolveTimeValue(val: string, themeMap?: Readonly<Record<string, string
 
 export function resolveDuration(full: string, theme: ResolvedTheme): UtilityResult | null {
 	const val = full.slice(9);
-	if (val === "initial")
+	// A theme entry named `initial` replaces the built-in keyword rather than
+	// losing to it — same theme-first order as every named scale (RI-1124).
+	if (val === "initial" && !Object.hasOwn(theme.duration, val))
 		return multi(["transition-duration", "initial"], ["animation-duration", "initial"]);
 	const resolved = resolveTimeValue(val, theme.duration);
 	if (resolved) return multi(["transition-duration", resolved], ["animation-duration", resolved]);

@@ -1,11 +1,11 @@
 import { describe, expect, it, test } from "vitest";
 import { resolveUtility } from "../../../src/utilities/index.js";
-import { resolveDirectives } from "../../../src/directives/index.js";
+import { scalesTheme } from "../../helpers/fixture-scales.js";
 
-const theme = resolveDirectives([]);
+const theme = scalesTheme();
 
 function mutableTheme() {
-	const base = resolveDirectives([]);
+	const base = scalesTheme();
 	return {
 		...base,
 		animations: { ...base.animations },
@@ -125,12 +125,9 @@ describe("animation utilities", () => {
 		["blur-out", "--ri-exit-blur", "20px"],
 		["animate-duration-[2s]", "animation-duration", "2s"],
 		["animate-delay-[150ms]", "animation-delay", "150ms"],
-		// Disclosure + caret animations reference the named theme animation
-		["animate-accordion-down", "animation", "var(--animate-accordion-down)"],
-		["animate-accordion-up", "animation", "var(--animate-accordion-up)"],
-		["animate-collapsible-down", "animation", "var(--animate-collapsible-down)"],
-		["animate-collapsible-up", "animation", "var(--animate-collapsible-up)"],
-		["animate-caret-blink", "animation", "var(--animate-caret-blink)"],
+		// A named theme animation resolves to its token
+		["animate-spin", "animation", "var(--animate-spin)"],
+		["animate-bounce", "animation", "var(--animate-bounce)"],
 	])("%s resolves to %s: %s", (className, property, value) => {
 		const r = resolveUtility(className, null, false, theme);
 		expect(r).not.toBeNull();

@@ -168,7 +168,7 @@ const SPECIAL_SELECTORS: Readonly<Record<string, WeightedWrapper>> = Object.free
  * name → cascade weight for every fixed variant defined above, folded from the
  * four tables. Consumed only by engine/ordering.ts, which assembles
  * VARIANT_WEIGHTS from this plus the residual entries the tables cannot supply
- * (theme-default breakpoint statics and the group-/peer- composites).
+ * (the conventional breakpoint names and the group-/peer- composites).
  */
 export const FIXED_VARIANT_WEIGHTS: Readonly<Record<string, number>> = (() => {
 	const out: Record<string, number> = {};

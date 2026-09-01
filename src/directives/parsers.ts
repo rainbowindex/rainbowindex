@@ -229,11 +229,6 @@ export function parsePreflightDirective(
 	return config;
 }
 
-/** Strip a single leading `.` so `@utility .foo` and `@utility foo` are equivalent. */
-function stripLeadingClassDot(name: string): string {
-	return name.startsWith(".") ? name.slice(1) : name;
-}
-
 /** Validate a custom-utility name (after the functional `-*` suffix is stripped).
  *  Names with whitespace/semicolons/braces would emit broken selectors — warn
  *  RI-1035 and report invalid so callers skip the utility. */
@@ -263,17 +258,13 @@ function isValidUtilityName(name: string, warnings?: string[]): boolean {
  * @utility card { background: var(--color-surface); padding: ... }
  * @utility tab-size-* { tab-size: var(--value); }
  * ```
- *
- * A single leading `.` on the name is tolerated (`@utility .card` ≡ `@utility card`).
  */
 export function parseUtilityDirective(
 	body: string,
 	modifier?: string,
 	warnings?: string[],
 ): CustomUtility | null {
-	const normalizedModifier = stripLeadingClassDot(
-		modifier ? stripCSSComments(modifier).trim() : "",
-	);
+	const normalizedModifier = modifier ? stripCSSComments(modifier).trim() : "";
 	if (!normalizedModifier) return null;
 	if (body.length > MAX_UTILITY_BODY_LENGTH) {
 		warnings?.push(
@@ -286,6 +277,50 @@ export function parseUtilityDirective(
 	const name = functional ? normalizedModifier.slice(0, -2) : normalizedModifier;
 	if (!isValidUtilityName(name, warnings)) return null;
 	return { name, functional, body: normalizedBody };
+}
+
+/**
+ * Lift colon-less `name { … }` blocks out of a named-scale directive body.
+ *
+ * Every scale that feeds exactly one class prefix takes these, so the math can
+ * sit beside the tokens it reads — radius math in `@rounded`, shadow math in
+ * `@shadow`. The block uses the `@utility` grammar and the name is namespaced
+ * with the family's prefix, so `@shadow { lifted-* { … } }` defines
+ * `shadow-lifted-*`.
+ *
+ * The colon is what separates the two block meanings already in this grammar:
+ * `key: value { … }` is the directive's own block (`@color` options, `@animate`
+ * keyframes) and is left untouched. Only a block with no key before it is a
+ * utility.
+ *
+ * Returns the body with the lifted spans cut out, so each directive's existing
+ * parser still sees only what it already understood.
+ */
+export function extractUtilityBlocks(
+	body: string,
+	prefix: string,
+	newlineTerminates: boolean,
+	warnings?: string[],
+): { rest: string; utilities: CustomUtility[]; cut: boolean } {
+	const cleaned = stripCSSComments(body);
+	const utilities: CustomUtility[] = [];
+	const cuts: Array<[number, number]> = [];
+	for (const entry of scanEntries(cleaned, { newlineTerminates })) {
+		if (!entry.fragment || entry.block === undefined) continue;
+		const util = parseUtilityDirective(entry.block, `${prefix}-${entry.value}`, warnings);
+		if (util) utilities.push(util);
+		// Cut the span even when the name was rejected: leaving a malformed block
+		// behind would only make the directive's own parser warn about it twice.
+		cuts.push([entry.start, entry.end]);
+	}
+	if (cuts.length === 0) return { rest: cleaned, utilities, cut: false };
+	let rest = "";
+	let at = 0;
+	for (const [start, end] of cuts) {
+		rest += cleaned.slice(at, start);
+		at = end;
+	}
+	return { rest: rest + cleaned.slice(at), utilities, cut: true };
 }
 
 /**
@@ -316,7 +351,7 @@ export function parseGroupedUtilityDirective(body: string, warnings?: string[]):
 		// Read utility name (up to '{')
 		let nameEnd = i;
 		while (nameEnd < cleaned.length && cleaned[nameEnd] !== "{") nameEnd++;
-		const name = stripLeadingClassDot(cleaned.slice(i, nameEnd).trim());
+		const name = cleaned.slice(i, nameEnd).trim();
 		if (!name || nameEnd >= cleaned.length) {
 			if (name) {
 				warnings?.push(

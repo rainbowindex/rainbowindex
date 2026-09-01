@@ -8,8 +8,9 @@ import {
 import { findClosest } from "../../src/engine/suggest.js";
 import { resolveVariant, type VariantWrapper } from "../../src/engine/variants.js";
 import { resolveDirectives } from "../../src/directives/index.js";
+import { scalesTheme } from "../helpers/fixture-scales.js";
 
-const theme = resolveDirectives([]);
+const theme = scalesTheme();
 const compile = (classNames: Iterable<string>, activeTheme = theme) =>
 	createCompiler().compile(classNames, activeTheme);
 
@@ -51,7 +52,12 @@ describe("buildBreakpointWeights", () => {
 	});
 
 	it("slots custom breakpoints into the responsive and container tiers by size", () => {
-		const custom = resolveDirectives([{ type: "breakpoint", body: "2xl: 96rem; 3xl: 120rem;" }]);
+		const custom = resolveDirectives([
+			{
+				type: "breakpoint",
+				body: "sm: 40rem; md: 48rem; lg: 64rem; xl: 80rem; 2xl: 96rem; 3xl: 120rem;",
+			},
+		]);
 		const map = buildBreakpointWeights(custom.breakpoints);
 		expect(map.get("2xl")).toBe(105);
 		expect(map.get("3xl")).toBe(106);
@@ -74,7 +80,9 @@ describe("buildBreakpointWeights", () => {
 	});
 
 	it("named container variants resolve through the derived map", () => {
-		const custom = resolveDirectives([{ type: "breakpoint", body: "2xl: 96rem;" }]);
+		const custom = resolveDirectives([
+			{ type: "breakpoint", body: "sm: 40rem; md: 48rem; lg: 64rem; xl: 80rem; 2xl: 96rem;" },
+		]);
 		const map = buildBreakpointWeights(custom.breakpoints);
 		expect(computeVariantWeight(["@sidebar/2xl"], map)).toBe(210);
 	});

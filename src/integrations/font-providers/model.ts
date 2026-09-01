@@ -140,3 +140,75 @@ export function createFontSlot(
 	if (partial.metrics !== undefined) slot.metrics = partial.metrics;
 	return slot;
 }
+
+// ---------------------------------------------------------------------------
+// Weight availability
+// ---------------------------------------------------------------------------
+
+/** Split one comma-separated part of a face `weight` into its bounds.
+ *  "300 900" → [300, 900] (variable range), "400" → [400, 400] (one weight).
+ *
+ *  An empty part is not a weight of zero: `Number("")` is 0 and finite, so a
+ *  trailing comma in `weight: 400,700,` used to report a face that renders
+ *  weight 0 and list it in the RI-1504 inventory. A range is also read either
+ *  way round, since the bounds only ever describe a span. */
+function faceWeightBounds(part: string): [number, number] | null {
+	const trimmed = part.trim();
+	if (trimmed === "") return null;
+	const [a, b] = trimmed.split(/\s+/).map(Number);
+	if (!Number.isFinite(a)) return null;
+	if (!Number.isFinite(b)) return [a, a];
+	return a <= b ? [a, b] : [b, a];
+}
+
+/**
+ * Whether any loaded font can render `weight` — the check behind RI-1504.
+ *
+ * A slot's faces are the authority: their `weight` descriptor is exactly what
+ * the emitted @font-face (or the Google URL) asks for, so a weight outside it
+ * is a weight the browser has to synthesize.
+ *
+ * Deliberately fails open, since `font-<n>` names no family and a page can
+ * load several: no faces to check, a system/manual slot (the OS font carries
+ * every weight), or a single covering slot all count as available.
+ */
+export function weightIsLoaded(weight: number, fonts: readonly FontSlot[]): boolean {
+	let checked = false;
+	for (const slot of fonts) {
+		for (const face of slot.faces) {
+			if (face.provider === "system" || !face.provider) return true;
+			checked = true;
+			for (const part of face.weight.split(",")) {
+				const bounds = faceWeightBounds(part);
+				if (bounds && weight >= bounds[0] && weight <= bounds[1]) return true;
+			}
+		}
+	}
+	return !checked;
+}
+
+/** One slot's weights, as `300–900` or `400, 700`. Empty when the slot loads
+ *  no face of its own (system/manual), which imposes no limit. */
+export function describeSlotWeights(slot: FontSlot): string {
+	const ranges = new Set<string>();
+	for (const face of slot.faces) {
+		if (face.provider === "system" || !face.provider) continue;
+		for (const part of face.weight.split(",")) {
+			const bounds = faceWeightBounds(part);
+			if (bounds)
+				ranges.add(bounds[0] === bounds[1] ? `${bounds[0]}` : `${bounds[0]}–${bounds[1]}`);
+		}
+	}
+	return [...ranges].join(", ");
+}
+
+/** Human-readable weight inventory for the RI-1504 message:
+ *  `Inter 300–900; Fira Code 400, 700`. */
+export function describeLoadedWeights(fonts: readonly FontSlot[]): string {
+	const parts: string[] = [];
+	for (const slot of fonts) {
+		const weights = describeSlotWeights(slot);
+		if (weights) parts.push(`${slot.family} ${weights}`);
+	}
+	return parts.join("; ");
+}

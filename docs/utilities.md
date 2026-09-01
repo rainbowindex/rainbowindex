@@ -7,7 +7,7 @@ Two rules apply everywhere:
 1. **Directional utilities emit CSS logical properties.** `pl-4` emits `padding-inline-start`. `border-t` emits `border-block-start-width`. `top-0` emits `inset-block-start`. Add the `-physical-` infix for physical properties: `pl-physical-4` emits `padding-left`.
 2. **Numeric spacing values multiply the spacing base.** `p-4` emits `calc(4 * var(--spacing))`. The default base is `0.25rem`. Decimals accept `.` or `_`: `p-1.5` and `p-1_5` are equal. `px` means `1px`.
 
-Rainbow Index differs from Tailwind in the values, not only in the names. The shadow scale, the blur scale, the text scale (`text-md`, no `text-base`), and the breakpoints (no `2xl`) all differ, and radii have no named scale at all.
+Rainbow Index ships no named scale. Radii, shadows, text sizes, leading, tracking, breakpoints, weights, easing, blur, and animations are all empty until a directive names them — see [theming.md](theming.md). A class below that reads a named token resolves to nothing until you define it; the keyword and arbitrary forms always work.
 
 ## Spacing
 
@@ -21,6 +21,8 @@ Rainbow Index differs from Tailwind in the values, not only in the names. The sh
 | Scroll margin | `scroll-m` and its directional forms | Spacing scale, `auto`, negatives, arbitrary. |
 | Scroll padding | `scroll-p` and its directional forms | Spacing scale, arbitrary. No `auto`. No negatives. |
 | Fluid spacing | Any padding, margin, gap, or inset root plus `-fluid-`: `p-fluid-4`, `gap-fluid-4` | A `clamp()` ramp across the `@fluid` viewport range. See [theming.md](theming.md). |
+| Fluid spacing pair | `p-fluid-4/8`, `gap-fluid-0/6`, `p-fluid-[0.5rem]/(--x)` | Both endpoints stated: from the first to the second across the range. A descending pair shrinks as the viewport grows. Steps, arbitrary lengths, and `(--var)` mix. |
+| Fluid range scope | `fluid-{name}` | Points every fluid utility on the element and its descendants at the named `@fluid` range. |
 
 ## Sizing
 
@@ -32,17 +34,20 @@ Rainbow Index differs from Tailwind in the values, not only in the names. The sh
 
 ## Typography
 
+No type scale ships. `text-{size}`, `leading-{name}`, and `tracking-{name}` resolve only for tokens that `@text`, `@leading`, and `@tracking` define. Every value form below still works without them.
+
 | Family | Form | Values |
 | --- | --- | --- |
-| Font size | `text-{size}` | Theme tokens: `2xs`, `xs`, `sm`, `md`, `lg`, `xl`, `2xl` to `9xl`. There is no `text-base`. The middle size is `text-md`. Each size also sets the line height. |
-| Line-height modifier | `text-lg/7`, `text-lg/[1.5]`, `text-lg/(--lh)` | The `leading-*` values except `px`: theme tokens, arbitrary, `(--var)`. |
+| Font size | `text-{size}` | `@text` tokens. Each size also sets the line height. `text-[18px]` takes any value. |
+| Line-height modifier | `text-lg/7`, `text-lg/[1.5]`, `text-lg/(--lh)` | The `leading-*` values except `px`: `@leading` tokens, arbitrary, `(--var)`. |
 | Fluid type | `text-fluid-{size}` | A `clamp()` from one step below up to the size. Display sizes from `4xl` up interpolate from two steps below. |
+| Fluid type pair | `text-fluid-sm/3xl` | Both sizes stated: from the first to the second across the `@fluid` range. The last size sets the line height. A trailing segment that is not a size is the line-height modifier: `text-fluid-lg/7`, `text-fluid-sm/3xl/tight`. |
 | Font family | `font-{name}` | `sans`, `serif`, `mono`, plus `@font` slots. For an arbitrary family, use a quote, a comma list, or a hint: `font-["Open_Sans"]`, `font-[Open_Sans,sans-serif]`, `font-[family-name:Open_Sans]`. A bare `font-[Open_Sans]` goes to the weight path and emits an invalid weight. |
-| Font weight | `font-{weight}` | `thin` 100 to `black` 900. `font-[850]` sets a numeric weight. |
+| Font weight | `font-{weight}` | Names from `@weight`, or a number from 1 to 1000: `font-500`, `font-617`. A number that no loaded font provides warns with `[RI-1504]`, and so does one that the family in the same `@apply` list lacks. `font-[850]` also works. |
 | Font features | `font-features-[...]` | `font-feature-settings`. |
 | Font stretch | `font-stretch-{value}` | Nine keywords, a number, a percentage, or arbitrary. |
-| Leading | `leading-{value}` | `3` to `10`, `none`, `tight`, `snug`, `normal`, `relaxed`, `loose`, `px`, arbitrary. |
-| Tracking | `tracking-{value}` | `tighter` to `widest`, arbitrary. |
+| Leading | `leading-{value}` | `@leading` tokens, `px`, arbitrary. |
+| Tracking | `tracking-{value}` | `@tracking` tokens, arbitrary. |
 | Alignment | `text-left`, `text-center`, `text-right`, `text-justify`, `text-start`, `text-end` | Static. |
 | Wrap | `text-wrap`, `text-nowrap`, `text-balance`, `text-pretty` | Static. |
 | Transform | `uppercase`, `lowercase`, `capitalize`, `normal-case` | Static. |
@@ -100,18 +105,20 @@ Color stops such as `brand-500` exist only for generative colors and their alias
 
 **Shadows and rings** compose. Each family writes its own slot variable, and one `box-shadow` combines them. A ring does not erase a shadow.
 
-- `shadow`, `shadow-{px|2xs|xs|sm|md|lg|xl|2xl|none}`, `shadow-{color}`, `shadow-[v]`. The default scale adapts to light and dark.
-- `inset-shadow-{...}` with the same forms.
+No shadow scale ships. `shadow-none`, `shadow-{color}`, and `shadow-[v]` always work; a named size such as `shadow-md` works only after `@shadow md: …;` defines it.
+
+- `shadow-none`, `shadow-{color}`, `shadow-[v]`, plus `shadow` and `shadow-{name}` for your own `@shadow` tokens (bare `shadow` reads the `DEFAULT` token).
+- `inset-shadow-none`, `inset-shadow-{color}`, `inset-shadow-[v]`.
 - `ring` (1px), `ring-{n}`, `ring-{color}`, `inset-ring-*`. The default ring color is `currentColor`.
-- `text-shadow-{2xs|xs|sm|md|lg|none}`, `text-shadow-{color}`, `text-shadow-[v]`.
+- `text-shadow-none`, `text-shadow-{color}`, `text-shadow-[v]`.
 
 **Filters** compose the same way:
 
-- `blur-{xs|sm|md|lg|xl|2xl|3xl|none|[v]}` and bare `blur` (8px).
-- `brightness-*`, `contrast-*`, `saturate-*`, `grayscale`, `invert`, `sepia`, `hue-rotate-*`, `drop-shadow-*`, `filter-none`, `filter-[v]`.
+- `blur-{none|[v]}`, plus names from `@blur`. Bare `blur` reads the `DEFAULT` token.
+- `brightness-*`, `contrast-*`, `saturate-*`, `grayscale`, `invert`, `sepia`, `hue-rotate-*`, `drop-shadow-{none|color|[v]}`, `filter-none`, `filter-[v]`.
 - The full `backdrop-*` mirror set, plus `backdrop-opacity-*`.
 
-**Transitions**: `transition`, `transition-{all|colors|opacity|shadow|transform|none|[v]}`, `transition-{normal|discrete}`. `duration-{n}` and `delay-{n}` set both the transition and the animation timing. `ease-{in|out|in-out|linear|[v]}`. `opacity-{n}` emits a percentage: `opacity-50` emits `opacity: 50%`.
+**Transitions**: `transition`, `transition-{all|colors|opacity|shadow|transform|none|[v]}`, `transition-{normal|discrete}`. `duration-{n}` and `delay-{n}` set both the transition and the animation timing. `ease-{linear|[v]}`, plus names from `@ease`. `opacity-{n}` emits a percentage: `opacity-50` emits `opacity: 50%`.
 
 **Transforms** emit the modern individual properties:
 
@@ -128,7 +135,7 @@ Color stops such as `brand-500` exist only for generative colors and their alias
 
 ## Animations
 
-- `animate-{spin|pulse|bounce|ping|none}`, plus names from `@animate`. Extra built-in names: `accordion-down`, `accordion-up`, `collapsible-down`, `collapsible-up`, `caret-blink`.
+- `animate-none` and `animate-[v]`, plus names from `@animate`.
 - Enter and exit: `animate-in`, `animate-out`, with `fade-in-{n}`, `fade-out-{n}`, `zoom-in-{n}`, `zoom-out-{n}`, `spin-in-{n}`, `spin-out-{n}`, `blur-in-{n}`, `blur-out-{n}`, `slide-in-from-{top|bottom|left|right}-{n}`, `slide-out-to-*`.
 - Timing: `animate-duration-{n}`, `animate-delay-{n}`, `animate-ease-{token}`, `animate-{infinite|once|twice}`, `animate-fill-*`, direction statics, `animate-{running|paused}`.
 
@@ -158,5 +165,6 @@ An invalid class emits no CSS and no error. Use `rainbowindex scan` or the edito
 | `RI-1018` | `full` was used with a spacing-scale utility: padding, margin, gap, space, inset, or scroll margin and padding. It resolves to `100%`. |
 | `RI-1501` | `text-fluid-*` needs a rem-based font size. |
 | `RI-1502` | `text-fluid-*` has no smaller size to interpolate from. |
+| `RI-1503` | `fluid-<name>` has no `@fluid` range of that name. |
 
 The full table is in [diagnostics.md](diagnostics.md).

@@ -1,6 +1,6 @@
 /**
- * Animation utilities — compositional enter/exit animations,
- * simple loops (spin, pulse, bounce, ping), timing control.
+ * Animation utilities — compositional enter/exit animations, the @animate
+ * lookup for named keyframes, and timing control.
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
@@ -19,11 +19,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const STATIC_ANIM: Readonly<Record<string, UtilityResult>> = {
-	// Built-in simple animations
-	"animate-spin": single("animation", "var(--animate-spin)"),
-	"animate-pulse": single("animation", "var(--animate-pulse)"),
-	"animate-bounce": single("animation", "var(--animate-bounce)"),
-	"animate-ping": single("animation", "var(--animate-ping)"),
+	// Named animations are theme-driven — see the @animate lookup in the
+	// generator. `none` is the CSS keyword, so it needs no keyframes.
 	"animate-none": single("animation", "none"),
 
 	// Enter/exit triggers

@@ -52,6 +52,11 @@ export interface ClassCandidate {
  */
 export interface CandidateSink {
 	readonly wantsPositions: boolean;
+	/** Path of the file being extracted, for diagnostics that name their
+	 *  source. Rides on the sink because every collector already carries one —
+	 *  threading a path parameter through all of them instead would touch each
+	 *  collector signature to reach the one place that reads it. */
+	readonly path?: string;
 	/** start/end are absolute [start, end) offsets in the ORIGINAL source
 	 *  (0,0 when the sink doesn't want positions). prefixStart/prefixEnd
 	 *  delimit the variant-group prefix for group members, or are -1. */
@@ -84,7 +89,10 @@ export interface CandidateSink {
 export class SetSink implements CandidateSink {
 	readonly wantsPositions = false;
 	private origin: CandidateOrigin = "plain";
-	constructor(readonly classes: Set<string>) {}
+	constructor(
+		readonly classes: Set<string>,
+		readonly path?: string,
+	) {}
 	get inClassList(): boolean {
 		return isClassListOrigin(this.origin);
 	}
@@ -140,6 +148,8 @@ export class CandidateCollector implements CandidateSink {
 	/** Candidates a context-aware collector tokenized itself — the only ones
 	 *  eligible to inherit a context's origin (see finish()). */
 	private readonly contextual = new WeakSet<ClassCandidate>();
+
+	constructor(readonly path?: string) {}
 
 	get inClassList(): boolean {
 		return isClassListOrigin(this.origin);

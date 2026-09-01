@@ -65,6 +65,35 @@ Rules for `face:` entries:
 - A Google slot cannot also have `face:` entries. The faces are ignored with warning `[RI-1204]`.
 - Two faces with the same weight and style warn with `[RI-1214]`. The later face wins.
 
+## Weight availability
+
+`font-<number>` sets a font weight directly: `font-300`, `font-617`, `font-900`. The engine compares the number against the `weight` of each loaded face:
+
+- A range, such as `weight: 300 900`, accepts every number between the two bounds. This is the variable-font case.
+- A list or a single value, such as `weight: 400,700`, accepts only those numbers.
+
+A number that no face provides warns with `[RI-1504]`. The message shows the weights that are available.
+
+A class alone does not name a family, and a page can load more than one font. Thus one face is sufficient: if any loaded font provides the weight, there is no warning. The engine also stays quiet when no `@font` block exists, and when a `system` slot is loaded, because a system font has every weight.
+
+### The family check
+
+A class list is different. When `@apply` (or its alias `@a`) names a family and a weight together, that family alone decides:
+
+```css
+[data-slot="code"] {
+	@a font-mono font-550;   /* [RI-1504] Fira Code does not provide weight 550. It has 400, 700. */
+}
+```
+
+Rules for the pair:
+
+- The last `font-<slot>` in the list is the family. This is the order the cascade applies.
+- The two classes must have the same variant prefix. `md:font-mono font-550` is not a pair, because the weight applies at all widths and the family only above `md`. The list-free check applies to the weight instead.
+- A weight that no font provides is reported one time, by the list-free check, which gives the more complete message.
+
+The family check reads the class list. Thus it operates in `@apply` bodies, `@a` bodies, and `@utility` bodies. A class written in markup has no list: the scanner keeps only the set of class names, so the list-free check applies there.
+
 ## Metrics fallback (zero layout shift)
 
 For Google and local slots, the engine can emit a fallback `@font-face` that adjusts a local font to the web font's metrics. The page then keeps its layout while the web font loads. The built-in table covers 104 families.
@@ -153,5 +182,6 @@ The 12xx range covers the font system.
 | `RI-1218` | A deprecated `@font` form. |
 | `RI-1219` | `preload` on a non-local slot. |
 | `RI-1220` | Invalid or partial `metrics` value. |
+| `RI-1504` | `font-<number>` names a weight that no loaded face provides. |
 
 The full table is in [diagnostics.md](diagnostics.md).

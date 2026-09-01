@@ -9,8 +9,9 @@ import { describe, expect, it } from "vitest";
 import { createCompiler } from "../../src/engine/index.js";
 import { resolveDirectives } from "../../src/directives/index.js";
 import { assembleSections } from "../../src/assembly.js";
+import { scalesTheme } from "../helpers/fixture-scales.js";
 
-const theme = resolveDirectives([]);
+const theme = scalesTheme();
 
 describe("concurrent SSR compilations via createCompiler()", () => {
 	it("produces identical results across concurrent compilations", async () => {

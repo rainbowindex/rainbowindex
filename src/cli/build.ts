@@ -15,6 +15,7 @@ export async function buildCSS(opts: CLIOptions, cwd: string): Promise<BuildResu
 
 	const { compiled } = await compileScannedProject({
 		css: cssSource,
+		cssPath: cssFile ?? undefined,
 		cwd,
 		surfacePatterns: opts.globs,
 		onInvalidPattern: (err) => {

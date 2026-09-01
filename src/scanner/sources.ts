@@ -244,8 +244,76 @@ const FILE_IO_TIMEOUT_MS = 10_000;
 const SCAN_CACHE_MAX_ENTRIES = 20_000;
 const scanCache = new Map<string, { mtimeMs: number; size: number; result: FileScanResult }>();
 
+// Same opt-in shape as the file-list cache, one step further: with a live
+// watcher evicting edited files, an entry that survives in scanCache is known
+// current, so the per-file stat() that would prove it can be skipped. A
+// 2000-file rebuild stats 2000 files to learn that one changed. Off by default —
+// a one-shot build has nobody to evict, and would serve whatever it read last.
+let scanChangeTrackingEnabled = false;
+
+export function enableScanChangeTracking(): void {
+	scanChangeTrackingEnabled = true;
+}
+
+/**
+ * Drop `file` from the scan cache — the watcher saw it change, so its classes
+ * must be read again. `cwd` resolves watcher-relative paths (chokidar reports
+ * them relative when constructed with a cwd); absolute paths need no cwd.
+ */
+export function markSourceFileChanged(file: string, cwd?: string): void {
+	scanCache.delete(cwd === undefined ? file : resolve(cwd, file));
+}
+
+/** Watcher gone — every cache entry loses its guarantee, so drop the lot. */
+export function disableScanChangeTracking(): void {
+	scanChangeTrackingEnabled = false;
+	scanCache.clear();
+}
+
+/**
+ * Running union of the per-file scan results, held as a multiset so a rebuild
+ * pays only for the files that changed. Re-unioning from scratch costs one
+ * Set.add per class occurrence — 480k adds to rediscover the same 420 classes
+ * on a 2000-file project — and an edit to one file would pay all of it.
+ *
+ * `counts` is what makes the incremental step sound: a class stays in the union
+ * until the last file mentioning it stops doing so. `results` is index-aligned
+ * with the scanned file list, and scanOneFile returns cached results by
+ * identity, so `results[i] !== previous[i]` marks exactly the files to re-fold.
+ */
+let fileUnion: {
+	results: FileScanResult[];
+	counts: Map<string, number>;
+	classes: Set<string>;
+} | null = null;
+
+/** Fold one file's classes into the multiset; `delta` is +1 to add, -1 to drop. */
+function applyToUnion(
+	union: { counts: Map<string, number>; classes: Set<string> },
+	result: FileScanResult | undefined,
+	delta: 1 | -1,
+): void {
+	if (!result?.classes) return;
+	for (const cls of result.classes) {
+		const next = (union.counts.get(cls) ?? 0) + delta;
+		if (next > 0) {
+			union.counts.set(cls, next);
+			if (delta === 1) union.classes.add(cls);
+		} else {
+			union.counts.delete(cls);
+			union.classes.delete(cls);
+		}
+	}
+}
+
 async function scanOneFile(file: string): Promise<FileScanResult> {
 	const warnings: string[] = [];
+	// A watcher-armed hit needs no stat: markSourceFileChanged() already removed
+	// every entry an edit invalidated.
+	if (scanChangeTrackingEnabled) {
+		const tracked = scanCache.get(file);
+		if (tracked) return tracked.result;
+	}
 	try {
 		const stats = await withTimeout(stat(file), FILE_IO_TIMEOUT_MS, "stat() timed out");
 		const cached = scanCache.get(file);
@@ -322,6 +390,9 @@ export async function scanSourceFilesAsync(
 	};
 	await Promise.all(Array.from({ length: Math.min(CONCURRENCY_LIMIT, files.length) }, worker));
 
+	// Warnings stay on the per-result loop: it is one cheap pass over mostly
+	// empty arrays, and its push order and budget accounting depend on what
+	// `allWarnings` already holds from inline/resolve warnings.
 	const seen = new Set(allWarnings);
 	for (const result of results) {
 		if (result.failure) {
@@ -329,13 +400,30 @@ export async function scanSourceFilesAsync(
 			seen.add(result.failure);
 			continue;
 		}
-		if (result.classes) {
-			for (const cls of result.classes) {
-				allClasses.add(cls);
-			}
-		}
 		pushWarningsDeduped(allWarnings, result.warnings, seen);
 	}
+
+	// Classes are the expensive half, and unlike warnings they fold into an
+	// order-independent set — so the union carries over between rebuilds and
+	// only the files whose result object changed are re-folded. A file list of a
+	// different length restarts it: the index alignment the diff relies on is
+	// gone. Any other reshuffle is still correct, because the multiset is a sum
+	// over slots — it just re-folds more slots than it needs to.
+	if (fileUnion === null || fileUnion.results.length !== results.length) {
+		fileUnion = { results, counts: new Map(), classes: new Set() };
+		for (const result of results) applyToUnion(fileUnion, result, 1);
+	} else {
+		const previous = fileUnion.results;
+		for (let i = 0; i < results.length; i++) {
+			if (previous[i] === results[i]) continue;
+			applyToUnion(fileUnion, previous[i], -1);
+			applyToUnion(fileUnion, results[i], 1);
+		}
+		fileUnion.results = results;
+	}
+	// Folded into `allClasses` rather than kept there: that set already carries
+	// this call's inline-@source classes, which vary with `sources`.
+	for (const cls of fileUnion.classes) allClasses.add(cls);
 
 	return { classes: allClasses, authored, warnings: allWarnings };
 }
@@ -346,6 +434,10 @@ export async function scanSourceFilesAsync(
  * sources next, auto-discovered dep safelists last — predictable for
  * debugging, identical patterns dedupe at glob expansion time, and identical
  * input produces byte-identical output on both surfaces.
+ *
+ * `suppressed` carries the entry's `ri-disable` codes. Scan warnings (RI-14xx)
+ * report no position in the CSS, so the file-wide comment is the only form that
+ * can reach them, and this is the funnel where they enter a project's warnings.
  */
 export async function collectProjectClasses(
 	themeSources: readonly SourceDirective[],
@@ -353,11 +445,12 @@ export async function collectProjectClasses(
 	cwd: string,
 	warnings: string[],
 	warningSeen: Set<string>,
+	suppressed?: ReadonlySet<string>,
 ): Promise<ScannedClasses> {
 	const discovered = discoverPackageSafelistSources(cwd);
-	pushWarningsDeduped(warnings, discovered.warnings, warningSeen);
+	pushWarningsDeduped(warnings, discovered.warnings, warningSeen, suppressed);
 	const allSources = [...themeSources, ...surfaceSources, ...discovered.sources];
 	const scanResult = await scanSourceFilesAsync(allSources, cwd);
-	pushWarningsDeduped(warnings, scanResult.warnings, warningSeen);
+	pushWarningsDeduped(warnings, scanResult.warnings, warningSeen, suppressed);
 	return { classes: scanResult.classes, authored: scanResult.authored };
 }

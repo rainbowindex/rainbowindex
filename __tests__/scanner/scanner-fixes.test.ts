@@ -98,7 +98,9 @@ describe("expansion warnings surface in scan warnings", () => {
 				[{ pattern: "src/**/*.tsx", negated: false, inline: false }],
 				dir,
 			);
-			expect(warnings.filter((w) => w.includes("[RI-1409]"))).toHaveLength(1);
+			const depthWarnings = warnings.filter((w) => w.includes("[RI-1409]"));
+			expect(depthWarnings).toHaveLength(1);
+			expect(depthWarnings[0]).toContain(join(dir, "src", "App.tsx"));
 		} finally {
 			cleanup();
 		}

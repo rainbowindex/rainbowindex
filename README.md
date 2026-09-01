@@ -187,8 +187,8 @@ Supported variants:
 - **Pseudo-classes** — `hover`, `focus`, `focus-visible`, `active`, `visited`, `disabled`, `enabled`, `checked`, `empty`, `first`, `last`, `odd`, `even`, `only`
 - **Pseudo-elements** — `before`, `after`, `placeholder`, `file`, `marker`, `selection`, `first-line`, `first-letter`, `backdrop`
 - **Media** — `dark`, `print`, `portrait`, `landscape`, `motion-safe`, `motion-reduce`, `starting`
-- **Breakpoints** — `sm`, `md`, `lg`, `xl` (theme-driven, customizable via `@breakpoint`)
-- **Container queries** — `@sm`, `@md`, …
+- **Breakpoints** — every name from `@breakpoint`; none ships
+- **Container queries** — the same names with an `@` prefix
 - **Attribute selectors** — `data-[state=open]`, `aria-[pressed=true]`
 - **Arbitrary** — `[selector]`, `[@media(...)]`
 
@@ -238,7 +238,7 @@ Customization happens in your CSS input, not a JS config. The engine recognizes:
 | `@spacing` | Set the spacing base unit. |
 | `@text` | Define text size tokens (`size, line-height`). |
 | `@font` | Register font families inside a single `@font { … }` block. Local files are repeatable `face:` entries (e.g. upright + italic). Known families get an automatic zero-CLS metrics fallback (`metrics: none` opts out). Plain `@font-face` rules are standard CSS and pass through untouched. |
-| `@rounded` | Corner shape (`round`, `squircle`, `superellipse(N)`, etc). Radii are spacing multiples, so there are no radius tokens. |
+| `@rounded` | Corner shape (`round`, `squircle`, `superellipse(N)`, etc), and named radii. Unnamed radii are spacing multiples: `rounded-4`. |
 | `@fluid` | Configure fluid type/spacing range. |
 | `@animate` | Register named animations with inline `@keyframes`. |
 | `@utility` | Define a custom utility (static or functional `name-*`). |
@@ -251,6 +251,8 @@ Customization happens in your CSS input, not a JS config. The engine recognizes:
 | `@register` | Emit CSS `@property` registrations. |
 | `@layer` | Place the generated output in cascade layers (intercepted, own grammar). |
 | `@media`, `@import`, other standard at-rules | Standard CSS — passed through untouched. |
+
+A named scale can also hold utilities. A `name { … }` block with no colon before it defines a utility in that scale's class family, so `@shadow { lifted-* { … } }` makes `shadow-lifted-*`. See [theming.md](docs/theming.md#utility-blocks).
 
 Example:
 
@@ -283,7 +285,7 @@ Example:
 @source not "src/**/legacy/*";
 ```
 
-Default theme scales: `colors`, `spacing`, `text`, `breakpoints`, `shadows`, `weights`, `easing`, `fluid`, `animations`, `blur`, `leading`, `tracking`. The `z`, `opacity`, and `duration` scales ship empty — numeric class forms are computed, and their directives add named tokens.
+The package ships two defaults: the `colors` palette and the `spacing` base. Every other scale — `text`, `leading`, `tracking`, `shadows`, `radii`, `breakpoints`, `weights`, `easing`, `blur`, `animations`, `fluid`, `z`, `opacity`, `duration` — starts empty, and its directive defines the named tokens. Numeric and keyword class forms are computed, so they work with no theme at all.
 
 ## `ri()` — runtime class merger
 

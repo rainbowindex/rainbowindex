@@ -78,6 +78,11 @@ const FRACTION_SAMPLES = Object.freeze([
 
 const INT_SAMPLES = Object.freeze(["0", "1", "2", "3", "4", "6", "8", "10", "12"]);
 
+const INT_RE = /^\d+$/;
+
+/** The nine standard font-weight steps — numeric candidates for the `weight` kind. */
+const WEIGHT_STEPS = Object.freeze(["100", "200", "300", "400", "500", "600", "700", "800", "900"]);
+
 const PERCENT_SAMPLES = Object.freeze([
 	"0",
 	"5",
@@ -165,16 +170,24 @@ function candidateValues(kind: ValueSpaceKind, theme: ResolvedTheme): string[] {
 			return Object.keys(theme.text);
 		case "fluid-text-size":
 			return Object.keys(theme.text).map((size) => `fluid-${size}`);
+		case "fluid-range":
+			return Object.keys(theme.fluidRanges);
 		case "font-slot":
 			return [...new Set([...BUILTIN_FONT_SLOTS, ...theme.fonts.map((slot) => slot.slot)])];
 		case "weight":
-			return Object.keys(theme.weights);
+			// Named @weight tokens plus the nine standard numeric steps, so
+			// completions offer font-100..font-900 with no theme at all.
+			return [...Object.keys(theme.weights), ...WEIGHT_STEPS];
+		// Named @rounded radii plus the spacing multiples, the way @weight pairs
+		// its tokens with the numeric steps. Without the names, `rounded-roof`
+		// compiles but is offered by neither completions nor generated types.
 		case "rounded":
-			return [...RADIUS_SAMPLES];
+			return [...Object.keys(theme.radii), ...RADIUS_SAMPLES];
 		case "rounded-side": {
 			const out: string[] = [];
+			const sizes = [...Object.keys(theme.radii), ...RADIUS_SAMPLES];
 			for (const side of ROUNDED_SIDES) {
-				for (const size of RADIUS_SAMPLES) out.push(`${side}-${size}`);
+				for (const size of sizes) out.push(`${side}-${size}`);
 			}
 			return out;
 		}
@@ -294,7 +307,9 @@ export function enumerateClassNames(theme: ResolvedTheme): ClassEnumeration {
 				seen.add(name);
 				classes.push({ name, kind, root });
 				if (kind === "spacing") spacingHit = true;
-				if (kind === "int") intHit = true;
+				// A numeric weight step makes font-<number> an open template,
+				// the same shape the "int" kind produces for other roots.
+				if (kind === "int" || (kind === "weight" && INT_RE.test(value))) intHit = true;
 			}
 		}
 		for (const keyword of spec.keywords ?? []) {

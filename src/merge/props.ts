@@ -210,10 +210,11 @@ const BUILTIN_STATIC_PROPS: Record<string, readonly string[]> = Object.assign(Ob
 	outline: ["outline-width"],
 	"outline-hidden": ["outline-style", "outline-width", "outline-color", "outline-offset"],
 
-	// Shadow / ring (static bare + reset forms; valued forms via PREFIX_PROPS).
+	// Shadow / ring (static reset + bare ring forms; valued forms via PREFIX_PROPS).
 	// Each composable family claims box-shadow (shared) + its own slot var, so
 	// shadow/inset-shadow/ring/inset-ring coexist while same-family repeats dedupe.
-	shadow: ["box-shadow", "--ri-shadow"],
+	// Bare `shadow` is not static: with no default shadow scale it only resolves
+	// when the theme defines a `DEFAULT` (or `md`) token via @shadow.
 	"shadow-none": ["box-shadow", "--ri-shadow"],
 	ring: ["box-shadow", "--ri-ring-shadow"],
 	"inset-ring": ["box-shadow", "--ri-inset-ring-shadow"],
@@ -822,26 +823,9 @@ addAll(
 	],
 	["~divide:border-style"],
 );
-// Animation (static) — includes the disclosure animations for the
-// @rainbowindex/ui Accordion + Collapsible primitives (keyframes live in
-// DEFAULT_ANIMATIONS).
-addAll(
-	[
-		"animate-spin",
-		"animate-pulse",
-		"animate-bounce",
-		"animate-ping",
-		"animate-in",
-		"animate-out",
-		"animate-none",
-		"animate-accordion-down",
-		"animate-accordion-up",
-		"animate-collapsible-down",
-		"animate-collapsible-up",
-		"animate-caret-blink",
-	],
-	["animation"],
-);
+// Animation (static). A named animation is theme-driven, so it merges through
+// the `animate` prefix below rather than from a list here.
+addAll(["animate-in", "animate-out", "animate-none"], ["animation"]);
 addAll(["animate-infinite", "animate-once", "animate-twice"], ["animation-iteration-count"]);
 addAll(
 	["animate-fill-none", "animate-fill-forwards", "animate-fill-both", "animate-fill-backwards"],
@@ -1073,6 +1057,9 @@ const PREFIX_PROPS: Record<string, readonly string[]> = Object.assign(Object.cre
 	...MARGIN_MAP,
 	...GAP_MAP,
 	...FLUID_SPACING_PROPS,
+	// fluid-<name> scope classes all claim the same scope-var pair, so a later
+	// range wins over an earlier one.
+	fluid: ["--fluid-scope-min", "--fluid-scope-max"],
 	"space-x": ["~space:margin-inline-start", "~space:margin-inline-end"],
 	"space-y": ["~space:margin-block-start", "~space:margin-block-end"],
 	...INSET_MAP,
@@ -1230,10 +1217,13 @@ const PREFIX_PROPS: Record<string, readonly string[]> = Object.assign(Object.cre
 	"via-position": ["--ri-gradient-via-position"],
 	"to-position": ["--ri-gradient-to-position"],
 
-	// Animations
+	// Animations. `animate` is last of the four by length, so the three
+	// specific prefixes match first and `animate-{name}` catches every
+	// @animate token and arbitrary shorthand.
 	"animate-duration": ["animation-duration"],
 	"animate-delay": ["animation-delay"],
 	"animate-ease": ["animation-timing-function"],
+	animate: ["animation"],
 	"break-before": ["break-before"],
 	"break-after": ["break-after"],
 	"break-inside": ["break-inside"],
@@ -1685,4 +1675,4 @@ export function buildFirstSegmentMap(
 export const PREFIX_FIRST_SEGMENT_MAP: ReadonlyMap<string, readonly string[]> =
 	buildFirstSegmentMap(SORTED_PREFIXES);
 
-export { BUILTIN_STATIC_PROPS, PREFIX_PROPS, OVERRIDES };
+export { BUILTIN_STATIC_PROPS, OVERRIDES, PREFIX_PROPS };

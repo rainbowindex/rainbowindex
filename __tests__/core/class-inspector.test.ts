@@ -4,7 +4,9 @@ import { createClassInspector } from "../../src/engine/inspector.js";
 import { listVariants } from "../../src/engine/variants.js";
 import { createCompiler } from "../../src/engine/index.js";
 
-const defaultTheme = analyzeProjectCSS("").theme;
+// No breakpoint ships, so the suites that check responsive and container
+// variants declare the ones they name.
+const baseTheme = analyzeProjectCSS("@breakpoint { sm: 40rem; md: 48rem; }").theme;
 
 const customTheme = analyzeProjectCSS(`
 @color { brand: 0.18 330; }
@@ -14,7 +16,7 @@ const customTheme = analyzeProjectCSS(`
 `).theme;
 
 describe("createClassInspector — validate", () => {
-	const inspector = createClassInspector(defaultTheme);
+	const inspector = createClassInspector(baseTheme);
 
 	test.each([
 		"flex",
@@ -140,7 +142,7 @@ describe("createClassInspector — custom theme", () => {
 });
 
 describe("createClassInspector — explain", () => {
-	const inspector = createClassInspector(defaultTheme);
+	const inspector = createClassInspector(baseTheme);
 
 	test("explains a plain utility", () => {
 		const explanation = inspector.explain("px-4");
@@ -199,7 +201,7 @@ describe("validate ⟺ compile parity", () => {
 	];
 
 	test.each([
-		["default", defaultTheme],
+		["default", baseTheme],
 		["custom", customTheme],
 	] as const)("%s theme", (_label, theme) => {
 		const inspector = createClassInspector(theme);
@@ -254,7 +256,7 @@ describe("listVariants", () => {
 	});
 
 	test("inspector.variants() is cached and frozen", () => {
-		const inspector = createClassInspector(defaultTheme);
+		const inspector = createClassInspector(baseTheme);
 		const first = inspector.variants();
 		expect(inspector.variants()).toBe(first);
 		expect(Object.isFrozen(first)).toBe(true);
@@ -264,7 +266,8 @@ describe("listVariants", () => {
 describe("analyzeProjectCSS", () => {
 	test("empty css resolves to a usable default theme", () => {
 		const { theme, warnings } = analyzeProjectCSS("");
-		expect(Object.keys(theme.breakpoints).length).toBeGreaterThan(0);
+		expect(theme.spacing.base).toBe("0.25rem");
+		expect(Object.keys(theme.colors).length).toBeGreaterThan(0);
 		expect(warnings).toEqual([]);
 	});
 

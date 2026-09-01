@@ -115,20 +115,22 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 					return;
 				}
 
+				const from =
+					root.source?.input?.file ??
+					root.source?.input?.id ??
+					root.source?.input?.from ??
+					"<rainbowindex>";
+
 				const { compiled, warningSeen } = await compileScannedProject({
 					css: rawCSS,
 					cwd,
+					cssPath: from,
 					surfacePatterns: options.sources,
 					onInvalidPattern: (err) => `[RI-1015] ${err}`,
 				});
 				// Same array identity the pipeline pushed into — post-finalize warnings
 				// dedupe against everything the compile already emitted.
 				const compilationWarnings = compiled.warnings;
-				const from =
-					root.source?.input?.file ??
-					root.source?.input?.id ??
-					root.source?.input?.from ??
-					"<rainbowindex>";
 				// User nodes stay in the AST; `compiled.sections` is generated-only
 				// (user CSS is carried separately in compiled.userCSS).
 				stripRIDirectiveNodes(root);
@@ -142,11 +144,11 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 				// yields the identical final order.
 				const slotWarnings: string[] = [];
 				warnStandaloneSlots(root, slotWarnings);
-				pushWarningsDeduped(compilationWarnings, slotWarnings, warningSeen);
+				pushWarningsDeduped(compilationWarnings, slotWarnings, warningSeen, compiled.suppressed);
 
 				const applyWarnings: string[] = [];
-				processApply(root, compiled.theme, applyWarnings);
-				pushWarningsDeduped(compilationWarnings, applyWarnings, warningSeen);
+				processApply(root, compiled.theme, applyWarnings, from);
+				pushWarningsDeduped(compilationWarnings, applyWarnings, warningSeen, compiled.suppressed);
 
 				if (compiled.sections.length > 0) {
 					const generatedRoot = postcss.parse(compiled.sections.join("\n\n"), { from });
@@ -155,7 +157,7 @@ const rainbowindex: PluginCreator<RainbowIndexOptions> = (options: RainbowIndexO
 
 				const cssFnWarnings: string[] = [];
 				processCSSFunctions(root, compiled.theme, cssFnWarnings);
-				pushWarningsDeduped(compilationWarnings, cssFnWarnings, warningSeen);
+				pushWarningsDeduped(compilationWarnings, cssFnWarnings, warningSeen, compiled.suppressed);
 
 				for (const warning of compilationWarnings) {
 					result.warn(warning);

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { resolveUtility } from "../../../src/utilities/index.js";
 import { resolveDirectives } from "../../../src/directives/index.js";
+import { resolveUtility } from "../../../src/utilities/index.js";
 import { parseUtility } from "../../../src/utilities/parser.js";
 import { fixtureTheme } from "../../helpers/fixture-colors.js";
+import { scalesTheme } from "../../helpers/fixture-scales.js";
+import { typographyTheme } from "../../helpers/fixture-typography.js";
 
 // A theme carrying the former default palette, so color utilities resolve.
-const theme = fixtureTheme();
+const theme = scalesTheme(typographyTheme(fixtureTheme()));
 
 describe("utility resolver dispatch", () => {
 	it("routes spacing utilities through the spacing resolver", () => {
@@ -369,16 +371,15 @@ describe("border utilities", () => {
 // ---------------------------------------------------------------------------
 
 describe("effects utilities", () => {
-	it("shadow → --ri-shadow slot + composed box-shadow", () => {
-		const r = resolveUtility("shadow", null, false, theme);
+	it("shadow-none → --ri-shadow slot + composed box-shadow", () => {
+		const r = resolveUtility("shadow-none", null, false, theme);
 		expect(r).not.toBeNull();
 		expect(r!.declarations[0].property).toBe("--ri-shadow");
 		expect(r!.declarations.some((d) => d.property === "box-shadow")).toBe(true);
 	});
 
-	it("shadow-lg → var(--shadow-lg)", () => {
-		const r = resolveUtility("shadow-lg", null, false, theme);
-		expect(r!.declarations[0].value).toContain("--shadow-lg");
+	it("shadow-lg → null: no shadow scale ships", () => {
+		expect(resolveUtility("shadow-lg", null, false, theme)).toBeNull();
 	});
 
 	it("opacity-50 → opacity: 50%", () => {
@@ -570,9 +571,11 @@ describe("fluid typography utilities", () => {
 	});
 
 	it("text-fluid-lg respects @fluid text unit and binds to the text bound token", () => {
-		const customTheme = resolveDirectives([
-			{ type: "fluid", body: "min: 24rem; max: 72rem; unit: vw;", modifier: "text" },
-		]);
+		const customTheme = typographyTheme(
+			resolveDirectives([
+				{ type: "fluid", body: "min: 24rem; max: 72rem; unit: vw;", modifier: "text" },
+			]),
+		);
 		const r = resolveUtility("text-fluid", "lg", false, customTheme);
 		expect(r).not.toBeNull();
 		// Unit is baked; bounds are referenced via the published :root token (the
@@ -580,6 +583,47 @@ describe("fluid typography utilities", () => {
 		// fallback to the global --fluid-min.
 		expect(r!.declarations[0].value).toContain("100vw");
 		expect(r!.declarations[0].value).toContain("var(--fluid-text-min, var(--fluid-min))");
+	});
+
+	it("text-fluid-sm/3xl → explicit endpoint pair", () => {
+		const parsed = parseUtility("text-fluid-sm/3xl");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].property).toBe("font-size");
+		expect(r!.declarations[0].value).toContain("clamp(var(--text-sm), calc(0.875rem + 1.375rem *");
+		expect(r!.declarations[0].value).toContain("var(--text-3xl))");
+		expect(r!.declarations[1].property).toBe("line-height");
+		expect(r!.declarations[1].value).toBe("var(--text-3xl-leading)");
+	});
+
+	it("text-fluid-3xl/sm → descending pair, bounds ordered, leading from the last size", () => {
+		const parsed = parseUtility("text-fluid-3xl/sm");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toContain("clamp(var(--text-sm), calc(2.25rem + -1.375rem *");
+		expect(r!.declarations[0].value).toContain("var(--text-3xl))");
+		expect(r!.declarations[1].value).toBe("var(--text-sm-leading)");
+	});
+
+	it("text-fluid-lg/7 → derived ramp with a line-height modifier", () => {
+		const parsed = parseUtility("text-fluid-lg/7");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toContain("clamp(var(--text-md),");
+		expect(r!.declarations[1].value).toBe("1.75rem");
+	});
+
+	it("text-fluid-sm/3xl/tight → pair with a line-height modifier", () => {
+		const parsed = parseUtility("text-fluid-sm/3xl/tight");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toContain("var(--text-3xl))");
+		expect(r!.declarations[1].value).toBe("1.25");
+	});
+
+	it("text-fluid-sm/nope → unresolvable trailing segment does not resolve", () => {
+		const parsed = parseUtility("text-fluid-sm/nope");
+		expect(resolveUtility(parsed.utility, parsed.value, parsed.negative, theme)).toBeNull();
 	});
 });
 
@@ -695,7 +739,7 @@ describe("fluid spacing utilities", () => {
 		expect(r!.declarations[0].property).toBe("padding");
 		// Default multiplier 2: min = base, max = base * 2, no baked rem endpoints.
 		expect(r!.declarations[0].value).toBe(
-			"clamp(var(--x), calc(var(--x) + calc(var(--x) * 1) * ((100vw - var(--fluid-spacing-min, var(--fluid-min))) / calc(var(--fluid-spacing-max, var(--fluid-max)) - var(--fluid-spacing-min, var(--fluid-min))))), calc(var(--x) * 2))",
+			"clamp(var(--x), calc(var(--x) + calc(var(--x) * 1) * ((100vw - var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))) / calc(var(--fluid-scope-max, var(--fluid-spacing-max, var(--fluid-max))) - var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))))), calc(var(--x) * 2))",
 		);
 	});
 
@@ -714,17 +758,120 @@ describe("fluid spacing utilities", () => {
 		expect(r).not.toBeNull();
 		expect(r!.declarations[0].property).toBe("margin");
 		expect(r!.declarations[0].value).toBe(
-			"calc(clamp(var(--x), calc(var(--x) + calc(var(--x) * 1) * ((100vw - var(--fluid-spacing-min, var(--fluid-min))) / calc(var(--fluid-spacing-max, var(--fluid-max)) - var(--fluid-spacing-min, var(--fluid-min))))), calc(var(--x) * 2)) * -1)",
+			"calc(clamp(var(--x), calc(var(--x) + calc(var(--x) * 1) * ((100vw - var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))) / calc(var(--fluid-scope-max, var(--fluid-spacing-max, var(--fluid-max))) - var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))))), calc(var(--x) * 2)) * -1)",
 		);
 	});
 
 	it("p-fluid-(--x) respects @fluid spacing multiplier", () => {
 		const customTheme = resolveDirectives([
+			{ type: "fluid", body: "min: 20rem; max: 80rem;" },
 			{ type: "fluid", body: "multiplier: 1.5;", modifier: "spacing" },
 		]);
 		const r = resolveUtility("p-fluid", "[var(--x)]", false, customTheme);
 		expect(r).not.toBeNull();
 		expect(r!.declarations[0].value).toContain("calc(var(--x) * 1.5)");
 		expect(r!.declarations[0].value).toContain("calc(var(--x) * 0.5)");
+	});
+
+	it("p-fluid-4/8 → clamp between both stated steps", () => {
+		const parsed = parseUtility("p-fluid-4/8");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].property).toBe("padding");
+		expect(r!.declarations[0].value).toContain("clamp(1rem, calc(1rem + 1rem * ((100vw");
+		expect(r!.declarations[0].value).toContain("2rem)");
+	});
+
+	it("p-fluid-8/4 → descending ramp with ordered clamp bounds", () => {
+		const parsed = parseUtility("p-fluid-8/4");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toContain("clamp(1rem, calc(2rem + -1rem * ((100vw");
+		expect(r!.declarations[0].value).toContain("2rem)");
+	});
+
+	it("gap-fluid-0/6 → zero is a legal pair endpoint", () => {
+		const parsed = parseUtility("gap-fluid-0/6");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].property).toBe("gap");
+		expect(r!.declarations[0].value).toContain("clamp(0rem, calc(0rem + 1.5rem * ((100vw");
+	});
+
+	it("p-fluid-[0.5rem]/[3rem] → arbitrary endpoints via CSS arithmetic", () => {
+		const parsed = parseUtility("p-fluid-[0.5rem]/[3rem]");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toContain("clamp(min(0.5rem, 3rem),");
+		expect(r!.declarations[0].value).toContain("calc(0.5rem + (3rem - 0.5rem) *");
+		expect(r!.declarations[0].value).toContain("max(0.5rem, 3rem))");
+	});
+
+	it("p-fluid-4/(--x) → step and var endpoints mix", () => {
+		const parsed = parseUtility("p-fluid-4/(--x)");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toContain("clamp(min(1rem, var(--x)),");
+		expect(r!.declarations[0].value).toContain("calc(1rem + (var(--x) - 1rem) *");
+	});
+
+	it("-m-fluid-4/8 → negated pair clamp", () => {
+		const parsed = parseUtility("-m-fluid-4/8");
+		expect(parsed.negative).toBe(true);
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, theme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].property).toBe("margin");
+		expect(r!.declarations[0].value).toMatch(/^calc\(clamp\(1rem, .* \* -1\)$/);
+	});
+
+	it("p-fluid-4/nope → invalid endpoint does not resolve", () => {
+		const parsed = parseUtility("p-fluid-4/nope");
+		expect(resolveUtility(parsed.utility, parsed.value, parsed.negative, theme)).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fluid range scope classes
+// ---------------------------------------------------------------------------
+
+describe("fluid range scope classes", () => {
+	const rangeTheme = scalesTheme(
+		typographyTheme(
+			resolveDirectives([
+				{ type: "fluid", body: "min: 20rem; max: 48rem;", modifier: "compact" },
+				{ type: "fluid", body: "min: 48rem; max: 120rem;", modifier: "extra-wide" },
+			]),
+		),
+	);
+
+	it("fluid-compact → sets the scope bound vars from the range tokens", () => {
+		const parsed = parseUtility("fluid-compact");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, rangeTheme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].property).toBe("--fluid-scope-min");
+		expect(r!.declarations[0].value).toBe("var(--fluid-compact-min)");
+		expect(r!.declarations[1].property).toBe("--fluid-scope-max");
+		expect(r!.declarations[1].value).toBe("var(--fluid-compact-max)");
+	});
+
+	it("fluid-extra-wide → range names may carry dashes", () => {
+		const parsed = parseUtility("fluid-extra-wide");
+		const r = resolveUtility(parsed.utility, parsed.value, parsed.negative, rangeTheme);
+		expect(r).not.toBeNull();
+		expect(r!.declarations[0].value).toBe("var(--fluid-extra-wide-min)");
+	});
+
+	it("fluid ramps read the scope var above the family fallback", () => {
+		const r = resolveUtility("p-fluid", "4", false, rangeTheme);
+		expect(r!.declarations[0].value).toContain(
+			"var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))",
+		);
+	});
+
+	it("fluid-nope → warns RI-1503 and does not resolve", () => {
+		const warnings: string[] = [];
+		const r = resolveUtility("fluid", "nope", false, rangeTheme, warnings);
+		expect(r).toBeNull();
+		expect(warnings.join("\n")).toContain("[RI-1503]");
 	});
 });

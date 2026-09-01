@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
 import { resolveUtility } from "../../src/utilities/index.js";
 import { parseUtility } from "../../src/utilities/parser.js";
 import { fixtureTheme } from "../helpers/fixture-colors.js";
+import { typographyTheme } from "../helpers/fixture-typography.js";
 
-const theme = fixtureTheme();
+const theme = typographyTheme(fixtureTheme());
 
 /** Resolve a raw class string through the real parse → resolve pipeline. */
 function resolve(cls: string) {

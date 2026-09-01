@@ -5,6 +5,339 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-01
+
+### Added
+
+- **Numeric font weights, checked against the fonts you load.** `font-<number>`
+  now sets `font-weight` directly, for any weight from 1 to 1000 —
+  `font-300`, `font-500`, `font-617`. A named `@weight` token of the same
+  spelling still wins, and `font-[850]` is unchanged.
+
+  The number is compared against the `weight` of every loaded `@font` face. A
+  range (`weight: 300 900`, the variable-font case) accepts every number
+  between its bounds; a list or a single value (`weight: 400,700`) accepts
+  only those numbers. A weight that no face provides warns with the new
+  `[RI-1504]`, and the message names the weights that are available.
+
+  A class on its own carries no family, and a page can load several fonts, so
+  that check is a union: one covering face is enough. It stays quiet with no
+  `@font` block, and with a `system` slot, whose OS font has every weight.
+
+  Where the family *is* named — a `font-<slot>` beside the weight in one
+  `@apply` / `@a` / `@utility` class list — that family alone decides:
+
+  ```css
+  [data-slot="code"] {
+  	@a font-mono font-550;   /* Fira Code does not provide weight 550. It has 400, 700. */
+  }
+  ```
+
+  The last family in the list wins, and the two classes must share a variant
+  prefix (`md:font-mono` does not set the family for a plain `font-550`). A
+  weight no font provides is still reported once, by the union check. A class
+  written in markup has no list — the scanner keeps only the set of names — so
+  the union check governs there.
+
+  Completions and the generated class types offer `font-100` … `font-900`
+  beside the named `@weight` tokens, and read `font-<number>` as an open
+  numeric template.
+
+- **Three editor capabilities.** `rainbowindex/editor` gains `isSuppressible`
+  (`diagnostic-suppression`), so an editor offers a `ri-disable` comment only
+  where one would work; `weightIsLoaded` and `describeLoadedWeights`
+  (`font-weight-coverage`), the `[RI-1504]` check, so it can answer which
+  loaded fonts carry a weight; and `ThemeTokens.radii` / `ThemeTokens.fluidRanges`
+  (`named-radii-and-fluid-ranges`), which named radii and named `@fluid` ranges
+  had no token surface for. Gate on the capability strings, never on `version`.
+
+- **`ri-disable` comments.** Two plain CSS comments silence a diagnostic, so a
+  stylesheet carrying them stays valid CSS for every other tool.
+
+  `/* ri-disable RI-1124 */` anywhere in the CSS entry silences that code
+  everywhere. It is the only form that reaches the scanner and compile codes
+  (14xx, 15xx), which carry no position in your CSS. One comment may name
+  several codes: `/* ri-disable RI-1124, RI-1122 */`.
+
+  `/* ri-disable-next-line RI-1124 */` silences one place. Inside a scale body
+  it guards the entry that follows; outside a body it guards the next
+  directive:
+
+  ```css
+  @rounded {
+  	roof: 24px;
+  	/* ri-disable-next-line RI-1124 */
+  	full: 30px;
+  	hut: 8px;   /* still checked */
+  }
+  ```
+
+  Entry precision is available where the emitter knows the entry —
+  `[RI-1035]`, `[RI-1121]`, `[RI-1122]`, `[RI-1124]`. Other codes fall back to
+  the directive.
+
+  `RI-00xx` and `RI-20xx` cannot be silenced: they report a broken build or a
+  broken call, not a style choice. Naming one warns with the new `[RI-1040]`,
+  as does a comment that names no readable code.
+
+- **`compileProject()` reports what it silenced.** The result gains
+  `suppressed`, the set of codes the entry's `ri-disable` comments named, so
+  a caller that pushes warnings of its own can drop the ones the author
+  hid. Every stage inside the compile already pushes through it.
+
+- **Fluid endpoint pairs.** Fluid utilities take both ends of the ramp:
+  `p-fluid-4/8` grows from step 4 to step 8 across the `@fluid` range, and
+  `text-fluid-sm/3xl` ramps between two type steps. Arbitrary lengths and
+  `(--var)` endpoints mix (`p-fluid-[0.5rem]/(--x)`), zero is a legal
+  endpoint, and a descending pair (`p-fluid-8/4`) shrinks as the viewport
+  grows. Fluid type also takes the line-height modifier now:
+  `text-fluid-lg/7`, `text-fluid-sm/3xl/tight`.
+
+- **Named `@fluid` ranges and scope classes.** `@fluid compact { min: 20rem;
+  max: 48rem; }` defines a range, the tokens `--fluid-compact-{min,max}`, and
+  the scope class `fluid-compact`, which points every fluid utility on the
+  element and its descendants at that range through the inherited
+  `--fluid-scope-{min,max}` pair. A unit on a named range warns with
+  `RI-1039`; an unknown range name on the class warns with `RI-1503`.
+
+- **Container-query units in `@fluid`.** `unit` accepts `cqw`, `cqi`,
+  `cqmin`, and `cqmax`, so fluid ramps can track a container instead of the
+  viewport.
+
+- **Named radii in `@rounded`.** A key without a `--` prefix now names a
+  radius: `@rounded { roof: 24px; }` gives the class `rounded-roof` and the
+  token `--rounded-roof`, and the name works with the side and corner
+  suffixes (`rounded-tl-roof`). `--corner-scale` is still the only option;
+  any other `--` key still warns with `[RI-1122]`. Radii without a name stay
+  spacing multiples, so `rounded-4` is unchanged.
+
+- **Utility blocks in every named scale.** A `name { … }` or `name-* { … }`
+  block in a scale body defines a utility in that scale's class family, so the
+  math sits next to the tokens it reads:
+
+  ```css
+  @rounded {
+  	roof: 24px;
+  	roof-minus-* {
+  		border-radius: calc(var(--rounded-roof) - var(--value) * var(--spacing));
+  	}
+  }
+  ```
+
+  `rounded-roof-minus-2` subtracts two spacing steps from `--rounded-roof`.
+  The block uses the `@utility` grammar and the name takes the family's
+  prefix. `@rounded`, `@shadow`, `@blur`, `@z`, `@leading`, `@tracking`,
+  `@opacity`, `@duration`, `@ease`, `@weight`, `@text` and `@animate` all
+  accept them; `@weight` blocks land under `font-`.
+
+  `@color` does not: a colour name feeds `bg-`, `text-`, `border-`, `ring-`
+  and more, so a block would have no one family to land in. `@breakpoint`
+  names variants rather than utilities, and `@spacing` holds a single base
+  value.
+
+  A colon is what separates a utility block from the two block grammars that
+  already existed. `key: value { … }` stays what it was — `@color` options,
+  `@animate` keyframes — and only a block with no key before it is a utility.
+
+  Radius tokens are written to `:root` whether used or not, because a block
+  body is raw CSS that no usage pass can read.
+
+- **`@shadow` aliases.** A shadow value that is only another shadow's class
+  name now emits a reference to it: `@shadow { md: …; card: shadow-md; }`
+  gives `--shadow-card: var(--shadow-md)`. Using `shadow-card` pulls
+  `--shadow-md` into `:root` alongside it, so an alias never renders against
+  an undefined variable. The target may be defined in a later `@shadow`
+  block. An alias to a token that does not exist warns with the new
+  `[RI-1123]` and keeps its value verbatim.
+
+### Removed
+
+- **`@utility` no longer accepts a leading `.` on the name.** `@utility .card`
+  used to be silently treated as `@utility card`. No other directive did
+  this, and the dot was ignored without a word in `@source inline(".card")`,
+  `safelist(".card")`, and `class=".card"` markup, so the one exception
+  taught a rule that held nowhere else. A dotted name now warns with
+  `[RI-1035]` and is skipped, like every other invalid name. Write
+  `@utility card`.
+
+- **The shipped shadow scales are gone.** No `shadow-*` tokens ship any more:
+  the layered `px`–`2xl` scale and its building blocks (`line`, `drop`,
+  `hi-1`–`hi-4`, `dark-line`, `ring`, `layer-1`–`layer-7`) are removed, along
+  with the hardcoded `inset-shadow-*`, `text-shadow-*`, and `drop-shadow-*`
+  size scales. A shadow is now a project decision, not a shipped opinion.
+  Every value form still works — `shadow-none`, `shadow-{color}`,
+  `shadow-[v]`, and the same forms for the other three families — and `ring`
+  and `inset-ring` are untouched. Named sizes come back with
+  `@shadow md: …;`, and bare `shadow` reads the `DEFAULT` token.
+  Because the scale is empty by default, bare `shadow` is no longer a
+  built-in static utility: it resolves only when the theme defines
+  `DEFAULT` (or `md`).
+
+- **The last shipped scales are gone: breakpoints, weights, easing, blur,
+  animations, and the fluid range.** The package now ships exactly two
+  defaults — the colour palette and the `0.25rem` spacing base. Everything
+  else is a project decision:
+
+  | Gone | Was | Comes back with |
+  | --- | --- | --- |
+  | `sm:` `md:` `lg:` `xl:` and `@sm:` `@md:` … | 40/48/64/80rem | `@breakpoint { sm: 40rem; … }` |
+  | `font-thin` … `font-black` | 100–900 | `@weight { bold: 700; … }` |
+  | `ease-in`, `ease-out`, `ease-in-out` | cubic-beziers | `@ease { in: cubic-bezier(0.4, 0, 1, 1); … }` |
+  | `blur-xs` … `blur-3xl`, bare `blur` | 2px–64px, 8px | `@blur { md: 12px; … }` |
+  | `animate-spin`, `animate-pulse`, `animate-bounce`, `animate-ping` | four loops | `@animate { spin: spin 1s linear infinite { … } }` |
+  | `p-fluid-*`, `text-fluid-*`, `fluid-<name>` | 20rem–80rem ramp | `@fluid { min: 20rem; max: 80rem; }` |
+
+  The keyword and arbitrary forms are untouched: `blur-none`, `blur-[3px]`,
+  `ease-linear`, `ease-[cubic-bezier(…)]`, `animate-none`, `animate-[…]`,
+  `font-[850]`, and the whole enter/exit system (`animate-in`, `fade-in-50`,
+  `slide-in-from-top-4`, `blur-in-8`) need no tokens and keep working.
+  `max-w-sm` is a container width, not a breakpoint, and is unchanged.
+
+  Two consequences worth naming. A `@fluid` range no longer half-exists: with
+  no `min`/`max` the `--fluid-*` tokens are not written and every fluid
+  utility resolves to nothing, rather than ramping across a range nobody
+  chose. And `@fluid text`/`@fluid spacing`/named ranges no longer inherit a
+  shipped range to fill their gaps — a bound that is absent is simply not
+  configured, so `[RI-1022]`/`[RI-1023]` now fire only on a bound you
+  actually wrote.
+
+- **The shipped type scale is gone.** No `--text-*` tokens ship any more: the
+  14-step `2xs`–`9xl` text scale, the `leading-*` scale (`3`–`10`, `none`,
+  `tight`, `snug`, `normal`, `relaxed`, `loose`), and the `tracking-*` scale
+  (`tighter`–`widest`) are removed. Type is now a project decision, not a
+  shipped opinion. Every value form still works — `text-[18px]`,
+  `text-lg/[1.5]`, `leading-px`, `leading-[1.5]`, `tracking-[0.1em]` — and
+  `text-{color}` is untouched. Named sizes come back with `@text lg: 1.25rem,
+  1.4;`, `@leading tight: 1.25;`, and `@tracking wide: 0.025em;`.
+  `text-fluid-{size}` needs at least two `@text` steps to interpolate
+  between, and the `text-lg/7` modifier reads `@leading` tokens.
+
+- **`DEFAULT_TEXT_SIZES` is no longer exported.** `ri()` classified
+  `text-{name}` as a size against a hardcoded list that never matched the
+  shipped scale (it held `base`, which the scale lacked, and lacked `md`,
+  which the scale had). The merger now learns every size name from the
+  compiled theme, the way it already learns custom colors and font slots.
+  Before the first compile, `text-{name}` reads as a color.
+
+### Fixed
+
+- **A rejected utility block no longer corrupts the entries beside it.** A
+  block is cut from the directive body whether or not its name survived, but
+  the body was only swapped in when at least one block parsed. So a scale whose
+  blocks were *all* rejected kept its raw `{ … }` text, and the key/value
+  parsers — which do not read braces — took the block's own declarations for
+  scale entries: `@shadow { bad.name-* { box-shadow: … } }` defined a shadow
+  called `box-shadow`. Ten of the twelve block-taking scales were affected;
+  `@rounded` and `@animate` parse braces themselves and were not.
+
+- **A circular `@shadow` alias chain is reported.** `a: shadow-b; b: shadow-a`
+  and the self-alias `a: shadow-a` were accepted and rewritten into `var()`
+  references that point at each other, which CSS treats as guaranteed-invalid —
+  the shadow resolved to nothing, with nothing said. Both now warn with the new
+  `[RI-1125]` and keep their value verbatim, the way `@color` has always
+  reported the same shape with `[RI-1107]`. A chain that is not a cycle still
+  resolves.
+
+- **`FluidUnit` admits the container-query units.** `@fluid { unit: cqw; }`
+  validated and emitted correctly, but the exported type still listed only the
+  four viewport units, so a `FluidConfig` held a value its own type rejected.
+
+- **An empty weight in a `@font` face is no longer read as weight zero.**
+  `Number("")` is `0` and finite, so the trailing comma in `weight: 400,700,`
+  produced a face covering weight 0 and listed it in the `[RI-1504]` inventory.
+  A range is also read either way round now, so `weight: 900 300` describes the
+  same span as `300 900`.
+
+- **Named radii reach completions.** `@rounded { roof: 24px; }` compiled
+  `rounded-roof` and resolved it on hover, but class enumeration never read
+  `theme.radii`, so the name was offered by neither the completion list nor the
+  generated types — unlike every sibling scale, which reads its own record.
+
+- **`ri-disable` now reaches the scanner codes on every surface.** The
+  file-wide comment is the only form that can silence a scan warning
+  (`RI-14xx`), because those codes carry no position in your CSS — but the
+  scanned build path pushed them without consulting it, so
+  `/* ri-disable RI-1408 */` worked headless and did nothing under the CLI,
+  PostCSS, and Vite. The scan warnings now enter through the same filter as
+  every other stage. Vite's `@apply` expansion runs before any compile, so it
+  reads the codes straight out of the entry it holds.
+
+- **A `ri-disable-next-line` comment outside a directive body reports its own
+  mistakes.** Only directive bodies were read for pragma errors, so a typo or
+  an unsilenceable code in a top-level comment was ignored without the
+  `[RI-1040]` it promises. Such a comment is read once now, and an in-body
+  comment still warns exactly once.
+
+- **A named scale entry no longer loses to the built-in it shadows.**
+  `@shadow { none: … }`, `@blur { none: … }` and `@duration { initial: … }`
+  parsed and resolved, then the generator's own keyword branch answered
+  first and the value was dropped without a word. Every named scale now
+  resolves theme-first, matching `@z`, `@leading`, `@opacity`, and `@ease`,
+  which already did.
+
+- **`[RI-1408]` no longer fires on large files that hold no variant groups.**
+  The expansion budget counted plain pass-through text toward its 100,000
+  character limit, so any scanned file over that size warned as soon as it
+  held a single `{` — which every JavaScript and TypeScript file does. The
+  budget now counts only what expansion adds, so it measures the growth it
+  was written to bound. Input (500,000, `[RI-1407]`) and brace depth (10,
+  `[RI-1409]`) are unchanged.
+- **A single oversized variant group is measured before it is built.** The
+  budget was only read between groups, so one group — its prefix copied onto
+  every member — could allocate far past the limit before anything stopped
+  it. Each group is now sized first and left verbatim when it does not fit.
+
+### Changed
+
+- **Clashing with a built-in class name now warns with the new `[RI-1124]`.**
+  `@rounded { full: 30px; }` takes over `rounded-full`; the warning names the
+  class so the takeover is a choice, not a surprise. It fires for every named
+  scale, and only for names the consumer actually wrote — replacing a default
+  token such as `@color { red: … }` or `@blur { sm: … }` stays quiet. The set
+  of built-in names is read from the generators themselves rather than from a
+  hand-kept list, so it cannot drift. Where the built-in belongs to another
+  family and keeps the class — `blur-in` is an enter-animation utility that
+  only shares the `blur-` prefix — the warning says so instead of claiming a
+  takeover that did not happen.
+
+- **`ri()` resolves a named animation as an animation.** `animate-{name}`
+  merged through a hand-kept list of the shipped names, so a name from
+  `@animate` — and now every animation name, since none ships — was not
+  classified at all and could not replace another. The `animate-` prefix now
+  carries `animation`, the way `ease-` and `blur-` already carried theirs.
+
+- **`[RI-1004]` no longer names `sm/md/lg/xl` as built-in variants.** No
+  breakpoint ships, so the suggestion pointed at variants that do not exist
+  until `@breakpoint` names them. It now says so.
+
+- **Variant-group diagnostics name their source file.** `[RI-1407]`,
+  `[RI-1408]` and `[RI-1409]` now read `[RI-1408] src/App.tsx: …`, matching
+  `[RI-1411]`. Under PostCSS and Vite these warnings carried no location at
+  all, so a project-wide warning gave nothing to search for. Warnings
+  deduplicate on the full text, so a repeated breach now reports once per
+  file instead of once per project.
+
+- **A rebuild reads only the files that changed.** `rainbowindex --watch`
+  and the Vite dev server now let the watcher own cache invalidation. The
+  source file list is cached until a file is added or removed — the CLI
+  watcher joins the Vite plugin, which already cached it — and a file's
+  scanned classes are trusted until the watcher reports that file changed,
+  so a rebuild no longer runs a `stat()` on every source file to learn that
+  one of them moved. The union of scanned classes is also kept between
+  rebuilds as a multiset, and only the files whose result changed are folded
+  again: re-unioning from scratch costs one set insert per class occurrence,
+  which on a 2000-file project is roughly 480,000 inserts to rediscover the
+  same few hundred names. A one-shot build arms neither cache — with no
+  watcher to evict entries, it would serve whatever it read last.
+
+- **`compileProject()` reuses its analysis when the CSS is byte-identical.**
+  The memo that the CLI, PostCSS, and Vite builds already shared now sits
+  with the analysis itself, so the headless API gets it too. Repeat compiles
+  of one entry keep a single theme object, which is what every downstream
+  cache is keyed on — custom utilities, variants, and the per-class compile
+  memo. Warnings and diagnostics are still copied per call, so a caller that
+  mutates them cannot corrupt the memo.
+
 ## [0.5.1] - 2026-08-28
 
 ### Fixed

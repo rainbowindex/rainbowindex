@@ -39,6 +39,15 @@ export const editorCapabilities: readonly string[] = Object.freeze([
 	"structured-diagnostics",
 	"color-swatches",
 	"editor-session",
+	// `isSuppressible` — which diagnostic codes a `ri-disable` comment may name,
+	// so an editor can offer the comment only where it would work.
+	"diagnostic-suppression",
+	// `ThemeTokens.radii` and `ThemeTokens.fluidRanges`, for the named radii and
+	// named `@fluid` ranges that carry no token before this release.
+	"named-radii-and-fluid-ranges",
+	// `weightIsLoaded` / `describeLoadedWeights` — the RI-1504 coverage check,
+	// so an editor can answer "does any loaded font have this weight?".
+	"font-weight-coverage",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -77,6 +86,15 @@ export type { ParsedDirective, ResolvedTheme } from "../directives/foundation.js
 export { defaultTheme } from "../theme/index.js";
 export { diagnosticFromWarning, severityForCode, warningCode } from "../diagnostics.js";
 export type { Diagnostic, DiagnosticSeverity } from "../diagnostics.js";
+/** Whether a `ri-disable` comment may name this code. RI-00xx and RI-20xx
+ *  report a broken build or a broken call, so they cannot be silenced. */
+export { isSuppressible } from "../directives/suppress.js";
+/** The RI-1504 weight check, for a "which fonts carry this weight?" answer.
+ *  `weightIsLoaded` fails open exactly as the compiler's own warning does. */
+export {
+	describeLoadedWeights,
+	weightIsLoaded,
+} from "../integrations/font-providers/model.js";
 
 // ---------------------------------------------------------------------------
 // Class inspection — validate / explain single classes against a theme

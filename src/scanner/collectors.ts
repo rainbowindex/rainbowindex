@@ -176,7 +176,7 @@ export function scanClassTokens(
 	let expansionMap: OutputMap | null = null;
 	if (filteredSource.includes("{")) {
 		if (wantsPositions) expansionMap = new OutputMap();
-		expanded = expandVariantGroupsCore(filteredSource, warnings, expansionMap);
+		expanded = expandVariantGroupsCore(filteredSource, warnings, expansionMap, sink.path);
 	}
 
 	CLASS_RE.lastIndex = 0;
@@ -589,7 +589,7 @@ export function collectVariantHelperArguments(
 	]);
 	// Key collection reuses the class collectors — a Set-backed sink keeps them
 	// position-free regardless of what the outer sink wants.
-	const tokenSink = new SetSink(tokens);
+	const tokenSink = new SetSink(tokens, sink.path);
 	const callRanges: Array<[number, number]> = [];
 	VARIANT_HELPERS_CALL_RE.lastIndex = 0;
 	for (;;) {

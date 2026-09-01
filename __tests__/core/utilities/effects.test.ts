@@ -1,23 +1,23 @@
 import { describe, expect, it, test } from "vitest";
 import { resolveUtility } from "../../../src/utilities/index.js";
 import { fixtureTheme } from "../../helpers/fixture-colors.js";
+import { scalesTheme } from "../../helpers/fixture-scales.js";
 
-const theme = fixtureTheme();
+const theme = scalesTheme(fixtureTheme());
 
 describe("effects utilities", () => {
-	it("shadow → --ri-shadow slot + composed box-shadow", () => {
-		const r = resolveUtility("shadow", null, false, theme);
-		expect(r).not.toBeNull();
-		expect(r!.declarations[0].property).toBe("--ri-shadow");
+	it("shadow-none → --ri-shadow reset + composed box-shadow", () => {
+		const r = resolveUtility("shadow-none", null, false, theme);
+		expect(r!.declarations[0]).toEqual({ property: "--ri-shadow", value: "0 0 #0000" });
 		const boxShadow = r!.declarations.find((d) => d.property === "box-shadow");
 		expect(boxShadow!.value).toContain("var(--ri-ring-shadow, 0 0 #0000)");
 		expect(boxShadow!.value).toContain("var(--ri-shadow, 0 0 #0000)");
 	});
 
-	it("shadow-lg → --ri-shadow: var(--shadow-lg)", () => {
-		const r = resolveUtility("shadow-lg", null, false, theme);
-		expect(r!.declarations[0].property).toBe("--ri-shadow");
-		expect(r!.declarations[0].value).toBe("var(--shadow-lg)");
+	// No shadow scale ships: named sizes only resolve once @shadow defines them.
+	it("shadow / shadow-lg → null with no shadow tokens in the theme", () => {
+		expect(resolveUtility("shadow", null, false, theme)).toBeNull();
+		expect(resolveUtility("shadow-lg", null, false, theme)).toBeNull();
 	});
 
 	it("opacity-50 → opacity: 50%", () => {
@@ -201,11 +201,14 @@ describe("effects utilities", () => {
 		});
 	});
 
-	it("drop-shadow scale / none / color", () => {
-		const md = resolveUtility("drop-shadow-md", null, false, theme);
-		expect(md!.declarations[0].property).toBe("--ri-drop-shadow");
-		expect(md!.declarations[0].value).toContain("var(--ri-drop-shadow-color,");
-		expect(md!.declarations[1].property).toBe("filter");
+	it("drop-shadow none / arbitrary / color (no scale ships)", () => {
+		expect(resolveUtility("drop-shadow-md", null, false, theme)).toBeNull();
+		const arb = resolveUtility("drop-shadow-[0_1px_2px_red]", null, false, theme);
+		expect(arb!.declarations[0]).toEqual({
+			property: "--ri-drop-shadow",
+			value: "drop-shadow(0 1px 2px red)",
+		});
+		expect(arb!.declarations[1].property).toBe("filter");
 		expect(resolveUtility("drop-shadow-none", null, false, theme)!.declarations[0]).toEqual({
 			property: "--ri-drop-shadow",
 			value: "drop-shadow(0 0 #0000)",
@@ -279,10 +282,13 @@ describe("effects utilities", () => {
 		expect(r!.declarations[0].value).toBe("var(--my-shadow)");
 	});
 
-	it("inset-shadow-md → --ri-inset-shadow slot (color-parameterized) + composition", () => {
-		const r = resolveUtility("inset-shadow-md", null, false, theme);
-		expect(r!.declarations[0].property).toBe("--ri-inset-shadow");
-		expect(r!.declarations[0].value).toContain("var(--ri-inset-shadow-color,");
+	it("inset-shadow-[v] → --ri-inset-shadow slot + composition (no scale ships)", () => {
+		expect(resolveUtility("inset-shadow-md", null, false, theme)).toBeNull();
+		const r = resolveUtility("inset-shadow-[inset_0_1px_2px_red]", null, false, theme);
+		expect(r!.declarations[0]).toEqual({
+			property: "--ri-inset-shadow",
+			value: "inset 0 1px 2px red",
+		});
 		expect(r!.declarations.find((d) => d.property === "box-shadow")).toBeDefined();
 	});
 
@@ -333,10 +339,8 @@ describe("effects utilities", () => {
 		});
 	});
 
-	it("text-shadow-md / -none / -[v] / -(--c) → text-shadow property", () => {
-		const md = resolveUtility("text-shadow-md", null, false, theme);
-		expect(md!.declarations[0].property).toBe("text-shadow");
-		expect(md!.declarations[0].value).toContain("var(--ri-text-shadow-color,");
+	it("text-shadow -none / -[v] / -(--c) → text-shadow property (no scale ships)", () => {
+		expect(resolveUtility("text-shadow-md", null, false, theme)).toBeNull();
 		expect(resolveUtility("text-shadow-none", null, false, theme)!.declarations[0]).toEqual({
 			property: "text-shadow",
 			value: "none",

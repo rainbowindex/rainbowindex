@@ -4,22 +4,6 @@
  * Flow: class names → parse → resolve → sort → emit CSS string.
  */
 
-import { parseUtility, type ParsedUtility } from "../utilities/parser.js";
-import type { ResolvedTheme } from "../directives/foundation.js";
-import { resolveUtilityDeclarations, extractCustomUtilityRootInfo } from "../utilities/index.js";
-import type { CSSDeclaration, UtilityNestedBlock } from "../utilities/helpers.js";
-import { buildBreakpointWeights, computeSortKey } from "./ordering.js";
-import {
-	createCompilationContext,
-	registerCustomUtility,
-	registerCustomTextSizes,
-	registerCustomFontFamilies,
-	registerColorNames,
-	snapshotCompilationContext,
-} from "../merge/context.js";
-import { createRi } from "../merge/index.js";
-import { DEFAULT_TEXT_SIZES } from "../merge/resolve.js";
-import { pushWarningsDeduped } from "../warnings.js";
 import { escapeSelector } from "../css/escape.js";
 import {
 	ANIMATE_VAR_REF_RE,
@@ -28,9 +12,24 @@ import {
 	SHADOW_VAR_REF_RE,
 	TEXT_VAR_REF_RE,
 } from "../css/token-refs.js";
+import type { ResolvedTheme } from "../directives/foundation.js";
+import {
+	createCompilationContext,
+	registerColorNames,
+	registerCustomFontFamilies,
+	registerCustomTextSizes,
+	registerCustomUtility,
+	snapshotCompilationContext,
+} from "../merge/context.js";
+import { createRi } from "../merge/index.js";
 import { codepointCompare } from "../shared.js";
-import { applyVariantWrappers, resolveVariant, type VariantWrapper } from "./variants.js";
+import type { CSSDeclaration, UtilityNestedBlock } from "../utilities/helpers.js";
+import { extractCustomUtilityRootInfo, resolveUtilityDeclarations } from "../utilities/index.js";
+import { type ParsedUtility, parseUtility } from "../utilities/parser.js";
+import { pushWarningsDeduped } from "../warnings.js";
+import { buildBreakpointWeights, computeSortKey } from "./ordering.js";
 import { SUPPORT_BLOCKS } from "./support-blocks.js";
+import { applyVariantWrappers, resolveVariant, type VariantWrapper } from "./variants.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,8 +66,8 @@ export interface CompilationResult {
 	warnings: string[];
 }
 
-export { resolveVariant } from "./variants.js";
 export type { VariantWrapper } from "./variants.js";
+export { resolveVariant } from "./variants.js";
 
 /**
  * Optional out-param for compileUtility: when provided, records WHY a class
@@ -174,7 +173,7 @@ export function compileUtility(
 			pushWarningsDeduped(
 				result.warnings,
 				[
-					`[RI-1004] Unknown variant "${variant}" in "${parsed.raw}". Check spelling, or register it with \`@custom ${variant} { &:where(...) { @slot; } }\`. Built-in variants include hover, focus, dark, sm/md/lg/xl, data-[attr=value], and arbitrary [selector].`,
+					`[RI-1004] Unknown variant "${variant}" in "${parsed.raw}". Check spelling, or register it with \`@custom ${variant} { &:where(...) { @slot; } }\`. Built-in variants include hover, focus, dark, data-[attr=value], and arbitrary [selector]; a responsive variant is named by @breakpoint.`,
 				],
 				warnSeen,
 			);
@@ -224,13 +223,12 @@ export function compileUtility(
 // Keyframes & @property Generation
 // ---------------------------------------------------------------------------
 
+// Re-export compileCSSFunctions from dedicated module
+export { compileCSSFunctions, hasCSSFunctions } from "../css/functions.js";
 // The @property/@keyframes data and the substring tests that trigger it live
 // in support-blocks.ts — one table shared by the compile loop and
 // scanCSSForTokenUsage so the two detection sites can't drift.
 export { ANIMATION_KEYFRAMES, ANIMATION_PROPERTIES } from "./support-blocks.js";
-
-// Re-export compileCSSFunctions from dedicated module
-export { compileCSSFunctions, hasCSSFunctions } from "../css/functions.js";
 
 /**
  * Record token-variable references found in `str` (color stops, text sizes,
@@ -327,10 +325,6 @@ export function scanCSSForTokenUsage(css: string, result: CompilationResult): vo
 // ---------------------------------------------------------------------------
 // Core compilation loop
 // ---------------------------------------------------------------------------
-
-/** Built-in text size names — used to identify custom text sizes.
- *  Derived from merge runtime defaults (single source of truth). */
-const BUILTIN_TEXT_SIZES: ReadonlySet<string> = new Set(DEFAULT_TEXT_SIZES);
 
 /** Fresh, empty CompilationResult — shared by the compile loop and the class
  *  inspector (which needs a scratch result for warning/token bookkeeping). */
@@ -465,10 +459,8 @@ export function registerThemeOnContext(
 	ctx: ReturnType<typeof createCompilationContext>,
 	theme: ResolvedTheme,
 ): void {
-	const customTextSizeNames = Object.keys(theme.text).filter(
-		(name) => !BUILTIN_TEXT_SIZES.has(name),
-	);
-	if (customTextSizeNames.length > 0) registerCustomTextSizes(ctx, customTextSizeNames);
+	const textSizeNames = Object.keys(theme.text);
+	if (textSizeNames.length > 0) registerCustomTextSizes(ctx, textSizeNames);
 	const customFontSlots: string[] = [];
 	for (const f of theme.fonts) {
 		if (f.slot !== "sans" && f.slot !== "serif" && f.slot !== "mono") customFontSlots.push(f.slot);

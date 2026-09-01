@@ -38,7 +38,7 @@
  *   1024  Invalid @fluid range
  *   1025  Invalid @fluid unit
  *   1026  Invalid @fluid multiplier
- *   1027  Unknown @fluid modifier
+ *   1027  Invalid @fluid range name
  *   1028  Invalid @register property name (must start with --)
  *   1029  @register typed syntax with no initial-value (dropped)
  *   1030  Duplicate @register property name (last wins)
@@ -49,6 +49,8 @@
  *   1036  RI directive nested inside a conditional at-rule applies unconditionally
  *   1037  @slot used outside @custom (only valid inside @custom)
  *   1038  @utility name contains uppercase (never matched by the markup scanner)
+ *   1039  Unit on a named @fluid range (ranges carry no unit)
+ *   1040  Unreadable ri-disable comment, or one naming a code that cannot be silenced
  *
  * RI-11xx — Color directives + directive-resolver catch-alls
  *   1101  Invalid @color value
@@ -63,6 +65,9 @@
  *   1120  Unknown @layer option key
  *   1121  Invalid --corner-scale value in @rounded
  *   1122  Unknown @rounded option key
+ *   1123  @shadow alias references a shadow token that is not defined
+ *   1124  A named scale entry replaces a built-in class name of the same name
+ *   1125  @shadow alias chain is circular
  *
  * RI-12xx — Font system
  *   1201  Unknown font provider
@@ -107,6 +112,8 @@
  * RI-15xx — Typography utilities
  *   1501  text-fluid requires rem font size
  *   1502  text-fluid no smaller size to interpolate
+ *   1503  fluid-<name> references an undefined @fluid range
+ *   1504  font-<number> weight not provided by any loaded @font face
  *
  * RI-16xx — Integration plugins (Vite, PostCSS, CLI wiring)
  *   1601  Vite plugin: failed to scan a CSS directory
@@ -130,6 +137,8 @@
  *   2011  ri() input nesting exceeds depth limit
  *   2012  ri() input exceeds class count limit
  */
+
+import { warningCode } from "./diagnostics.js";
 
 // ---------------------------------------------------------------------------
 // Warning deduplication helper
@@ -167,9 +176,24 @@ function isHighSeverity(msg: string): boolean {
  * (at MAX_WARNINGS - RESERVED_HIGH_SEVERITY_SLOTS) to ensure high-severity
  * warnings always have room.
  */
-export function pushWarningsDeduped(target: string[], source: string[], seen: Set<string>): void {
+export function pushWarningsDeduped(
+	target: string[],
+	source: string[],
+	seen: Set<string>,
+	suppressed?: ReadonlySet<string>,
+): void {
 	const dedup = seen;
 	for (const w of source) {
+		// Already reported. Checked first: a duplicate changes nothing about the
+		// budget, so neither the severity regex nor the cap bookkeeping below has
+		// to run for one. Compile replays push the same warning many times.
+		if (dedup.has(w)) continue;
+		// Silenced by a `ri-disable` comment. Dropped before the budget check so a
+		// flood the author chose to hide cannot crowd out warnings they still want.
+		if (suppressed !== undefined && suppressed.size > 0) {
+			const code = warningCode(w);
+			if (code !== null && suppressed.has(code)) continue;
+		}
 		if (target.length >= MAX_WARNINGS - 1) {
 			const capMsg = `[RI-1013] Warning limit reached (${MAX_WARNINGS}). Further warnings suppressed.`;
 			if (!dedup.has(capMsg)) {
@@ -189,7 +213,6 @@ export function pushWarningsDeduped(target: string[], source: string[], seen: Se
 			}
 			continue;
 		}
-		if (dedup.has(w)) continue;
 		target.push(w);
 		dedup.add(w);
 	}

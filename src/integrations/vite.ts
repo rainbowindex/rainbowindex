@@ -4,10 +4,18 @@ import { join, relative, resolve } from "node:path";
 import type { HmrContext, ModuleNode, Plugin, UserConfig, ViteDevServer } from "vite";
 import { hasRIActivation } from "../directives/index.js";
 import { rewriteDirectiveBodies } from "../directives/postcss-safe.js";
+import { parseFileDisables } from "../directives/suppress.js";
+import { warningCode } from "../diagnostics.js";
 import { devWarn } from "../runtime.js";
 import { expandApplyGroups, extractClassesFromSource } from "../scanner/class-extraction.js";
 import { isSourceFile } from "../scanner/source-files.js";
-import { enableSourceFileListCache, invalidateSourceFileListCache } from "../scanner/sources.js";
+import {
+	disableScanChangeTracking,
+	enableScanChangeTracking,
+	enableSourceFileListCache,
+	invalidateSourceFileListCache,
+	markSourceFileChanged,
+} from "../scanner/sources.js";
 import { codepointCompare } from "../shared.js";
 import rainbowindex from "./postcss/index.js";
 
@@ -93,6 +101,14 @@ export default function rainbowindexVite(): Plugin {
 			server.watcher?.on("unlink", invalidateSourceFileListCache);
 			server.watcher?.on("unlinkDir", invalidateSourceFileListCache);
 			server.httpServer?.once("close", invalidateSourceFileListCache);
+			// Same bargain for the per-file scan cache: with this watcher evicting
+			// what changes, the scanner can trust a surviving entry and skip its
+			// stat(). handleHotUpdate evicts too — it runs before the CSS
+			// re-transform that reads the cache — and this covers the files Vite
+			// keeps no module for, such as plain .html.
+			enableScanChangeTracking();
+			server.watcher?.on("change", (file: string) => markSourceFileChanged(file));
+			server.httpServer?.once("close", disableScanChangeTracking);
 			logger = {
 				info: (msg) => server.config.logger?.info?.(msg, { timestamp: true }),
 				warn: (msg) => server.config.logger?.warn?.(msg, { timestamp: true }),
@@ -142,8 +158,14 @@ export default function rainbowindexVite(): Plugin {
 					// PostCSS reads `{` as the start of a CSS block, so unexpanded groups
 					// would error out before any plugin runs.
 					const expandWarnings: string[] = [];
-					safe = expandApplyGroups(safe, expandWarnings);
+					safe = expandApplyGroups(safe, expandWarnings, file);
+					// This pass runs before the compile, so it holds no analysis to
+					// read the entry's `ri-disable` codes from — but the entry is the
+					// text in hand, so parse them straight out of it.
+					const suppressed = parseFileDisables(code);
 					for (const w of expandWarnings) {
+						const warned = warningCode(w);
+						if (warned !== null && suppressed.has(warned)) continue;
 						(logger?.warn ?? console.warn)(`[rainbowindex] ${w}`);
 					}
 					return safe !== code ? safe : null;
@@ -165,6 +187,8 @@ export default function rainbowindexVite(): Plugin {
 			}
 
 			if (!isSourceFile(file)) return;
+
+			markSourceFileChanged(file);
 
 			// A first sighting or a failed read invalidates conservatively; an
 			// unchanged signature skips the CSS re-transform and leaves Vite's

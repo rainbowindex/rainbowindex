@@ -17,7 +17,6 @@ The main entry exports a programmatic API next to the PostCSS plugin. Use it for
 | `registerCustomFontFamilies` | Classify `font-{name}` as a family, not a weight. |
 | `registerColorNames` | Classify a bare color name as a color. |
 | `defaultTheme` | The frozen built-in theme. |
-| `DEFAULT_TEXT_SIZES` | The built-in text size names. |
 | `safelist` | Mark classes that must always compile. |
 
 Exported types: `RainbowIndexOptions`, `Theme`, `ColorDefinition`, `FluidConfig`, `TextSize`, `CompilationContext`, `CompilationSnapshot`, `CompileProjectOptions`, `CompileProjectResult`, `CompilationResult`, `CompiledRule`.

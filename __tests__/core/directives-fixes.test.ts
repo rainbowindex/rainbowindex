@@ -306,8 +306,13 @@ describe("parseAnimateBody — top-level-only removals", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolver — @animate removal diagnostics", () => {
+	const SPIN = {
+		type: "animate" as const,
+		body: "spin: spin 1s linear infinite { from { opacity: 0; } }",
+	};
+
 	it("warns RI-1103 when removing an animation that does not exist", () => {
-		const theme = resolveDirectives([{ type: "animate", body: "!nope;" }]);
+		const theme = resolveDirectives([SPIN, { type: "animate", body: "!nope;" }]);
 		expect(theme.warnings.some((w) => w.includes("[RI-1103]") && w.includes("@animate"))).toBe(
 			true,
 		);
@@ -315,7 +320,7 @@ describe("resolver — @animate removal diagnostics", () => {
 	});
 
 	it("removes an existing animation without warning", () => {
-		const theme = resolveDirectives([{ type: "animate", body: "!spin;" }]);
+		const theme = resolveDirectives([SPIN, { type: "animate", body: "!spin;" }]);
 		expect(theme.animations["spin"]).toBeUndefined();
 		expect(theme.warnings.some((w) => w.includes("[RI-1103]"))).toBe(false);
 	});

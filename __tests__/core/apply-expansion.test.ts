@@ -11,7 +11,9 @@ async function compile(css: string): Promise<{ css: string; warnings: string[] }
 	return { css: result.css, warnings: result.warnings().map((w) => w.text) };
 }
 
-const ACTIVATE = `@import "rainbowindex";\n`;
+// No breakpoint ships, so the responsive-variant cases declare the ones they
+// use — and so does every `sm:`/`md:` token the project scan picks up.
+const ACTIVATE = `@import "rainbowindex";\n@breakpoint { sm: 40rem; md: 48rem; lg: 64rem; xl: 80rem; }\n`;
 
 /** A rule emitted with no selector at all — never valid output. */
 const EMPTY_SELECTOR = /(^|\n)\s*\{/;
@@ -241,5 +243,50 @@ describe("@apply — custom utilities", () => {
 			.x { @apply panel; }
 		`);
 		expect(css).toMatch(/\.x \{[\s\S]*&:hover \{[\s\S]*display: flex/);
+	});
+});
+
+describe("@apply — per-family font weights", () => {
+	// Local faces only: no provider metadata fetch, so the weights under test
+	// are exactly what the CSS states.
+	const FONTS = `${ACTIVATE}@font {
+		sans: "Inter" { face: /inter.woff2 { weight: 300 900; } }
+		mono: "Fira Code" { face: /fira.woff2 { weight: 400,700; } }
+	}\n`;
+
+	/** RI-1504 lines only — the fixture theme ships no @fluid ranges. */
+	async function weightWarnings(body: string): Promise<string[]> {
+		const { warnings } = await compile(FONTS + body);
+		return warnings.filter((w) => w.includes("[RI-1504]"));
+	}
+
+	it("warns when the applied family cannot render the applied weight", async () => {
+		const warnings = await weightWarnings(`.a { @apply font-mono font-550; }`);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("Fira Code does not provide weight 550");
+	});
+
+	it("stays quiet when the applied family can", async () => {
+		expect(await weightWarnings(`.b { @apply font-sans font-550; }`)).toEqual([]);
+		expect(await weightWarnings(`.c { @apply font-mono font-700; }`)).toEqual([]);
+	});
+
+	it("reports a weight no font has once, as the union warning", async () => {
+		const warnings = await weightWarnings(`.d { @apply font-mono font-200; }`);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("no loaded font provides weight 200");
+	});
+
+	it("checks the class list inside a custom utility body", async () => {
+		const warnings = await weightWarnings(`
+			@utility code { @apply font-mono font-550; }
+			.e { @apply code; }
+		`);
+		expect(warnings.some((w) => w.includes("Fira Code does not provide weight 550"))).toBe(true);
+	});
+
+	it("still emits the declarations it warned about", async () => {
+		const { css } = await compile(`${FONTS}.f { @apply font-mono font-550; }`);
+		expect(ruleBody(css, ".f")).toContain("font-weight: 550");
 	});
 });

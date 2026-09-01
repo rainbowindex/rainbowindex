@@ -6,7 +6,7 @@ import { analyzeProjectCSS } from "../../src/project/analyze.js";
 
 const customTheme = analyzeProjectCSS(`
 @color { brand: 0.18 330; }
-@text { display: 4rem, 1.05; }
+@text { display: 4rem, 1.05; lg: 1.25rem, 1.4; }
 @utility card { background: red; padding: 1rem; border-radius: 8px; }
 `).theme;
 const snapshot = createThemeSnapshot(customTheme);
@@ -42,7 +42,7 @@ describe("analyzeMerge — drop attribution", () => {
 		// text-lg claims font-size + line-height; the arbitrary property covers
 		// font-size and leading-tight covers line-height — only together do
 		// they dominate it, so the attribution lists both.
-		const result = analyzeMerge(["text-lg", "[font-size:16px]", "leading-tight"]);
+		const result = analyzeMerge(["text-lg", "[font-size:16px]", "leading-tight"], snapshot);
 		expect(result.output).toBe("[font-size:16px] leading-tight");
 		expect(result.dropped).toEqual([{ index: 0, className: "text-lg", overriddenBy: [1, 2] }]);
 	});
@@ -86,10 +86,14 @@ describe("analyzeMerge — drop attribution", () => {
 
 describe("analyzeMerge — theme snapshots", () => {
 	test("custom text size conflicts only with the snapshot", () => {
-		// Without the snapshot "display" is not a known text size, so
-		// text-display resolves as a color claim and survives text-lg.
-		expect(analyzeMerge(["text-display", "text-lg"]).dropped).toEqual([]);
-		// With it, both claim font-size/line-height — rightmost wins.
+		// No type scale ships, so without the snapshot "display" is not a known
+		// text size: text-display resolves as a color claim and a color drops it.
+		expect(analyzeMerge(["text-display", "text-brand-500"]).dropped).toEqual([
+			{ index: 0, className: "text-display", overriddenBy: [1] },
+		]);
+		// With it, text-display claims font-size/line-height — a color no longer
+		// conflicts with it, and another size does.
+		expect(analyzeMerge(["text-display", "text-brand-500"], snapshot).dropped).toEqual([]);
 		expect(analyzeMerge(["text-display", "text-lg"], snapshot).dropped).toEqual([
 			{ index: 0, className: "text-display", overriddenBy: [1] },
 		]);

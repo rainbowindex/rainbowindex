@@ -9,77 +9,62 @@
  * __tests__/core/utility-contracts.test.ts and __tests__/merge/merge.test.ts
  * via the helpers in __tests__/helpers/merge-parity.ts.
  */
-import { describe, it, expect } from "vitest";
-
-// Theme defaults
-import {
-	DEFAULT_COLORS,
-	isValidColorSuffix,
-	lightnessFromSuffix,
-	DEFAULT_TEXT,
-	DEFAULT_BREAKPOINTS,
-	DEFAULT_WEIGHTS,
-	DEFAULT_EASING,
-	DEFAULT_ANIMATIONS,
-	DEFAULT_FLUID,
-	defaultTheme,
-} from "../../src/theme/index.js";
-
-// Color system
-import {
-	generateColorVariables,
-	generateStop,
-	SEMANTIC_COLORS,
-	DEFAULT_DARK_CONFIG,
-} from "../../src/theme/colors.js";
-
-// Font system
-import {
-	generateFontCSS,
-	getFontPreloadLinks,
-	createFontFace,
-	createFontSlot,
-} from "../../src/integrations/font-providers/index.js";
-
-// Merge
-import {
-	createCompilationContext,
-	registerCustomUtility,
-	finalizeCompilationContext,
-} from "../../src/merge/context.js";
-import { ri } from "../../src/merge/index.js";
-
-// Parser
-import { parseUtility } from "../../src/utilities/parser.js";
-
-// Scanner
-import { extractClasses } from "../../src/scanner/class-extraction.js";
-
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+// Assembly
+import { generateCornerShapeBlock, generateTokenLayer } from "../../src/assembly.js";
+// CSS Functions
+import { compileCSSFunctions } from "../../src/css/functions.js";
+// Preflight
+import { generatePreflight } from "../../src/css/preflight.js";
 // Directives
 import {
 	extractDirectives,
-	resolveDirectives,
 	parseColorBody,
 	parseRoundedModifier,
+	resolveDirectives,
 } from "../../src/directives/index.js";
-
 // Engine
 import { createCompiler } from "../../src/engine/index.js";
-
 // Ordering
-import { PROPERTY_GROUPS, VARIANT_WEIGHTS, computeSortKey } from "../../src/engine/ordering.js";
-
-// CSS Functions
-import { compileCSSFunctions } from "../../src/css/functions.js";
-
-// Preflight
-import { generatePreflight } from "../../src/css/preflight.js";
-
-// Assembly
-import { generateTokenLayer, generateCornerShapeBlock } from "../../src/assembly.js";
-
+import { computeSortKey, PROPERTY_GROUPS, VARIANT_WEIGHTS } from "../../src/engine/ordering.js";
+// Font system
+import {
+	createFontFace,
+	createFontSlot,
+	generateFontCSS,
+	getFontPreloadLinks,
+} from "../../src/integrations/font-providers/index.js";
+// Merge
+import {
+	createCompilationContext,
+	finalizeCompilationContext,
+	registerCustomTextSizes,
+	registerCustomUtility,
+} from "../../src/merge/context.js";
+import { ri } from "../../src/merge/index.js";
+// Scanner
+import { extractClasses } from "../../src/scanner/class-extraction.js";
+// Color system
+import {
+	DEFAULT_DARK_CONFIG,
+	generateColorVariables,
+	generateStop,
+	SEMANTIC_COLORS,
+} from "../../src/theme/colors.js";
+// Theme defaults
+import {
+	DEFAULT_COLORS,
+	defaultTheme,
+	isValidColorSuffix,
+	lightnessFromSuffix,
+} from "../../src/theme/index.js";
 // Utilities
 import { resolveUtility } from "../../src/utilities/index.js";
+// Parser
+import { parseUtility } from "../../src/utilities/parser.js";
+
+import { scalesTheme } from "../helpers/fixture-scales.js";
+import { typographyTheme } from "../helpers/fixture-typography.js";
 
 const compile = (classNames: string[], theme: ReturnType<typeof resolveDirectives>) =>
 	createCompiler().compile(classNames, theme);
@@ -112,78 +97,22 @@ describe("Theme defaults match spec", () => {
 		expect(defaultTheme.spacing.base).toBe("0.25rem");
 	});
 
-	it("has 13 text sizes (2xs through 8xl)", () => {
-		const expected = [
-			"2xs",
-			"xs",
-			"sm",
-			"md",
-			"lg",
-			"xl",
-			"2xl",
-			"3xl",
-			"4xl",
-			"5xl",
-			"6xl",
-			"7xl",
-			"8xl",
-		];
-		for (const s of expected) {
-			expect(DEFAULT_TEXT).toHaveProperty(s);
-			expect(DEFAULT_TEXT[s]).toHaveProperty("fontSize");
-			expect(DEFAULT_TEXT[s]).toHaveProperty("lineHeight");
+	it("ships no named scale — every token comes from a directive", () => {
+		const theme = resolveDirectives([]);
+		for (const scale of [
+			"text",
+			"leading",
+			"tracking",
+			"breakpoints",
+			"shadows",
+			"weights",
+			"easing",
+			"blur",
+			"animations",
+		] as const) {
+			expect(theme[scale], scale).toEqual({});
 		}
-	});
-
-	it("has 4 breakpoints (sm, md, lg, xl)", () => {
-		expect(Object.keys(DEFAULT_BREAKPOINTS)).toEqual(["sm", "md", "lg", "xl"]);
-	});
-
-	it("has 7 font weights", () => {
-		const expected = ["thin", "light", "normal", "medium", "semibold", "bold", "black"];
-		for (const w of expected) {
-			expect(DEFAULT_WEIGHTS).toHaveProperty(w);
-		}
-	});
-
-	it("has built-in animations (loops, disclosure, caret)", () => {
-		for (const a of [
-			// Loops
-			"spin",
-			"pulse",
-			"bounce",
-			"ping",
-			// Disclosure (Accordion + Collapsible)
-			"accordion-down",
-			"accordion-up",
-			"collapsible-down",
-			"collapsible-up",
-			// Caret
-			"caret-blink",
-		]) {
-			expect(DEFAULT_ANIMATIONS).toHaveProperty(a);
-			expect(DEFAULT_ANIMATIONS[a]).toHaveProperty("shorthand");
-			expect(DEFAULT_ANIMATIONS[a]).toHaveProperty("keyframes");
-		}
-	});
-
-	it("disclosure animations animate to the @rainbowindex/ui content-height var", () => {
-		for (const a of ["accordion-down", "accordion-up", "collapsible-down", "collapsible-up"]) {
-			expect(DEFAULT_ANIMATIONS[a].keyframes).toContain(
-				"var(--ri-collapsible-content-height, auto)",
-			);
-		}
-	});
-
-	it("has fluid defaults (min: 20rem, max: 80rem)", () => {
-		expect(DEFAULT_FLUID.min).toBe("20rem");
-		expect(DEFAULT_FLUID.max).toBe("80rem");
-	});
-
-	it("has 3 easing functions (in, out, in-out)", () => {
-		expect(DEFAULT_EASING).toHaveProperty("in");
-		expect(DEFAULT_EASING).toHaveProperty("out");
-		expect(DEFAULT_EASING).toHaveProperty("in-out");
+		expect(theme.fluid).toEqual({});
 	});
 });
 
@@ -342,6 +271,15 @@ describe("Font system (spec differentiator #2)", () => {
 // 4. MERGE FUNCTION
 // ============================================================================
 describe("Merge function ri() (spec differentiator #3)", () => {
+	// No text scale ships, so the merger learns size names when a theme
+	// compiles. Register the ones these checks use, as an @text block would.
+	beforeAll(() => {
+		const ctx = createCompilationContext();
+		registerCustomTextSizes(ctx, ["lg", "xl"]);
+		finalizeCompilationContext(ctx);
+	});
+	afterAll(() => finalizeCompilationContext(createCompilationContext()));
+
 	it("basic merge — last wins", () => {
 		expect(ri("p-2 bg-red-500", "p-4")).toBe("bg-red-500 p-4");
 	});
@@ -623,7 +561,7 @@ describe("Directives", () => {
 // 8. ENGINE + VARIANTS
 // ============================================================================
 describe("Engine variants", () => {
-	const theme = resolveDirectives([]);
+	const theme = scalesTheme();
 
 	it("compiles responsive variants", () => {
 		const result = compile(["sm:p-4"], theme);
@@ -637,7 +575,7 @@ describe("Engine variants", () => {
 	});
 
 	it("compiles dark variant", () => {
-		const result = compile(["dark:shadow-lg"], theme);
+		const result = compile(["dark:shadow-none"], theme);
 		expect(result.rules[0].css).toContain("prefers-color-scheme: dark");
 	});
 
@@ -824,7 +762,7 @@ describe("Preflight", () => {
 // 12. UTILITIES — spot checks per category
 // ============================================================================
 describe("Utility spot checks", () => {
-	const theme = resolveDirectives([]);
+	const theme = typographyTheme();
 
 	// Spacing
 	it("p-4 → padding with token", () => {
@@ -931,8 +869,8 @@ describe("Utility spot checks", () => {
 	});
 
 	// Effects
-	it("shadow-md → --ri-shadow slot + composed box-shadow", () => {
-		const r = resolveUtility("shadow", "md", false, theme);
+	it("shadow-none → --ri-shadow slot + composed box-shadow", () => {
+		const r = resolveUtility("shadow", "none", false, theme);
 		expect(r!.declarations[0].property).toBe("--ri-shadow");
 		expect(r!.declarations.some((d) => d.property === "box-shadow")).toBe(true);
 	});
@@ -1038,36 +976,100 @@ describe("Shared utilities", () => {
 		expect(tokens).toContain("--fluid-spacing-max: 72rem;");
 	});
 
-	it("generateTokenLayer transitively pulls in shadow building-block tokens", () => {
-		// shadow-md composes ring + layer-1..4 + hi-3 + dark-line via var() refs.
-		// Even though only "md" is marked used, the token layer must emit all
-		// the referenced building blocks so the rendered shadow resolves.
-		const theme = resolveDirectives([]);
+	it("generateTokenLayer emits named @fluid range tokens", () => {
+		const theme = resolveDirectives([
+			{ type: "fluid", body: "min: 20rem; max: 48rem;", modifier: "compact" },
+		]);
 		const tokens = generateTokenLayer(
 			theme,
 			{
 				usedColorStops: new Map(),
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
-				usedShadows: new Set(["md"]),
+				usedShadows: new Set(),
 				usedAnimations: new Set(),
 			},
 			new Map(),
 		);
-		expect(tokens).toContain("--shadow-md:");
-		expect(tokens).toContain("--shadow-ring:");
-		expect(tokens).toContain("--shadow-layer-1:");
-		expect(tokens).toContain("--shadow-layer-4:");
-		expect(tokens).toContain("--shadow-hi-3:");
-		expect(tokens).toContain("--shadow-dark-line:");
-		// shadow-ring references shadow-line, which must also flow in.
-		expect(tokens).toContain("--shadow-line:");
-		// shadow-layer-* references shadow-drop.
-		expect(tokens).toContain("--shadow-drop:");
-		// But unrelated layers (e.g. layer-5/6/7) and hi tiers above 3 are still pruned.
-		expect(tokens).not.toContain("--shadow-layer-5:");
-		expect(tokens).not.toContain("--shadow-hi-4:");
-		expect(tokens).not.toContain("--shadow-xl:");
+		expect(tokens).toContain("--fluid-compact-min: 20rem;");
+		expect(tokens).toContain("--fluid-compact-max: 48rem;");
+	});
+
+	it("generateTokenLayer emits used @shadow tokens plus the ones they reference", () => {
+		// `alias` resolves to var(--shadow-md), so emitting it alone would leave
+		// the reference dangling — md must flow in with it. lg is unused: pruned.
+		const theme = resolveDirectives(
+			extractDirectives("@shadow { md: 0 4px 8px black; alias: shadow-md; lg: 0 8px 16px black; }"),
+		);
+		const tokens = generateTokenLayer(
+			theme,
+			{
+				usedColorStops: new Map(),
+				usedTextSizes: new Set(),
+				usedFonts: new Set(),
+				usedShadows: new Set(["alias"]),
+				usedAnimations: new Set(),
+			},
+			new Map(),
+		);
+		expect(tokens).toContain("--shadow-alias: var(--shadow-md);");
+		expect(tokens).toContain("--shadow-md: 0 4px 8px black;");
+		expect(tokens).not.toContain("--shadow-lg:");
+	});
+
+	it("@shadow alias rewrites to a var() reference, across blocks", () => {
+		// The target may be defined in a later block, so aliases resolve once
+		// every @shadow directive has merged.
+		const theme = resolveDirectives(
+			extractDirectives("@shadow { alias: shadow-md; }\n@shadow { md: 0 1px black; }"),
+		);
+		expect(theme.shadows["alias"]).toBe("var(--shadow-md)");
+		expect(theme.warnings).toEqual([]);
+	});
+
+	it("[RI-1123] @shadow alias to an undefined token warns and stays verbatim", () => {
+		const theme = resolveDirectives(extractDirectives("@shadow { alias: shadow-nope; }"));
+		expect(theme.shadows["alias"]).toBe("shadow-nope");
+		const w = theme.warnings.find((x) => x.includes("[RI-1123]"));
+		expect(w).toContain('"nope"');
+	});
+
+	// A cycle would emit var() references pointing at each other, which CSS calls
+	// guaranteed-invalid: the shadow resolves to nothing with no hint as to why.
+	it("[RI-1125] a circular @shadow alias chain warns and stays verbatim", () => {
+		const theme = resolveDirectives(extractDirectives("@shadow { a: shadow-b;\n\tb: shadow-a; }"));
+		expect(theme.warnings.filter((w) => w.includes("[RI-1125]"))).toHaveLength(2);
+		expect(theme.shadows["a"]).toBe("shadow-b");
+		expect(theme.shadows["b"]).toBe("shadow-a");
+	});
+
+	it("[RI-1125] a @shadow alias to itself warns", () => {
+		const theme = resolveDirectives(extractDirectives("@shadow { a: shadow-a; }"));
+		expect(theme.warnings.find((w) => w.includes("[RI-1125]"))).toContain('"a: shadow-a"');
+		expect(theme.shadows["a"]).toBe("shadow-a");
+	});
+
+	// A chain is not a cycle: it must still resolve.
+	it("a three-step @shadow alias chain still resolves", () => {
+		const theme = resolveDirectives(
+			extractDirectives("@shadow { md: 0 1px black;\n\tb: shadow-md;\n\tc: shadow-b; }"),
+		);
+		expect(theme.warnings).toEqual([]);
+		expect(theme.shadows["c"]).toBe("var(--shadow-b)");
+		expect(theme.shadows["b"]).toBe("var(--shadow-md)");
+	});
+
+	// The block is cut from the body whether or not its name survived. Left in
+	// place, the brace-blind key/value parser reads its declarations as tokens.
+	it("does not read a rejected utility block's declarations as scale entries", () => {
+		const theme = resolveDirectives(
+			extractDirectives(
+				"@shadow { md: 0 4px 8px black;\n\tbad.name-* { box-shadow: 0 1px 2px black; }\n\tcard: 0 2px 4px gray; }",
+			),
+		);
+		expect(theme.shadows).not.toHaveProperty("box-shadow");
+		expect(theme.shadows["md"]).toBe("0 4px 8px black");
+		expect(theme.shadows["card"]).toBe("0 2px 4px gray");
 	});
 
 	it("generateTokenLayer emits no shadow tokens when none are used", () => {
@@ -1158,7 +1160,7 @@ describe("Error codes", () => {
 // 16. FLUID SCALING
 // ============================================================================
 describe("Fluid scaling (spec differentiator #4)", () => {
-	const theme = resolveDirectives([]);
+	const theme = scalesTheme(typographyTheme());
 
 	it("text-fluid-4xl uses clamp()", () => {
 		const r = resolveUtility("text-fluid", "4xl", false, theme);

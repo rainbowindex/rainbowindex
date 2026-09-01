@@ -20,7 +20,7 @@ Facts that apply to all directives:
 | `@text` | Text size tokens. |
 | `@spacing` | The spacing base unit. |
 | `@breakpoint` | Breakpoint tokens. |
-| `@rounded` | Corner shape. |
+| `@rounded` | Corner shape and named radii. |
 | `@shadow` | Shadow tokens. |
 | `@weight` | Font weight tokens. |
 | `@ease` | Easing tokens. |
@@ -100,7 +100,7 @@ Global dark configuration:
 | `chroma-boost` | Added to the chroma of every dark stop. `0` keeps the light chroma. | `0` |
 | `hue-shift` | Added to the hue of every dark stop. | `0` |
 
-`mode: off` emits the `@color` tokens with their light values only. The built-in `paper` and `ink` tokens and the default shadow tokens keep `light-dark()` and still adapt to dark mode.
+`mode: off` emits the `@color` tokens with their light values only. The built-in `paper` and `ink` tokens keep `light-dark()` and still adapt to dark mode.
 
 If a used stop has less than 60 APCA contrast against both white and black, the compile warns with `[RI-1106]`. Text in that color is not readable on either pole.
 
@@ -120,7 +120,7 @@ If a used stop has less than 60 APCA contrast against both white and black, the 
 }
 ```
 
-The form is `name: <font-size>[, <line-height>];`. The line height defaults to `1.5`. The default scale has 14 sizes, `2xs` to `9xl`. The middle size is `md`, not `base`.
+The form is `name: <font-size>[, <line-height>];`. The line height defaults to `1.5`. No scale ships, so `text-{size}` and `text-fluid-{size}` resolve only for the names you define here. Fluid type needs at least two steps.
 
 ## `@spacing`
 
@@ -132,16 +132,33 @@ The only key is `base`. The default is `0.25rem`. The value must match `<number>
 
 ## Scale directives
 
-`@breakpoint`, `@shadow`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, and `@duration` all share one grammar: `key: value;` entries merge onto the defaults, and `!key;` removes a token.
+`@breakpoint`, `@shadow`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, and `@duration` all share one grammar: `key: value;` entries merge onto what earlier blocks set, and `!key;` removes a token. Every one of them starts empty, so their entries define the whole scale. `@weight` and `@animate` do too.
+
+A `@shadow` value that is only another shadow's class name is an alias:
 
 ```css
-@breakpoint { tablet: 50rem; !xl; }
+@shadow {
+	md: 0 4px 8px oklch(0 0 0 / 0.15);
+	card: shadow-md;
+}
+```
+
+`card` emits `--shadow-card: var(--shadow-md)`, and `shadow-card` pulls `--shadow-md` into `:root` with it. An alias to a token that does not exist warns with `[RI-1123]`.
+
+```css
+@breakpoint { sm: 40rem; md: 48rem; lg: 64rem; tablet: 50rem; }
 @z { modal: 100; }
 ```
 
-`@z`, `@opacity`, and `@duration` have no default tokens. The numeric class forms are computed instead: `z-10` emits `10`, `opacity-50` emits `50%`, `duration-200` emits `200ms`. These directives add named tokens.
+No breakpoint ships, so `sm:`, `md:` and the container form `@sm:` exist only after `@breakpoint` names them.
+
+`@z`, `@opacity`, and `@duration` compute their numeric class forms instead of reading a token: `z-10` emits `10`, `opacity-50` emits `50%`, `duration-200` emits `200ms`. These directives add named tokens.
+
+Every one of these also takes [utility blocks](#utility-blocks): a `name { … }` block with no colon before it defines a utility in that scale's class family.
 
 `@weight` values parse as integers. A value that does not start with a number warns with `[RI-1021]` and is skipped. A decimal is truncated to its integer part without a warning.
+
+A name is not necessary for a weight. `font-<number>` sets any weight from 1 to 1000. A named token wins over the number of the same spelling. See [fonts.md](fonts.md#weight-availability).
 
 ## `@rounded`
 
@@ -151,9 +168,38 @@ The only key is `base`. The default is `0.25rem`. The value must match `<number>
 }
 ```
 
-The modifier sets the corner shape: `round`, `scoop`, `bevel`, `notch`, `square`, `squircle`, or `superellipse(N)`. `--corner-scale` overrides the radius compensation for the shape. Any other key in the body warns with `[RI-1122]`.
+The modifier sets the corner shape: `round`, `scoop`, `bevel`, `notch`, `square`, `squircle`, or `superellipse(N)`. `--corner-scale` overrides the radius compensation for the shape. Any other `--` key warns with `[RI-1122]`.
 
-There are no radius tokens. A radius is a spacing multiple: `rounded-4` is `calc(var(--spacing) * 4 * var(--ri-rounded-scale, 1))`. To change every radius at once, change `@spacing`. To change them under one element, set `--ri-rounded-scale` with `rounded-scale-*`.
+A radius is a spacing multiple by default: `rounded-4` is `calc(var(--spacing) * 4 * var(--ri-rounded-scale, 1))`. To change every radius at once, change `@spacing`. To change them under one element, set `--ri-rounded-scale` with `rounded-scale-*`.
+
+### Named radii
+
+A key without a `--` prefix names a radius. Each one makes the class `rounded-<name>` and the token `--rounded-<name>`:
+
+```css
+@rounded {
+	roof: 24px;
+}
+```
+
+`rounded-roof` sets `border-radius: 24px`. The name also works with the side and corner suffixes: `rounded-t-roof`, `rounded-tl-roof`.
+
+### Radius math
+
+`@rounded` takes utility blocks, as every named scale does — see [Utility blocks](#utility-blocks):
+
+```css
+@rounded {
+	roof: 24px;
+	roof-minus-* {
+		border-radius: calc(var(--rounded-roof) - var(--value) * var(--spacing));
+	}
+}
+```
+
+`rounded-roof-minus-2` sets `border-radius: calc(var(--rounded-roof) - 2 * var(--spacing))`.
+
+Radius tokens are always written to `:root`, used or not. A block body is raw CSS, so no usage pass can see the `var(--rounded-*)` inside it.
 
 ## `@animate`
 
@@ -168,20 +214,39 @@ There are no radius tokens. A radius is a spacing multiple: `rounded-4` is `calc
 
 The form is `name: <animation-shorthand> { <keyframes> }`. The name becomes `animate-shimmer`, and the keyframes are emitted when the class is used. An entry without a keyframes block is dropped without a warning.
 
+No animation ships. `animate-none`, `animate-in`, `animate-out` and the enter/exit effects (`fade-in`, `zoom-in`, `slide-in-from-top`, …) need no keyframes of their own and always work.
+
 ## `@fluid`
 
 ```css
 @fluid { min: 20rem; max: 80rem; }
 @fluid text { unit: vw; }
 @fluid spacing { multiplier: 2.5; }
+@fluid compact { min: 20rem; max: 48rem; }
 ```
 
 | Key | Constraint | Default |
 | --- | --- | --- |
-| `min` | rem value | `20rem` |
-| `max` | rem value, more than `min` | `80rem` |
-| `unit` | `vw`, `vi`, `vmin`, `vmax` | text: `vi`, spacing: `vw` |
-| `multiplier` | number more than 1, not valid for `text` | `2` |
+| `min` | rem value | none |
+| `max` | rem value, more than `min` | none |
+| `unit` | `vw`, `vi`, `vmin`, `vmax`, `cqw`, `cqi`, `cqmin`, `cqmax` | text: `vi`, spacing: `vw` |
+| `multiplier` | number more than 1, only valid for `spacing` | `2` |
+
+No range ships. Until `@fluid` states `min` and `max`, no `--fluid-*` token is written and every fluid utility — `p-fluid-4`, `text-fluid-lg`, `fluid-<name>` — resolves to nothing.
+
+A modifier other than `text` or `spacing` defines a named range. A named range
+takes only `min` and `max` (`RI-1039` for `unit`). Each one makes:
+
+- The scope class `fluid-<name>`. It points every fluid utility on the element,
+  and on its descendants, at that range. It wins over the family overrides.
+- The tokens `--fluid-<name>-min` and `--fluid-<name>-max`.
+
+```html
+<section class="fluid-compact">
+    <h1 class="text-fluid-lg/3xl">…</h1>
+    <div class="p-fluid-3/6">…</div>
+</section>
+```
 
 `text-fluid-*` and `*-fluid-*` utilities read this range. See [utilities.md](utilities.md).
 
@@ -199,7 +264,7 @@ The categories: `core` (box model and resets), `typography`, `content` (media an
 
 ```css
 @utility card {
-	@apply rounded-4 shadow-md;
+	@apply rounded-4 ring;
 	background: white;
 	&:hover { background: whitesmoke; }
 }
@@ -214,6 +279,7 @@ The categories: `core` (box model and resets), `typography`, `content` (media an
 - The body limit is 10,000 characters.
 - A name equal to a built-in static utility is dead and warns with `[RI-1032]`. The built-in wins.
 - An uppercase name warns with `[RI-1038]`. The scanner only matches lowercase classes in markup.
+- A name is bare. Write `card`, not `.card`. A leading `.` warns with `[RI-1035]` and the utility is skipped. Every directive that takes a name follows this rule.
 
 ## `@custom` and `@slot`
 
@@ -266,24 +332,77 @@ The simple form wraps all generated output in one cascade layer. The body form d
 
 Emits CSS `@property` rules. Defaults: `syntax: "*"`, `inherits: false`. A typed syntax without `initial-value` is dropped with warning `[RI-1029]`, because browsers ignore such a registration. A name must start with `--`.
 
+## Utility blocks
+
+A named scale can hold utilities as well as tokens. Write the utility as a block with no colon before it:
+
+```css
+@shadow {
+	card: 0 1px 2px oklch(0 0 0 / 0.2);
+	lifted-* {
+		box-shadow: 0 calc(var(--value) * 2px) 8px oklch(0 0 0 / 0.2);
+	}
+}
+```
+
+`shadow-lifted-3` sets `box-shadow: 0 calc(3 * 2px) 8px …`. The block uses the [`@utility`](#utility) grammar. The name gets the family's prefix, so `lifted-*` becomes `shadow-lifted-*`. A name without a trailing `-*` makes a plain class.
+
+The point is placement. The math lives beside the tokens it reads, instead of in a separate `@utility` block far from them.
+
+### Which directives take blocks
+
+| Directive | Class prefix |
+| --- | --- |
+| `@rounded` | `rounded-` |
+| `@shadow` | `shadow-` |
+| `@blur` | `blur-` |
+| `@z` | `z-` |
+| `@leading` | `leading-` |
+| `@tracking` | `tracking-` |
+| `@opacity` | `opacity-` |
+| `@duration` | `duration-` |
+| `@ease` | `ease-` |
+| `@weight` | `font-` |
+| `@text` | `text-` |
+| `@animate` | `animate-` |
+
+`@color` does not. A color name feeds `bg-`, `text-`, `border-`, `ring-` and more, so a block has no one family to go in. `@breakpoint` names variants, not utilities. `@spacing` holds one base value.
+
+### The colon tells the two block kinds apart
+
+Two directives already use braces for something else. A colon before the brace keeps that meaning:
+
+```css
+@color {
+	brand: 0.18 330 { dark: shift chroma +0.02; }   /* colour options */
+}
+
+@animate {
+	spin: spin 1s linear infinite { from { rotate: 0deg; } }   /* keyframes */
+	slow-* { animation-duration: calc(var(--value) * 1s); }    /* a utility */
+}
+```
+
+`key: value { … }` is the directive's own block. `name { … }` with no colon is a utility.
+
 ## Default theme reference
 
 | Scale | Default tokens |
 | --- | --- |
 | Colors | `theme` only, a generative neutral. Plus the fixed names `black`, `white`, `paper`, `ink`, `transparent`, `current`, `inherit`. |
-| Text | `2xs` 0.625rem to `9xl` 8.5rem, 14 sizes, middle size `md` at 1rem/1.5. |
+| Text | No tokens. `text-[v]` still works. Named sizes come from `@text`. |
 | Spacing | `base: 0.25rem`. |
-| Breakpoints | `sm` 40rem, `md` 48rem, `lg` 64rem, `xl` 80rem. No `2xl`. |
-| Rounded | No tokens. A radius is a spacing multiple: `rounded-4`. Plus `none` and `full`. |
-| Shadows | `px`, `2xs`, `xs`, `sm`, `md`, `lg`, `xl`, `2xl`, `none`. Layered and light-dark adaptive. |
-| Weights | `thin` 100 to `black` 900. |
-| Easing | `in`, `out`, `in-out`, `linear`. |
-| Blur | `xs` 2px to `3xl` 64px, bare `blur` 8px. |
-| Leading | `3` to `10`, plus `none`, `tight`, `snug`, `normal`, `relaxed`, `loose`. |
-| Tracking | `tighter` to `widest`. |
-| Animations | `spin`, `pulse`, `bounce`, `ping`, `accordion-down/up`, `collapsible-down/up`, `caret-blink`. |
+| Breakpoints | No tokens. Responsive and container variants come from `@breakpoint`. |
+| Rounded | No tokens. A radius is a spacing multiple: `rounded-4`. Plus `none` and `full`. Named radii come from `@rounded`. |
+| Shadows | No tokens. `shadow-none`, `shadow-{color}`, and `shadow-[v]` still work. Named sizes come from `@shadow`. |
+| Weights | No tokens. `font-500` and `font-[850]` still work. Names come from `@weight`. |
+| Easing | No tokens. `ease-linear` and `ease-[v]` still work. Names come from `@ease`. |
+| Blur | No tokens. `blur-none` and `blur-[v]` still work. Names come from `@blur`. |
+| Leading | No tokens. `leading-px` and `leading-[v]` still work. Named values come from `@leading`. |
+| Tracking | No tokens. `tracking-[v]` still works. Named values come from `@tracking`. |
+| Animations | No tokens. `animate-none`, `animate-[v]`, and the enter/exit effects still work. Names come from `@animate`. |
 | Z, opacity, duration | Empty. Numeric class forms are computed. |
-| Fluid | `min: 20rem`, `max: 80rem`. |
+| Fluid | No range. Every fluid utility needs `@fluid { min; max; }`. |
 
 Token emission is pruned by usage. Only the color stops, text sizes, fonts, shadows, and animations that your classes use reach `:root`.
 

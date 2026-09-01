@@ -10,8 +10,9 @@ import { escapeSelector } from "../../src/css/escape.js";
 import { findClosest } from "../../src/engine/suggest.js";
 import { resolveDirectives } from "../../src/directives/index.js";
 import { fixtureTheme } from "../helpers/fixture-colors.js";
+import { scalesTheme } from "../helpers/fixture-scales.js";
 
-const theme = fixtureTheme();
+const theme = scalesTheme(fixtureTheme());
 const compile = (classNames: string[], activeTheme = theme) =>
 	createCompiler().compile(classNames, activeTheme);
 
@@ -245,7 +246,7 @@ describe("compile", () => {
 				"bg-white",
 				"text-black",
 				"rounded-4",
-				"shadow-md",
+				"shadow-none",
 			],
 			theme,
 		);

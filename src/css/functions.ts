@@ -378,13 +378,13 @@ function lookupThemeValue(varName: string, theme: ResolvedTheme, inline = false)
 	const bpMatch = name.startsWith("breakpoint-") ? name.match(RE_BREAKPOINT) : null;
 	if (bpMatch && Object.hasOwn(theme.breakpoints, bpMatch[1])) return theme.breakpoints[bpMatch[1]];
 
-	// Fluid: --fluid-min, --fluid-max
-	if (name === "fluid-min") return theme.fluid.min;
-	if (name === "fluid-max") return theme.fluid.max;
-	if (name === "fluid-text-min") return theme.textFluid?.min ?? theme.fluid.min;
-	if (name === "fluid-text-max") return theme.textFluid?.max ?? theme.fluid.max;
-	if (name === "fluid-spacing-min") return theme.spacingFluid?.min ?? theme.fluid.min;
-	if (name === "fluid-spacing-max") return theme.spacingFluid?.max ?? theme.fluid.max;
+	// Fluid: --fluid-min, --fluid-max. Unset until @fluid declares a range.
+	if (name === "fluid-min") return theme.fluid.min ?? null;
+	if (name === "fluid-max") return theme.fluid.max ?? null;
+	if (name === "fluid-text-min") return theme.textFluid?.min ?? theme.fluid.min ?? null;
+	if (name === "fluid-text-max") return theme.textFluid?.max ?? theme.fluid.max ?? null;
+	if (name === "fluid-spacing-min") return theme.spacingFluid?.min ?? theme.fluid.min ?? null;
+	if (name === "fluid-spacing-max") return theme.spacingFluid?.max ?? theme.fluid.max ?? null;
 
 	// Spacing base: --spacing
 	if (name === "spacing") return theme.spacing.base;
@@ -410,17 +410,17 @@ const _themeVarCache = new WeakMap<ResolvedTheme, string[]>();
 function collectThemeVariableNames(theme: ResolvedTheme): string[] {
 	const cached = _themeVarCache.get(theme);
 	if (cached) return cached;
-	const names: string[] = [
-		"--spacing",
-		"--fluid-min",
-		"--fluid-max",
-		"--fluid-text-min",
-		"--fluid-text-max",
-		"--fluid-spacing-min",
-		"--fluid-spacing-max",
-		"--color-paper",
-		"--color-ink",
-	];
+	const names: string[] = ["--spacing", "--color-paper", "--color-ink"];
+
+	// Fluid bounds are suggestible only where a range exists to name them.
+	if (theme.fluid.min !== undefined || theme.fluid.max !== undefined) {
+		names.push("--fluid-min", "--fluid-max");
+	}
+	if (theme.textFluid) names.push("--fluid-text-min", "--fluid-text-max");
+	if (theme.spacingFluid) names.push("--fluid-spacing-min", "--fluid-spacing-max");
+	for (const name of Object.keys(theme.fluidRanges)) {
+		names.push(`--fluid-${name}-min`, `--fluid-${name}-max`);
+	}
 
 	for (const [hue, def] of Object.entries(theme.colors)) {
 		if (def.type === "keyword") continue; // inlined directly, no CSS variable

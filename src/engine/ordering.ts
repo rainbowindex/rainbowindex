@@ -474,9 +474,9 @@ Object.freeze(PROPERTY_GROUPS);
  *
  * Fixed-variant weights are defined next to their selectors in
  * engine/variants.ts (FIXED_VARIANT_WEIGHTS) so name and weight can never
- * drift; only the theme-default breakpoint statics (mirrored by
- * buildBreakpointWeights below) and the group-/peer- relational composites
- * live here.
+ * drift; only the conventional breakpoint names (the fallback used when no
+ * per-theme map from buildBreakpointWeights below is supplied) and the
+ * group-/peer- relational composites live here.
  *
  * Null prototype for the same reason as PROPERTY_GROUPS: variant names are
  * user input, and a prototype-chain hit would yield a non-numeric weight.
@@ -485,7 +485,9 @@ export const VARIANT_WEIGHTS: Record<string, number> = Object.assign(
 	Object.create(null),
 	FIXED_VARIANT_WEIGHTS,
 	{
-		// Tier 1: Responsive (base 100) — theme-default breakpoint statics
+		// Tier 1: Responsive (base 100). No breakpoint ships, so these are the
+		// conventional names at their conventional order — a theme that defines
+		// them gets the same numbers from the derived map.
 		sm: 101,
 		md: 102,
 		lg: 103,

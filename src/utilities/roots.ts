@@ -59,6 +59,7 @@ export type ValueSpaceKind =
 	| "blur"
 	| "animation"
 	| "leading"
+	| "fluid-range"
 	| "tracking"
 	| "opacity"
 	| "duration"
@@ -215,6 +216,12 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 		],
 		resolvers: SPACING,
 		spec: { kinds: ["spacing"] },
+	},
+	// Fluid range scope classes — fluid-<name> from @fluid named ranges.
+	{
+		roots: ["fluid"],
+		resolvers: SPACING,
+		spec: { kinds: ["fluid-range"] },
 	},
 	// Sizing
 	{
@@ -646,7 +653,8 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 	{
 		roots: ["ease"],
 		resolvers: EFFECTS,
-		spec: { kinds: ["ease", "keywords"], keywords: ["linear", "in", "out", "in-out"] },
+		// `linear` is the CSS keyword; the named curves come from @ease.
+		spec: { kinds: ["ease", "keywords"], keywords: ["linear"] },
 	},
 	{
 		roots: ["transform"],

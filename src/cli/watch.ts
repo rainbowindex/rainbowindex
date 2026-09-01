@@ -3,7 +3,15 @@ import { resolve, dirname } from "node:path";
 import { writeFileAtomic } from "./atomic-write.js";
 import type { CLIOptions } from "./args.js";
 import { buildCSS, type BuildResult } from "./build.js";
-import { DEFAULT_EXCLUDES, DEFAULT_PATTERNS } from "../scanner/sources.js";
+import {
+	DEFAULT_EXCLUDES,
+	DEFAULT_PATTERNS,
+	disableScanChangeTracking,
+	enableScanChangeTracking,
+	enableSourceFileListCache,
+	invalidateSourceFileListCache,
+	markSourceFileChanged,
+} from "../scanner/sources.js";
 
 /** Minify when requested. Lazy: loading lightningcss pulls in a native
  *  binding — only pay for it (and only risk its platform-support failure
@@ -142,9 +150,30 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 		}, delay);
 	};
 
-	watcher.on("change", scheduleRebuild);
-	watcher.on("add", scheduleRebuild);
-	watcher.on("unlink", scheduleRebuild);
+	// This watcher is what lets the scanner cache its glob result and trust its
+	// per-file entries without a stat — the same bargain the Vite plugin makes.
+	// Both caches are armed only now, after the initial build, so a one-shot
+	// `rainbowindex` run in the same process never reads a cache nobody watches.
+	// Paths arrive relative to `cwd` (chokidar was given one), so eviction
+	// resolves them against it.
+	enableSourceFileListCache();
+	enableScanChangeTracking();
+
+	watcher.on("change", (file: string) => {
+		markSourceFileChanged(file, cwd);
+		scheduleRebuild();
+	});
+	watcher.on("add", (file: string) => {
+		invalidateSourceFileListCache();
+		markSourceFileChanged(file, cwd);
+		scheduleRebuild();
+	});
+	watcher.on("unlink", (file: string) => {
+		invalidateSourceFileListCache();
+		markSourceFileChanged(file, cwd);
+		scheduleRebuild();
+	});
+	watcher.on("unlinkDir", invalidateSourceFileListCache);
 	watcher.on("error", (err: unknown) => {
 		console.error("[rainbowindex] Watcher error:", err);
 	});
@@ -155,6 +184,8 @@ export async function watchMode(opts: CLIOptions, cwd: string): Promise<void> {
 		cleanupCalled = true;
 		if (debounceTimer) clearTimeout(debounceTimer);
 		dirty = false;
+		invalidateSourceFileListCache();
+		disableScanChangeTracking();
 
 		const doExit = () => {
 			watcher

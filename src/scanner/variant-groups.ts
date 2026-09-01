@@ -6,7 +6,10 @@
 // through here, and OutputMap is how the editor path maps expanded offsets
 // back to source.
 
-const MAX_EXPANDED_LENGTH = 100_000;
+// Bounds how much expansion may ADD, not how long the output may be. Plain
+// text passes through unchanged and costs nothing, so a large source file
+// with no groups in it never trips this — only real expansion growth does.
+const MAX_EXPANSION_GROWTH = 100_000;
 const MAX_EXPANSION_INPUT_LENGTH = 500_000;
 const MAX_VARIANT_GROUP_DEPTH = 10;
 
@@ -111,14 +114,15 @@ export class OutputMap {
 // mid-scan.
 const BODY_TOKEN_RE = /\S+/g;
 
-export function expandVariantGroups(input: string, warnings?: string[]): string {
-	return expandVariantGroupsCore(input, warnings, null);
+export function expandVariantGroups(input: string, warnings?: string[], path?: string): string {
+	return expandVariantGroupsCore(input, warnings, null, path);
 }
 
 export function expandVariantGroupsCore(
 	input: string,
 	warnings: string[] | undefined,
 	map: OutputMap | null,
+	path?: string,
 ): string {
 	if (!input.includes("{")) {
 		map?.push(0, 0, input.length);
@@ -127,27 +131,38 @@ export function expandVariantGroupsCore(
 
 	if (input.length > MAX_EXPANSION_INPUT_LENGTH) {
 		warnings?.push(
-			`[RI-1407] Variant group expansion input exceeds ${MAX_EXPANSION_INPUT_LENGTH} character limit — returning verbatim.`,
+			`[RI-1407] ${path ?? "<source>"}: Variant group expansion input exceeds ${MAX_EXPANSION_INPUT_LENGTH} character limit — returning verbatim.`,
 		);
 		map?.push(0, 0, input.length);
 		return input;
 	}
 
 	const parts: string[] = [];
-	let partsLen = 0;
-	// Exact output length so far — only consulted for map bookkeeping.
-	// partsLen deliberately keeps its original meaning (the budget check).
+	// Exact length of everything pushed into `parts` so far, which always
+	// corresponds to input [0, plainStart). Drives both the map bookkeeping and
+	// the growth budget below.
 	let outLen = 0;
 	let i = 0;
 	// Start of the pending run of non-group characters. Runs are flushed as one
 	// slice when a group expands (or at the end) instead of pushing one
 	// single-character string per position — this loop sees whole files.
 	let plainStart = 0;
+	// Set by a group that would blow the budget on its own, so the loop head
+	// below runs the one bail-out path instead of a second copy of it.
+	let overflowed = false;
 
 	while (i < input.length) {
-		if (partsLen + (i - plainStart) > MAX_EXPANDED_LENGTH) {
+		// `outLen` covers input [0, plainStart) and the pending run [plainStart, i)
+		// passes through 1:1, so `outLen - plainStart` is exactly what expansion
+		// has added so far — independent of how much plain text came with it.
+		//
+		// The budget itself is spent below, where each group is sized before it is
+		// built and sets `overflowed` rather than growing past the limit. So in
+		// practice `overflowed` is what fires here; the arithmetic restates the
+		// invariant that keeps it true.
+		if (overflowed || outLen - plainStart > MAX_EXPANSION_GROWTH) {
 			warnings?.push(
-				`[RI-1408] Variant group expansion output exceeds ${MAX_EXPANDED_LENGTH} character limit — remaining input appended verbatim.`,
+				`[RI-1408] ${path ?? "<source>"}: Variant group expansion exceeds the ${MAX_EXPANSION_GROWTH} character growth limit — remaining input appended verbatim.`,
 			);
 			if (i > plainStart) {
 				map?.push(outLen, plainStart, i - plainStart);
@@ -214,7 +229,7 @@ export function expandVariantGroupsCore(
 						depth++;
 						if (depth > MAX_VARIANT_GROUP_DEPTH) {
 							warnings?.push(
-								`[RI-1409] Variant group nesting exceeds maximum depth of ${MAX_VARIANT_GROUP_DEPTH} — group not expanded.`,
+								`[RI-1409] ${path ?? "<source>"}: Variant group nesting exceeds maximum depth of ${MAX_VARIANT_GROUP_DEPTH} — group not expanded.`,
 							);
 							break;
 						}
@@ -225,21 +240,35 @@ export function expandVariantGroupsCore(
 				}
 
 				if (depth === 0) {
+					const prefix = input.slice(prefixStart, braceStart);
+					const bodyStart = braceStart + 1;
+					const body = input.slice(bodyStart, j).trim();
+					const members = body.split(/\s+/).filter(Boolean);
+					// One group can outgrow the whole budget by itself: the prefix is
+					// copied onto every member, so a long prefix over many members
+					// multiplies. Checking between groups would only notice after the
+					// string it exists to prevent had already been built, so size the
+					// expansion here and leave the group verbatim when it does not fit.
+					// Measured before the pending run is flushed, hence `prefixStart`
+					// rather than `plainStart` on the consumed-input side.
+					const expandedLength =
+						members.length === 0
+							? 0
+							: members.length * (prefix.length + 1) -
+								1 +
+								members.reduce((total, member) => total + member.length, 0);
+					const growth = outLen - plainStart + (expandedLength - (j + 1 - prefixStart));
+					if (growth > MAX_EXPANSION_GROWTH) {
+						overflowed = true;
+						break;
+					}
 					if (prefixStart > plainStart) {
 						const run = input.slice(plainStart, prefixStart);
 						map?.push(outLen, plainStart, run.length);
 						outLen += run.length;
 						parts.push(run);
-						partsLen += run.length;
 					}
-					const prefix = input.slice(prefixStart, braceStart);
-					const bodyStart = braceStart + 1;
-					const body = input.slice(bodyStart, j).trim();
-					const expanded = body
-						.split(/\s+/)
-						.filter(Boolean)
-						.map((cls) => prefix + cls)
-						.join(" ");
+					const expanded = members.map((cls) => prefix + cls).join(" ");
 					if (map) {
 						// Each expanded token gets two identity pieces: the prefix
 						// (same text as `prefix:` before the braces) and the member
@@ -267,7 +296,6 @@ export function expandVariantGroupsCore(
 					}
 					outLen += expanded.length;
 					parts.push(expanded);
-					partsLen += expanded.length;
 					i = j + 1;
 					plainStart = i;
 					foundGroup = true;
@@ -300,7 +328,7 @@ const APPLY_AT_RULE_RE = /@(?:apply|a)\s+/g;
  * inside group syntax otherwise looks like the start of a CSS block to the
  * PostCSS parser.
  */
-export function expandApplyGroups(css: string, warnings?: string[]): string {
+export function expandApplyGroups(css: string, warnings?: string[], path?: string): string {
 	if (!css.includes("{") || !css.includes("@")) return css;
 
 	APPLY_AT_RULE_RE.lastIndex = 0;
@@ -326,7 +354,7 @@ export function expandApplyGroups(css: string, warnings?: string[]): string {
 
 		const body = css.slice(bodyStart, i);
 		if (body.includes("{")) {
-			const expanded = expandVariantGroups(body, warnings);
+			const expanded = expandVariantGroups(body, warnings, path);
 			if (expanded !== body) {
 				out.push(css.slice(lastEnd, bodyStart));
 				out.push(expanded);

@@ -14,12 +14,7 @@
  */
 
 import { devWarn, IS_DEV } from "../runtime.js";
-import {
-	type CustomFunctionalEntry,
-	DEFAULT_FONT_FAMILIES,
-	DEFAULT_TEXT_SIZES,
-	resolvePropsWith,
-} from "./resolve.js";
+import { type CustomFunctionalEntry, DEFAULT_FONT_FAMILIES, resolvePropsWith } from "./resolve.js";
 
 export interface CompilationContext {
 	customStaticProps: Record<string, string[]>;
@@ -33,7 +28,7 @@ export interface CompilationContext {
 /** Finalized snapshot — read by ri() via resolveProps(). Immutable between compilations. */
 let _customStaticProps: Readonly<Record<string, string[]>> = {};
 let _customFunctionalProps: readonly CustomFunctionalEntry[] = [];
-let _textSizes: ReadonlySet<string> = new Set(DEFAULT_TEXT_SIZES);
+let _textSizes: ReadonlySet<string> = new Set();
 let _fontFamilies: ReadonlySet<string> = new Set(DEFAULT_FONT_FAMILIES);
 let _colorNames: ReadonlySet<string> = new Set();
 
@@ -166,7 +161,7 @@ export function createCompilationContext(): CompilationContext {
 	return {
 		customStaticProps: {},
 		customFunctionalProps: {},
-		textSizes: new Set(DEFAULT_TEXT_SIZES),
+		textSizes: new Set(),
 		fontFamilies: new Set(DEFAULT_FONT_FAMILIES),
 		colorNames: new Set(),
 	};

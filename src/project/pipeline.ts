@@ -5,7 +5,7 @@ import {
 } from "../directives/index.js";
 import type { ProjectAnalysis } from "./analyze.js";
 
-export { analyzeProjectCSS } from "./analyze.js";
+export { analyzeProjectCSS, analyzeProjectCSSMemo } from "./analyze.js";
 export type { ProjectAnalysis } from "./analyze.js";
 import {
 	createCompiler,
@@ -28,6 +28,8 @@ export interface FinalizeProjectOptions {
 	/** Classes the user wrote by hand. Omit to treat every class as authored. */
 	authoredClassNames?: ReadonlySet<string>;
 	analysis: ProjectAnalysis;
+	/** Path of the CSS entry, named by the `@apply` expansion diagnostics. */
+	cssPath?: string;
 	resolveFonts?: FontResolver;
 	processCssFunctions?: boolean;
 }
@@ -42,12 +44,15 @@ export interface FinalizeProjectResult {
 	theme: ResolvedTheme;
 	directives: ParsedDirective[];
 	warnings: string[];
+	/** Codes silenced for this entry by `/* ri-disable … *\/`. A consumer that
+	 *  pushes further warnings into `warnings` must push through this too. */
+	suppressed: ReadonlySet<string>;
 }
 
-function collectApplyClassNames(css: string, warnings: string[]): string[] {
+function collectApplyClassNames(css: string, warnings: string[], cssPath?: string): string[] {
 	const classes: string[] = [];
 	for (const match of css.matchAll(APPLY_LIKE_MATCH_RE)) {
-		const params = expandVariantGroups(match[1], warnings);
+		const params = expandVariantGroups(match[1], warnings, cssPath);
 		for (const className of params.trim().split(/\s+/)) {
 			if (className) classes.push(className);
 		}
@@ -93,12 +98,17 @@ export async function finalizeProjectCompilation(
 	// A class written in `@apply` is authored by definition, so it joins the
 	// authored set alongside the `@source inline(...)` names.
 	const authored = options.authoredClassNames && new Set(options.authoredClassNames);
-	for (const cls of collectApplyClassNames(options.css, expansionWarnings)) {
+	for (const cls of collectApplyClassNames(options.css, expansionWarnings, options.cssPath)) {
 		classNameSet.add(cls);
 		authored?.add(cls);
 	}
 	const classNames = [...classNameSet];
-	pushWarningsDeduped(analysis.warnings, expansionWarnings, analysis.warningSeen);
+	pushWarningsDeduped(
+		analysis.warnings,
+		expansionWarnings,
+		analysis.warningSeen,
+		analysis.suppressed,
+	);
 	const compiler = createCompiler();
 	const compilation = compiler.compile(classNames, effectiveTheme, authored);
 
@@ -118,8 +128,18 @@ export async function finalizeProjectCompilation(
 		compiler.fontOutputCache,
 	);
 
-	pushWarningsDeduped(analysis.warnings, assemblyWarnings, analysis.warningSeen);
-	pushWarningsDeduped(analysis.warnings, compilation.warnings, analysis.warningSeen);
+	pushWarningsDeduped(
+		analysis.warnings,
+		assemblyWarnings,
+		analysis.warningSeen,
+		analysis.suppressed,
+	);
+	pushWarningsDeduped(
+		analysis.warnings,
+		compilation.warnings,
+		analysis.warningSeen,
+		analysis.suppressed,
+	);
 
 	// The PostCSS plugin consumes `sections`/`userCSS` and never reads `css`,
 	// so the full join is computed lazily (at most once) for the CLI/headless
@@ -138,5 +158,6 @@ export async function finalizeProjectCompilation(
 		theme: effectiveTheme,
 		directives: analysis.directives,
 		warnings: analysis.warnings,
+		suppressed: analysis.suppressed,
 	};
 }

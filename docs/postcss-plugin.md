@@ -53,7 +53,7 @@ The `@apply` at-rule composes utilities into one CSS rule. `@a` is its only alia
 
 ```css
 [data-slot="hero"] {
-	@a grid gap-4 p-8 hover:shadow-lg hover:bg-theme-600;
+	@a grid gap-4 p-8 hover:ring hover:bg-theme-600;
 }
 ```
 

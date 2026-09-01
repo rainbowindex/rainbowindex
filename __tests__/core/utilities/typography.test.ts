@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
-import { resolveUtility } from "../../../src/utilities/index.js";
-import { resolveDirectives } from "../../../src/directives/index.js";
+import { checkAppliedFontWeights, resolveUtility } from "../../../src/utilities/index.js";
+import { createFontFace, createFontSlot } from "../../../src/integrations/font-providers/model.js";
+import { scalesTheme } from "../../helpers/fixture-scales.js";
+import { typographyTheme } from "../../helpers/fixture-typography.js";
 
-const theme = resolveDirectives([]);
+const theme = scalesTheme(typographyTheme());
 let devWarnSpy: ReturnType<typeof vi.spyOn>;
 
 function mutableTheme() {
-	const base = resolveDirectives([]);
+	const base = scalesTheme(typographyTheme());
 	return {
 		...base,
 		text: { ...base.text },
@@ -450,5 +452,159 @@ describe("fluid typography utilities", () => {
 			property: "list-style-type",
 			value: "var(--t)",
 		});
+	});
+});
+
+describe("numeric font weights", () => {
+	/** A theme whose loaded fonts are exactly the given slots. */
+	function fontTheme(...fonts: ReturnType<typeof createFontSlot>[]) {
+		return { ...theme, fonts };
+	}
+
+	const variable = createFontSlot({
+		slot: "sans",
+		family: "Inter",
+		faces: [createFontFace({ provider: "google", weight: "300 900" })],
+	});
+	const staticList = createFontSlot({
+		slot: "mono",
+		family: "Fira Code",
+		faces: [createFontFace({ provider: "/fira.woff2", weight: "400,700" })],
+	});
+
+	it("font-<number> → font-weight", () => {
+		const r = resolveUtility("font-500", null, false, theme);
+		expect(r!.declarations[0]).toEqual({ property: "font-weight", value: "500" });
+	});
+
+	it("a named @weight token still wins over the numeric form", () => {
+		const named = { ...theme, weights: { ...theme.weights, "500": 550 } };
+		const r = resolveUtility("font-500", null, false, named);
+		expect(r!.declarations[0]).toEqual({ property: "font-weight", value: "550" });
+	});
+
+	it.each(["font-0", "font-1001", "font-9000"])("%s is not a weight — unresolved", (cls) => {
+		expect(resolveUtility(cls, null, false, theme)).toBeNull();
+	});
+
+	it("font-stretch-50 is unaffected by the numeric branch", () => {
+		const r = resolveUtility("font-stretch", "50", false, theme);
+		expect(r!.declarations[0]).toEqual({ property: "font-stretch", value: "50%" });
+	});
+
+	it("a variable range accepts every weight inside it", () => {
+		const warnings: string[] = [];
+		for (const w of ["300", "450", "617", "900"]) {
+			resolveUtility(`font-${w}`, null, false, fontTheme(variable), warnings);
+		}
+		expect(warnings).toEqual([]);
+	});
+
+	it("a variable range warns below and above it", () => {
+		const warnings: string[] = [];
+		resolveUtility("font-200", null, false, fontTheme(variable), warnings);
+		resolveUtility("font-950", null, false, fontTheme(variable), warnings);
+		expect(warnings).toHaveLength(2);
+		expect(warnings[0]).toContain("[RI-1504]");
+		expect(warnings[0]).toContain("Inter 300–900");
+		expect(warnings[1]).toContain("[RI-1504]");
+	});
+
+	it("a static list accepts only its own weights", () => {
+		const warnings: string[] = [];
+		resolveUtility("font-400", null, false, fontTheme(staticList), warnings);
+		resolveUtility("font-700", null, false, fontTheme(staticList), warnings);
+		expect(warnings).toEqual([]);
+
+		resolveUtility("font-550", null, false, fontTheme(staticList), warnings);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("Fira Code 400, 700");
+	});
+
+	it("one covering slot is enough — the check is a union", () => {
+		const warnings: string[] = [];
+		resolveUtility("font-550", null, false, fontTheme(variable, staticList), warnings);
+		expect(warnings).toEqual([]);
+	});
+
+	it("stays quiet with no loaded fonts", () => {
+		const warnings: string[] = [];
+		resolveUtility("font-550", null, false, fontTheme(), warnings);
+		expect(warnings).toEqual([]);
+	});
+
+	it("stays quiet when a system slot is loaded — the OS font has every weight", () => {
+		const system = createFontSlot({ slot: "sans", family: "Helvetica", kind: "system" });
+		const warnings: string[] = [];
+		resolveUtility("font-550", null, false, fontTheme(system), warnings);
+		expect(warnings).toEqual([]);
+	});
+
+	it("routes the warning to the dev console when there is no sink", () => {
+		resolveUtility("font-200", null, false, fontTheme(variable));
+		expect(devWarnSpy).toHaveBeenCalledWith(expect.stringContaining("[RI-1504]"));
+	});
+});
+
+describe("per-family weight check", () => {
+	const sans = createFontSlot({
+		slot: "sans",
+		family: "Inter",
+		faces: [createFontFace({ provider: "google", weight: "300 900" })],
+	});
+	const mono = createFontSlot({
+		slot: "mono",
+		family: "Fira Code",
+		faces: [createFontFace({ provider: "/fira.woff2", weight: "400,700" })],
+	});
+	const fontTheme = { ...theme, fonts: [sans, mono] };
+
+	/** Warnings from one applied class list. */
+	function check(...classes: string[]): string[] {
+		const warnings: string[] = [];
+		checkAppliedFontWeights(classes, fontTheme, warnings);
+		return warnings;
+	}
+
+	it("warns when the named family lacks the weight another font has", () => {
+		const warnings = check("font-mono", "font-550");
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("[RI-1504]");
+		expect(warnings[0]).toContain("Fira Code does not provide weight 550");
+		expect(warnings[0]).toContain("It has 400, 700");
+	});
+
+	it("stays quiet when the named family has the weight", () => {
+		expect(check("font-sans", "font-550")).toEqual([]);
+		expect(check("font-mono", "font-700")).toEqual([]);
+	});
+
+	it("stays quiet when no font has the weight — the union check reports that", () => {
+		expect(check("font-mono", "font-200")).toEqual([]);
+		expect(check("font-mono", "font-1000")).toEqual([]);
+	});
+
+	it("stays quiet when the list names no family", () => {
+		expect(check("font-550")).toEqual([]);
+		expect(check("font-bold", "font-550")).toEqual([]);
+	});
+
+	it("the last family in the list decides", () => {
+		expect(check("font-mono", "font-sans", "font-550")).toEqual([]);
+		expect(check("font-sans", "font-mono", "font-550")).toHaveLength(1);
+	});
+
+	it("pairs only inside one variant group", () => {
+		expect(check("md:font-mono", "font-550")).toEqual([]);
+		expect(check("font-mono", "md:font-550")).toEqual([]);
+		expect(check("md:font-mono", "md:font-550")).toHaveLength(1);
+	});
+
+	it("ignores a family slot the theme does not load", () => {
+		expect(check("font-serif", "font-550")).toEqual([]);
+	});
+
+	it("ignores weights outside the CSS range", () => {
+		expect(check("font-mono", "font-0", "font-1500")).toEqual([]);
 	});
 });

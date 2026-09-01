@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
 import postcss, { type AtRule, type Declaration, type Rule } from "postcss";
-import { resolveUtility, extractCustomUtilityRootInfo } from "../../src/utilities/index.js";
-import { resolveDirectives, extractDirectives } from "../../src/directives/index.js";
+import { describe, expect, it } from "vitest";
+import { extractDirectives, resolveDirectives } from "../../src/directives/index.js";
 import { processApply } from "../../src/integrations/postcss/apply.js";
 import { compileProject } from "../../src/project/index.js";
+import { extractCustomUtilityRootInfo, resolveUtility } from "../../src/utilities/index.js";
 
 describe("custom utility resolution", () => {
 	it("resolves a custom utility with direct declarations", () => {
@@ -74,7 +74,7 @@ describe("custom utility resolution", () => {
 
 	it("expands @apply of a custom utility mixing declarations and @apply", () => {
 		const dirs = extractDirectives(
-			"@utility card { @apply rounded-4 shadow-md; background: white; }",
+			"@utility card { @apply rounded-4 shadow-none; background: white; }",
 			[],
 		);
 		const theme = resolveDirectives(dirs);
@@ -162,7 +162,10 @@ describe("custom utility resolution", () => {
 	});
 
 	it("expands @a alias inside a custom utility body (className path)", () => {
-		const dirs = extractDirectives("@utility glass { @a backdrop-blur-lg; }", []);
+		const dirs = extractDirectives(
+			"@blur { lg: 16px; }\n@utility glass { @a backdrop-blur-lg; }",
+			[],
+		);
 		const theme = resolveDirectives(dirs);
 		const r = resolveUtility("glass", null, false, theme);
 		expect(r).not.toBeNull();
@@ -170,7 +173,10 @@ describe("custom utility resolution", () => {
 	});
 
 	it("expands @a alias inside a custom utility body (PostCSS @apply path)", () => {
-		const dirs = extractDirectives("@utility glass { @a backdrop-blur-lg; }", []);
+		const dirs = extractDirectives(
+			"@blur { lg: 16px; }\n@utility glass { @a backdrop-blur-lg; }",
+			[],
+		);
 		const theme = resolveDirectives(dirs);
 		const root = postcss.parse("header { @apply fixed glass; }");
 		const warnings: string[] = [];
@@ -181,7 +187,10 @@ describe("custom utility resolution", () => {
 	});
 
 	it("expands @a alias inside a grouped custom utility body", () => {
-		const dirs = extractDirectives("@utility { glass { @a backdrop-blur-lg; } }", []);
+		const dirs = extractDirectives(
+			"@blur { lg: 16px; }\n@utility { glass { @a backdrop-blur-lg; } }",
+			[],
+		);
 		const theme = resolveDirectives(dirs);
 		const r = resolveUtility("glass", null, false, theme);
 		expect(r).not.toBeNull();
@@ -271,49 +280,34 @@ describe("custom utility / built-in coexistence (value-gated lookup)", () => {
 	});
 });
 
-describe("custom utility — leading dot tolerated (@utility .foo ≡ @utility foo)", () => {
-	it("named form: a leading dot is stripped from the utility name", () => {
+describe("custom utility — a leading dot is rejected (names are bare, like every directive)", () => {
+	it("named form: a dotted name warns RI-1035 and defines nothing", () => {
 		const theme = resolveDirectives(extractDirectives("@utility .card { background: red; }", []));
-		expect(theme.customUtilities).toContainEqual({
-			name: "card",
-			functional: false,
-			body: "background: red;",
-		});
-		const r = resolveUtility("card", null, false, theme);
-		expect(r).not.toBeNull();
-		expect(r!.declarations).toContainEqual({ property: "background", value: "red" });
+		expect(theme.customUtilities).toHaveLength(0);
+		expect(theme.warnings.some((x) => x.includes("[RI-1035]"))).toBe(true);
+		expect(resolveUtility("card", null, false, theme)).toBeNull();
 	});
 
-	it("grouped form: a leading dot is stripped from each name", () => {
+	it("grouped form: a dotted name warns RI-1035 and defines nothing", () => {
 		const theme = resolveDirectives(
 			extractDirectives("@utility { .min-h-safe { color: red; } }", []),
 		);
-		const r = resolveUtility("min-h", "safe", false, theme);
-		expect(r).not.toBeNull();
-		expect(r!.declarations).toContainEqual({ property: "color", value: "red" });
-		// And it applies cleanly via @apply with the dotless class name.
-		const root = postcss.parse(".x { @apply min-h-safe; }");
-		const warnings: string[] = [];
-		processApply(root, theme, warnings);
-		expect(warnings.some((w) => w.includes("Unknown utility"))).toBe(false);
-		expect(root.toString()).toContain("color: red");
+		expect(theme.customUtilities).toHaveLength(0);
+		expect(theme.warnings.some((x) => x.includes("[RI-1035]"))).toBe(true);
 	});
 
-	it("grouped form: dotted and undotted names mix in one block", () => {
+	it("grouped form: an undotted name in the same block still works", () => {
 		const theme = resolveDirectives(
 			extractDirectives("@utility { .a { color: red; } b { color: blue; } }", []),
 		);
-		expect(resolveUtility("a", null, false, theme)).not.toBeNull();
+		expect(resolveUtility("a", null, false, theme)).toBeNull();
 		expect(resolveUtility("b", null, false, theme)).not.toBeNull();
 	});
 
-	it("strips the dot before the functional -* suffix", () => {
+	it("a dotted functional name is rejected too", () => {
 		const theme = resolveDirectives(extractDirectives("@utility { .tab-size-* { x: 1; } }", []));
-		expect(theme.customUtilities).toContainEqual({
-			name: "tab-size",
-			functional: true,
-			body: "x: 1;",
-		});
+		expect(theme.customUtilities).toHaveLength(0);
+		expect(theme.warnings.some((x) => x.includes("[RI-1035]"))).toBe(true);
 	});
 });
 
@@ -331,7 +325,9 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 		// resolveUtilityDeclarations already expands the body; the apply path must
 		// not re-expand it. Exactly one min-height declaration, with the right value.
 		const values: string[] = [];
-		root.walkDecls("min-height", (d) => values.push(d.value));
+		root.walkDecls("min-height", (d) => {
+			values.push(d.value);
+		});
 		expect(values).toEqual(["calc(var(--ri-vh) - env(safe-area-inset-top))"]);
 	});
 
@@ -341,7 +337,9 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 		const warnings: string[] = [];
 		processApply(root, theme, warnings);
 		const props: string[] = [];
-		root.walkDecls((d) => props.push(d.prop));
+		root.walkDecls((d) => {
+			props.push(d.prop);
+		});
 		expect(props.filter((p) => p === "padding-inline")).toHaveLength(1);
 		expect(props.filter((p) => p === "padding-block")).toHaveLength(1);
 	});
@@ -354,7 +352,9 @@ describe("custom utility @apply body — no duplicate declarations (PostCSS @app
 		const warnings: string[] = [];
 		processApply(root, theme, warnings);
 		const props: string[] = [];
-		root.walkDecls((d) => props.push(d.prop));
+		root.walkDecls((d) => {
+			props.push(d.prop);
+		});
 		expect(props.filter((p) => p === "background")).toHaveLength(1);
 		expect(props.filter((p) => p === "border-radius")).toHaveLength(1);
 	});

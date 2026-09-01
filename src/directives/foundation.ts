@@ -126,6 +126,10 @@ export interface ResolvedTheme {
 	 * `roundedShape` is null.
 	 */
 	readonly roundedShapeScale: number;
+	/** Named radii from `@rounded { roof: 24px; }` — each one makes the class
+	 *  `rounded-<name>` and the token `--rounded-<name>`. A name that matches a
+	 *  built-in radius keyword replaces it; RI-1124 warns at definition. */
+	readonly radii: Readonly<Record<string, string>>;
 	readonly shadows: Readonly<Record<string, string>>;
 	readonly weights: Readonly<Record<string, number>>;
 	readonly easing: Readonly<Record<string, string>>;
@@ -135,6 +139,10 @@ export interface ResolvedTheme {
 	readonly fluid: Readonly<FluidConfig>;
 	readonly textFluid?: Readonly<FluidConfig>;
 	readonly spacingFluid?: Readonly<FluidConfig>;
+	/** Named viewport ranges from `@fluid <name> { min; max; }` — each one makes
+	 *  the scope class `fluid-<name>` and the tokens `--fluid-<name>-{min,max}`.
+	 *  Ranges carry no unit: the ramp unit is baked per family. */
+	readonly fluidRanges: Readonly<Record<string, Readonly<FluidConfig>>>;
 	readonly fonts: readonly FontSlot[];
 	readonly preflight: Readonly<PreflightConfig>;
 	readonly customUtilities: readonly CustomUtility[];
@@ -223,6 +231,10 @@ export interface ScannedEntry {
 	fragment?: true;
 	/** Set when the entry's `{` block never closes; scanning stops after it. */
 	unclosedBlock?: true;
+	/** Half-open span of the entry in the scanned source, `[start, end)`. Lets a
+	 *  caller lift one entry out of a body and hand the rest to another parser. */
+	start: number;
+	end: number;
 }
 
 /**
@@ -256,7 +268,7 @@ export function* scanEntries(
 			let end = i + 1;
 			while (end < src.length && /[\w-]/.test(src[end])) end++;
 			const name = src.slice(i + 1, end);
-			if (name) yield { key: name, value: "", removal: true };
+			if (name) yield { key: name, value: "", removal: true, start: i, end };
 			i = end;
 			continue;
 		}
@@ -307,12 +319,13 @@ export function* scanEntries(
 			if (close === -1) {
 				// Unterminated block: emit what was scanned and stop — @color keeps
 				// such an entry (value without options), @animate/@font drop it.
+				const span = { start: entryStart, end: src.length };
 				if (colonIdx === -1) {
-					if (value) yield { key: "", value, fragment: true, unclosedBlock: true };
+					if (value) yield { key: "", value, fragment: true, unclosedBlock: true, ...span };
 				} else if (key === REMOVAL_KEY) {
-					if (value) yield { key: value, value: "", removal: true };
+					if (value) yield { key: value, value: "", removal: true, ...span };
 				} else {
-					yield { key, value, unclosedBlock: true };
+					yield { key, value, unclosedBlock: true, ...span };
 				}
 				return;
 			}
@@ -322,27 +335,27 @@ export function* scanEntries(
 				// Fragments keep their block so @font can consume legacy `@face { … }`
 				// spans; @color skips fragments and @animate requires a valid key, so
 				// neither changes behavior.
-				if (value) yield { key: "", value, fragment: true, block };
+				if (value) yield { key: "", value, fragment: true, block, start: entryStart, end: i };
 				continue;
 			}
 			if (key === REMOVAL_KEY) {
-				if (value) yield { key: value, value: "", removal: true };
+				if (value) yield { key: value, value: "", removal: true, start: entryStart, end: i };
 				continue;
 			}
-			yield { key, value, block };
+			yield { key, value, block, start: entryStart, end: i };
 			continue;
 		}
 
 		if (terminator !== "") i++; // step past the `;` / newline
 		if (colonIdx === -1) {
-			if (value) yield { key: "", value, fragment: true };
+			if (value) yield { key: "", value, fragment: true, start: entryStart, end: i };
 			continue;
 		}
 		if (key === REMOVAL_KEY) {
-			if (value) yield { key: value, value: "", removal: true };
+			if (value) yield { key: value, value: "", removal: true, start: entryStart, end: i };
 			continue;
 		}
-		yield { key, value };
+		yield { key, value, start: entryStart, end: i };
 	}
 }
 

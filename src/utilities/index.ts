@@ -250,4 +250,13 @@ export function resolveUtilityDeclarations(
 
 // Custom-@utility subsystem re-exports — the machinery lives in custom.ts;
 // existing consumers (engine, PostCSS @apply, tests) keep importing from here.
-export { matchCustomUtility, forEachApplyClass, extractCustomUtilityRootInfo } from "./custom.js";
+export {
+	matchCustomUtility,
+	forEachApplyClass,
+	forEachApplyClassList,
+	extractCustomUtilityRootInfo,
+} from "./custom.js";
+
+// Per-family font-weight check for applied class lists — the sibling classes
+// an @apply body has, and a scanned class attribute does not.
+export { checkAppliedFontWeights } from "./typography.js";

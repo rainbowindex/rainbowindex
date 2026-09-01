@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const testDir = join(tmpdir(), `ri-cli-test-${Date.now()}`);
-const distCLIPath = join(process.cwd(), "dist/cli.mjs");
+const distCLIPath = join(import.meta.dirname, "../../dist/cli.mjs");
 
 beforeAll(() => {
 	mkdirSync(join(testDir, "src"), { recursive: true });

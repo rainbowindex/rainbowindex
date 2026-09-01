@@ -4,15 +4,23 @@
  * important-modifier namespace, cache-key disambiguation, OVERRIDES gaps,
  * variant-order claim keys, and non-string inputs.
  */
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { type ResolvedTheme, resolveDirectives } from "../../src/directives/index.js";
+import { createCompiler } from "../../src/engine/index.js";
 import {
 	createCompilationContext,
-	registerColorNames,
 	finalizeCompilationContext,
+	registerColorNames,
+	registerCustomTextSizes,
 } from "../../src/merge/context.js";
-import { ri, createRi } from "../../src/merge/index.js";
-import { createCompiler } from "../../src/engine/index.js";
-import { resolveDirectives, type ResolvedTheme } from "../../src/directives/index.js";
+import { createRi, ri } from "../../src/merge/index.js";
+
+// No type scale ships, so ri() learns text size names when a theme compiles.
+beforeEach(() => {
+	const ctx = createCompilationContext();
+	registerCustomTextSizes(ctx, ["lg"]);
+	finalizeCompilationContext(ctx);
+});
 
 afterEach(() => {
 	finalizeCompilationContext(createCompilationContext());

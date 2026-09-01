@@ -20,8 +20,8 @@ import {
 	pruneTokens,
 	pruneVariantMetadata,
 	scanClassTokens,
-	type ValueVisitor,
 	VARIANT_HELPER_NAMES,
+	type ValueVisitor,
 } from "./collectors.js";
 import { CandidateCollector, type CandidateSink, type ClassCandidate, SetSink } from "./sinks.js";
 
@@ -262,7 +262,7 @@ export function extractClassesFromSource(
 	warnings?: string[],
 ): Set<string> {
 	const classes = new Set<string>();
-	extractInto(new SetSink(classes), input, warnings);
+	extractInto(new SetSink(classes, input.path), input, warnings);
 	return classes;
 }
 
@@ -279,7 +279,7 @@ export function extractClassCandidates(
 	input: SourceExtractionInput,
 	warnings?: string[],
 ): ClassCandidate[] {
-	const collector = new CandidateCollector();
+	const collector = new CandidateCollector(input.path);
 	extractInto(collector, input, warnings);
 	return collector.finish();
 }
