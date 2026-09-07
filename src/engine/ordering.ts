@@ -256,6 +256,12 @@ export const PROPERTY_GROUPS: Record<string, number> = Object.assign(Object.crea
 	"--ri-inset-shadow-color": 141,
 	"--ri-ring-color": 141,
 	"--ri-inset-ring-color": 141,
+	"--ri-ring-offset-color": 141,
+	// Width and flag are read by the ring/offset shadow layers rather than by a
+	// property of their own, so they belong to the same group for the same
+	// reason the slot vars do.
+	"--ri-ring-offset-width": 141,
+	"--ri-ring-inset": 141,
 	"text-shadow": 141,
 	"--ri-text-shadow-color": 141,
 	outline: 142,
@@ -339,16 +345,24 @@ export const PROPERTY_GROUPS: Record<string, number> = Object.assign(Object.crea
 	"--ri-rotate-z": 160,
 	"--ri-skew-x": 160,
 	"--ri-skew-y": 160,
-	translate: 161,
 	"--ri-translate-x": 161,
 	"--ri-translate-y": 161,
 	"--ri-translate-z": 161,
-	rotate: 162,
-	scale: 163,
-	"--ri-scale-x": 163,
-	"--ri-scale-y": 163,
-	"--ri-scale-z": 163,
-	zoom: 164,
+	// The whole-property `translate` sorts AFTER the axis variables, not with
+	// them. `translate-none` and `translate-3d` are the only utilities whose
+	// first declaration is the shorthand, and both are meant to win over an axis
+	// utility beside them — a reset that loses to `translate-x-4` resets nothing,
+	// and `translate-3d` exists precisely to re-emit the shorthand with the Z
+	// axis in it. Sharing 161 left the codepoint tie-break to decide, and it put
+	// `.translate-3d` and `.translate-none` first, so both were inert.
+	// Tailwind orders them last for the same reason.
+	translate: 162,
+	rotate: 163,
+	scale: 164,
+	"--ri-scale-x": 164,
+	"--ri-scale-y": 164,
+	"--ri-scale-z": 164,
+	zoom: 165,
 
 	// Transition / Animation
 	transition: 170,

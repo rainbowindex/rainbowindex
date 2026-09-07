@@ -1,0 +1,254 @@
+:root {
+  --spacing: 0.25rem;
+  --color-paper: light-dark(oklch(1 0 0), oklch(0 0 0));
+  --color-ink: light-dark(oklch(0 0 0), oklch(1 0 0));
+  --color-theme-282: light-dark(oklch(0.821 0 0), oklch(0.47 0 0));
+  --color-brand-100: light-dark(oklch(0.937 0.0475 329.117), oklch(0.233 0.0475 329.117));
+  --color-brand-200: light-dark(oklch(0.874 0.0915 329.221), oklch(0.379 0.0915 329.221));
+  --color-brand-500: light-dark(oklch(0.663 0.209 329.365), oklch(0.663 0.209 329.365));
+  --color-brand-900: light-dark(oklch(0.233 0.0687 329.372), oklch(0.937 0.0525 329.372));
+  --color-hairline: color-mix(in oklab, var(--color-theme-282) 52%, transparent);
+  --text-body: 1rem;
+  --text-body-leading: 1.5;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --rounded-roof: 24px;
+}
+
+/* preflight: box-sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* preflight: margins */
+body, h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre, ol, ul, menu {
+  margin: 0;
+}
+
+/* preflight: borders */
+*, *::before, *::after {
+  border-width: 0;
+  border-style: solid;
+  border-color: inherit;
+}
+
+/* preflight: root-defaults */
+:root {
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+}
+body {
+  line-height: inherit;
+  font-family: var(--font-sans);
+}
+code, kbd, samp, pre {
+  font-family: var(--font-mono);
+  font-size: 1em;
+}
+
+/* preflight: font-smoothing */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* preflight: font-inherit */
+button, input, optgroup, select, textarea {
+  font-family: inherit;
+  font-feature-settings: inherit;
+  font-variation-settings: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+/* preflight: heading-sizes */
+h1, h2, h3, h4, h5, h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+/* preflight: link-reset */
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/* preflight: media-block */
+img, svg, video, canvas, audio, iframe, embed, object {
+  display: block;
+  max-inline-size: 100%;
+}
+img, video {
+  block-size: auto;
+}
+
+/* preflight: list-reset */
+ol, ul, menu {
+  list-style: none;
+  padding: 0;
+}
+
+/* preflight: table-reset */
+table {
+  text-indent: 0;
+  border-color: inherit;
+  border-collapse: collapse;
+}
+
+/* preflight: hr-reset */
+hr {
+  block-size: 0;
+  border-top-width: 1px;
+  color: inherit;
+}
+
+/* preflight: button-reset */
+button, [role="button"] {
+  cursor: pointer;
+  padding: 0;
+}
+button {
+  background-color: transparent;
+  background-image: none;
+}
+
+/* preflight: input-reset */
+input::placeholder, textarea::placeholder {
+  opacity: 1;
+  color: color-mix(in oklab, currentColor 48%, transparent);
+}
+input:where([type="button"], [type="reset"], [type="submit"]) {
+  -webkit-appearance: button;
+  appearance: button;
+}
+
+/* preflight: textarea-reset */
+textarea {
+  resize: vertical;
+}
+
+/* preflight: fieldset-reset */
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+legend {
+  padding: 0;
+}
+
+/* preflight: focus-visible */
+:focus-visible {
+  outline-width: 2px;
+  outline-style: solid;
+  outline-offset: 2px;
+  outline-color: currentColor;
+}
+
+/* preflight: dialog-reset */
+dialog {
+  padding: 0;
+}
+dialog::backdrop {
+  background-color: oklch(0 0 0 / 0.5);
+}
+
+/* preflight: summary-reset */
+summary {
+  display: list-item;
+  cursor: pointer;
+}
+
+/* preflight: interpolate-size */
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+}
+
+/* preflight: overflow-wrap */
+body {
+  overflow-wrap: break-word;
+}
+
+/* preflight: color-scheme */
+html {
+  color-scheme: light dark;
+}
+html[data-appearance="dark"] {
+  color-scheme: dark;
+}
+html[data-appearance="light"] {
+  color-scheme: light;
+}
+
+.flex {
+  display: flex;
+}
+
+.gap-2 {
+  gap: calc(2 * var(--spacing));
+}
+
+.rounded-roof {
+  border-radius: 24px;
+}
+
+.card {
+  background: var(--color-surface);
+  border-radius: 24px;
+  padding: calc(4 * var(--spacing));
+}
+
+.bg-brand-500 {
+  background-color: var(--color-brand-500);
+}
+
+.p-4 {
+  padding: calc(4 * var(--spacing));
+}
+
+.text-body {
+  font-size: var(--text-body);
+  line-height: var(--text-body-leading);
+}
+
+.text-brand-100 {
+  color: var(--color-brand-100);
+}
+
+.text-brand-900 {
+  color: var(--color-brand-900);
+}
+
+@media (any-hover: hover) {
+.any-hover\:bg-brand-200 {
+  background-color: var(--color-brand-200);
+}
+}
+
+
+.hocus\:underline:hover, .hocus\:underline:focus {
+  text-decoration-line: underline;
+}
+
+.panel {
+	display: flex;
+	gap: calc(2 * var(--spacing));
+	background-color: var(--color-brand-500);
+	font-size: var(--text-body);
+	line-height: var(--text-body-leading);
+	border: 1px solid var(--color-hairline);
+}
+
+.panel:hover {
+	color: var(--color-brand-900);
+}
+
+.quiet {
+	/* ri-disable RI-1106 */
+	color: var(--color-brand-100);
+}

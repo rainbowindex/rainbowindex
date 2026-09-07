@@ -1,6 +1,6 @@
 # Command-Line Interface
 
-The package installs one binary: `rainbowindex`. The binary has six commands. `build` is the default command. The CLI does not read stdin. CSS output goes to stdout unless you set `--output`. Warnings go to stderr.
+The package installs one binary: `rainbowindex`. The binary has nine commands. `build` is the default command. The CLI does not read stdin. CSS output goes to stdout unless you set `--output`. Warnings go to stderr.
 
 | Command | Purpose |
 | --- | --- |
@@ -8,7 +8,10 @@ The package installs one binary: `rainbowindex`. The binary has six commands. `b
 | `init` | Connect Rainbow Index to the current Vite app. |
 | `create <dir>` | Scaffold a new Vite app with Rainbow Index. |
 | `generate-types` | Generate TypeScript types for editor autocomplete. |
+| `generate-snapshot` | Generate the theme snapshot that makes the client `ri()` theme-aware. |
+| `generate-tokens` | Generate typed token exports and a W3C Design Tokens file. |
 | `preload-fonts` | Print `<link rel="preload">` tags for local font faces. |
+| `migrate` | Translate a Tailwind v4 project into directives. See [migrating.md](migrating.md). |
 | `scan` | Print the class names that the scanner finds in files. |
 
 Run `rainbowindex --help` for global help. Run `rainbowindex <command> --help` for help on one command. Put the command word before `--help`. The form `rainbowindex --help build` prints the global help, not the command help.
@@ -25,6 +28,7 @@ The command word must be the first token that is not a flag. If a glob comes fir
 | `--css <file>` | `build`, `generate-types`, `preload-fonts` | auto-detected | CSS input file with directives. |
 | `--css <file>` | `init`, `create` | `src/index.css` | Stylesheet to create or patch with `@import "rainbowindex";`. |
 | `--strict` | `generate-types` | off | Remove the `(string & {})` escape hatch from the generated class type. |
+| `--write` | `migrate` | off | Apply the migration in place. Without it, the translated entry is written beside the original and nothing is overwritten. |
 | `--template <name>` | `create` | `react-ts` | Vite template name. |
 | `-v`, `--version` | all | — | Print the version and exit. |
 | `-h`, `--help` | all | — | Print help and exit. |
@@ -42,11 +46,41 @@ src/index.css, src/style.css, src/styles.css, src/app.css, src/global.css,
 index.css, style.css, styles.css, app.css, global.css
 ```
 
-A file is active when it contains a Rainbow Index directive, or `@import "rainbowindex"`, or `@import "rainbowindex/index.css"`. Directives inside comments or strings do not count.
+A file is active when it contains a Rainbow Index directive, or an `@import` of `"rainbowindex"`, `"rainbowindex/index.css"`, or `"rainbowindex/tailwind.css"`. Directives inside comments or strings do not count.
 
 If no active file is found, the build continues with empty CSS input. If an explicit `--css` path does not exist, the build stops with error `[RI-1605]`.
 
 The CSS input limit is 5 MB. An explicit file above the limit causes an error. The auto-detection skips files above the limit without a message.
+
+### `@import`
+
+An `@import` naming a local file or a package stylesheet is read for its
+directives, recursively:
+
+```css
+@import "rainbowindex";
+@import "./theme/tokens.css";      /* its @color, @text, … apply */
+@import "some-preset/theme.css";   /* resolved through the package exports map */
+```
+
+Left alone, and warned where the warning is useful:
+
+| Import | What happens |
+| --- | --- |
+| `@import "rainbowindex"` | Activation. Kept at the entry; dropped inside an imported file, so a preset cannot activate twice. |
+| `@import "rainbowindex/tailwind.css"` | The Tailwind-default preset. Activates too, but unlike the marker above it is a real stylesheet, so it is resolved and read like any other package preset. |
+| `@import url("https://…")`, `@import "/site.css"` | Left for the browser to fetch. No warning. |
+| `@import "./a.css" screen;`, `layer(…)`, `supports(…)` | Left in place, `[RI-1045]`. Directives have no conditional form, so its directives are not read. |
+| An import that does not resolve | Left in place, `[RI-1041]`. |
+| A cycle | The repeat is dropped, `[RI-1042]`. |
+
+A file reached twice by different paths is read once. The chain may nest 8 deep
+(`[RI-1043]`) and total 5 MB (`[RI-1044]`).
+
+**The CLI emits what it reads.** It runs no PostCSS, so an inlined file's own
+CSS is written into the output once, in import order, and the `@import` at-rule
+is gone. Every subcommand that reads the CSS entry — `build`, `generate-types`,
+`preload-fonts` — sees the same imported directives.
 
 ## build
 
@@ -80,7 +114,7 @@ rainbowindex "src/**/*.tsx" --watch -o dist/styles.css
 
 The CLI runs the first build, then watches for file changes. It watches:
 
-- The globs you gave. If you gave none, it watches `*.html` and `src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}`.
+- The globs you gave. If you gave none, it watches `*.html` and `src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte,astro}`.
 - The CSS input file.
 - Every positive `@source` pattern from the CSS. The CLI reads the patterns again after each rebuild, so `@source` edits apply live.
 
@@ -108,6 +142,74 @@ A token name with unsafe characters is skipped with warning `[RI-1014]`. Safe na
 
 ```bash
 rainbowindex generate-types --strict --css src/styles.css
+```
+
+## generate-snapshot
+
+`rainbowindex generate-snapshot` writes `rainbowindex-snapshot.ts` to the working directory (`-o` overrides the path). Import it once, as early as possible in your app entry:
+
+```ts
+import "./rainbowindex-snapshot";
+```
+
+That publishes your theme, so the default `ri()` resolves your project's text sizes, weights, font slots, color names, and custom utilities. Without it `ri()` has no theme and can read `text-lg` as a color and drop it — see [class-merge.md](class-merge.md).
+
+**With Vite you do not need this.** The plugin publishes the theme through a virtual module. This command is for every other bundler: Next.js, Webpack, Rspack, esbuild, or a plain PostCSS setup.
+
+The module also exports `snapshot` and a `ri` bound to it, for rendering more than one theme in one process.
+
+Output is deterministic — sorted, and derived from the CSS entry alone — so re-running on an unchanged theme rewrites the file byte-identically. Safe to commit, and safe as a build step.
+
+```bash
+rainbowindex generate-snapshot --css src/styles.css -o src/theme.ts
+```
+
+## generate-tokens
+
+`rainbowindex generate-tokens` writes two files: `rainbowindex-tokens.ts` and, beside it, `tokens.json`.
+
+A class is the right way to style an element and the wrong way to hand a chart library a series color, tell a canvas what to fill with, or give Figma your palette. Those need the token's value, and this is how they get it without the palette being re-declared in JavaScript and drifting.
+
+```ts
+import { tokens } from "./rainbowindex-tokens";
+
+<Chart series={[tokens.color.brand[500], tokens.color.brand[700]]} />;
+```
+
+The object is `as const`, so `tokens.color.brnad` is a compile error with a "did you mean" and the editor completes every name from your own theme.
+
+**The values are `var()` references, not literals.** `tokens.color.brand[500]` is the string `"var(--color-brand-500)"`, so it still follows the cascade — a `[data-theme]` override or a dark-mode flip changes what it resolves to at use. A baked literal would freeze whichever mode happened to be active when you ran the command.
+
+**A generative palette carries every canonical stop**, whether or not a class uses one. Token output is not pruned by usage, because what reads it is code the scanner never sees. Namespaces your theme never declared are omitted entirely, so the generated type describes your system rather than the engine's capabilities.
+
+`tokens.json` is the same theme in the [W3C Design Tokens](https://tr.designtokens.org/format/) format, which is what Style Dictionary and Figma importers read. There the values **are** resolved, to hex for colors, because a design tool has no cascade to resolve a `var()` against:
+
+```json
+{
+	"color": { "brand": { "500": { "$type": "color", "$value": "#e15fd0" } } },
+	"breakpoint": { "sm": { "$type": "dimension", "$value": "40rem" } }
+}
+```
+
+A Style Dictionary build consumes it with no adapter:
+
+```json
+{
+	"source": ["tokens.json"],
+	"platforms": {
+		"css": {
+			"transformGroup": "css",
+			"buildPath": "build/",
+			"files": [{ "destination": "vars.css", "format": "css/variables" }]
+		}
+	}
+}
+```
+
+Both files are sorted and derived from the CSS entry alone, so re-running on an unchanged theme rewrites them byte-identically. Safe to commit, and safe as a build step.
+
+```bash
+rainbowindex generate-tokens --css src/styles.css -o src/tokens.ts
 ```
 
 ## preload-fonts
@@ -182,6 +284,11 @@ The CLI reads the same environment variables as the rest of the package. See [en
 | --- | --- |
 | `RI-1009` | The CSS input contains `@apply`, and the CLI cannot expand it. |
 | `RI-1014` | A token name has unsafe characters for type generation. |
+| `RI-1041` | An `@import` did not resolve. |
+| `RI-1042` | A circular `@import`. |
+| `RI-1043` | An `@import` chain nests more than 8 deep. |
+| `RI-1044` | The inlined `@import` files exceed 5 MB. |
+| `RI-1045` | A conditional `@import`; its directives are not read. |
 | `RI-1404` | A glob or `@source` pattern was rejected, or a candidate CSS file was unreadable. |
 | `RI-1603` | Zero utility classes compiled. |
 | `RI-1604` | An existing hand-written `rainbowindex-env.d.ts` was saved as `.bak`. |

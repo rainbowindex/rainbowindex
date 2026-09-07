@@ -1,13 +1,20 @@
 import { devWarn } from "../runtime.js";
 
-export type { CompilationContext, CompilationSnapshot } from "../merge/context.js";
+export type {
+	CompilationContext,
+	CompilationSnapshot,
+	SerializedSnapshot,
+} from "../merge/context.js";
 export {
 	createCompilationContext,
 	finalizeCompilationContext,
+	hydrateSnapshot,
+	publishSnapshot,
 	registerColorNames,
 	registerCustomFontFamilies,
 	registerCustomTextSizes,
 	registerCustomUtility,
+	serializeSnapshot,
 } from "../merge/context.js";
 export { createRi, ri } from "../merge/index.js";
 export { safelist } from "../safelist.js";

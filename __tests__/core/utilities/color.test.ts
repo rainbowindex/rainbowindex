@@ -448,3 +448,33 @@ describe("suffixed colors only resolve when shades exist", () => {
 		expect(resolveUtility("from-blank-500", null, false, t)).toBeNull();
 	});
 });
+
+/**
+ * `placeholder-<color>` is a live upstream utility, not the deliberate gap it
+ * was recorded as — that reading came from Tailwind's docs site, which only
+ * documents the `placeholder:` variant, and not from its implementation.
+ */
+describe("placeholder-{color}", () => {
+	const theme = resolveDirectives([{ type: "color", body: "brand: 0.18 330;" }]);
+
+	it("colours the placeholder, not the input's own text", () => {
+		// The whole reason it carries a nested selector: a plain `color`
+		// declaration here would recolour what the user typed.
+		const r = resolveUtility("placeholder-brand-500", null, false, theme);
+		expect(r?.nestedSelector).toBe("&::placeholder");
+		expect(r?.declarations).toEqual([{ property: "color", value: "var(--color-brand-500)" }]);
+	});
+
+	it("takes the alpha and arbitrary forms", () => {
+		expect(
+			resolveUtility("placeholder-brand-500/50", null, false, theme)?.declarations[0].value,
+		).toContain("color-mix(");
+		expect(resolveUtility("placeholder-[#f00]", null, false, theme)?.declarations[0].value).toBe(
+			"#f00",
+		);
+	});
+
+	it("is not a colour when it names nothing", () => {
+		expect(resolveUtility("placeholder-nope", null, false, theme)).toBeNull();
+	});
+});

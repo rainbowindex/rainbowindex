@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "vitest";
-import { execFileSync, spawn } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { writeFileSync, mkdirSync, rmSync, readFileSync, existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -562,6 +562,212 @@ describe("CLI init", () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Quick start, end to end
+// ---------------------------------------------------------------------------
+
+/**
+ * The documented path, walked exactly as `README.md` and `docs/getting-started.md`
+ * tell a new user to walk it: `rainbowindex init`, then one of the two starts,
+ * then a build.
+ *
+ * The unit suite builds themes in memory, which is why it stayed green through a
+ * release where the Tailwind-familiar start silently loaded no theme at all —
+ * `@import "rainbowindex/tailwind.css"` was matched as an activation marker and
+ * never resolved, so every named token compiled to nothing with no warning. A
+ * test that constructs a theme by hand cannot see that. This one resolves the
+ * specifier the way a real project does, through `node_modules` and the package
+ * `exports` map, so it fails when the documented path breaks for any reason —
+ * resolution, inlining, stripping, or emission.
+ *
+ * Runs under `test:artifacts`, i.e. after `pnpm build`: the bare specifier
+ * resolves to `dist/tailwind.css`.
+ */
+describe("CLI quick start", () => {
+	const repoRoot = join(import.meta.dirname, "../..");
+
+	/** A bare Vite project with the package linked in, as an install leaves it. */
+	function scaffold(dir: string): void {
+		mkdirSync(join(dir, "src"), { recursive: true });
+		mkdirSync(join(dir, "node_modules"), { recursive: true });
+		// What `pnpm add rainbowindex` leaves behind: a symlink Node resolves
+		// through to the package's own `exports` map. Without it the bare
+		// specifier cannot resolve and the test would prove nothing.
+		symlinkSync(repoRoot, join(dir, "node_modules/rainbowindex"), "junction");
+		writeFileSync(
+			join(dir, "package.json"),
+			JSON.stringify(
+				{
+					name: "vite-app",
+					private: true,
+					devDependencies: { vite: "^8.0.0", rainbowindex: "workspace:*" },
+				},
+				null,
+				2,
+			),
+		);
+		writeFileSync(
+			join(dir, "vite.config.ts"),
+			'import { defineConfig } from "vite";\n\nexport default defineConfig({});\n',
+		);
+		writeFileSync(join(dir, "src/main.tsx"), 'import "./index.css";\n');
+	}
+
+	/** Build, returning stdout and stderr separately so warnings can be asserted. */
+	function build(dir: string): { stdout: string; stderr: string } {
+		const result = spawnSync(
+			process.execPath,
+			[distCLIPath, "src/**/*.tsx", "--css", "src/index.css", "-o", "out.css"],
+			{ cwd: dir, encoding: "utf-8", timeout: 30000 },
+		);
+		expect(result.error).toBeUndefined();
+		expect(result.status, `CLI exited ${result.status}\n${result.stderr}`).toBe(0);
+		return { stdout: result.stdout, stderr: result.stderr };
+	}
+
+	/** The markup from the README's quick start, verbatim in spirit. */
+	const APP = `export default function App() {
+	return (
+		<div className="sm:flex gap-4 px-6 py-3 text-lg font-bold rounded-lg rounded shadow-md shadow bg-blue-600 text-white">
+			Hello
+		</div>
+	);
+}
+`;
+
+	test("the Tailwind-familiar start renders the classes it advertises", () => {
+		const dir = join(tmpdir(), `ri-cli-quickstart-preset-${Date.now()}`);
+		try {
+			scaffold(dir);
+
+			// Step 1 of the docs: wire the project up.
+			const initOutput = runCLIIn(dir, "init", "--css", "src/index.css");
+			expect(initOutput).toContain("Initialized Vite project");
+			expect(readFileSync(join(dir, "src/index.css"), "utf-8")).toContain(
+				'@import "rainbowindex";',
+			);
+
+			// Step 2: the second line of the Tailwind-familiar start.
+			writeFileSync(
+				join(dir, "src/index.css"),
+				`${readFileSync(join(dir, "src/index.css"), "utf-8")}@import "rainbowindex/tailwind.css";\n`,
+			);
+			writeFileSync(join(dir, "src/App.tsx"), APP);
+
+			const { stderr } = build(dir);
+			const css = readFileSync(join(dir, "out.css"), "utf-8");
+
+			// Silence matters as much as the output: the failure this test exists
+			// for produced no warning at all, and an import that fails to resolve
+			// would say so with RI-1041.
+			expect(stderr).toBe("");
+
+			for (const rule of [
+				".sm\\:flex",
+				".text-lg",
+				".font-bold",
+				".shadow-md",
+				".rounded-lg",
+				".bg-blue-600",
+			]) {
+				expect(css, `${rule} missing from the emitted stylesheet`).toContain(`${rule} {`);
+			}
+			// Bare `rounded` reads the preset's DEFAULT radius (C2b).
+			expect(css).toContain(".rounded {");
+			// The preset's tokens reached `:root`, not just its rules.
+			expect(css).toContain("--color-blue-600:");
+			expect(css).toContain("--text-lg:");
+			// Bare `shadow` is the sharp one. It used to compile to
+			// `var(--shadow-DEFAULT)` with the token pruned away behind it — a
+			// rule that painted nothing while `validate()` called the class fine.
+			// It now inlines the value with a colour slot, so the check is that
+			// the rule carries a real shadow rather than that a token exists.
+			expect(css).toMatch(
+				/\.shadow \{\s*--ri-shadow: 0 1px 3px 0 var\(--ri-shadow-color, rgb\(0 0 0 \/ 0\.1\)\)/,
+			);
+			// Directives are read, never emitted. A comment in the preset that
+			// names one used to stop the strip pass and leak the rest verbatim.
+			expect(css).not.toMatch(
+				/^@(?:color|text|weight|leading|rounded|shadow|blur|ease|animate|breakpoint|utility)\b/m,
+			);
+			// Line-anchored: the preset's header comment quotes both import lines
+			// as documentation, and a comment is ordinary CSS that passes through.
+			// What must not survive is either one as a live at-rule.
+			expect(css).not.toMatch(/^@import\s+["']rainbowindex/m);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("the same classes render nothing without the preset", () => {
+		// The control. Without this, the test above would still pass if the
+		// engine grew default scales of its own, and would stop testing the
+		// preset at all.
+		const dir = join(tmpdir(), `ri-cli-quickstart-bare-${Date.now()}`);
+		try {
+			scaffold(dir);
+			runCLIIn(dir, "init", "--css", "src/index.css");
+			writeFileSync(join(dir, "src/App.tsx"), APP);
+
+			build(dir);
+			const css = readFileSync(join(dir, "out.css"), "utf-8");
+
+			for (const rule of [".text-lg", ".font-bold", ".shadow-md", ".rounded-lg", ".rounded"]) {
+				expect(
+					css,
+					`${rule} resolved with no theme — the preset is no longer load-bearing`,
+				).not.toContain(`${rule} {`);
+			}
+			// `sm:` has no breakpoint to hang on, so the variant itself is unknown.
+			expect(css).not.toContain(".sm\\:flex");
+			// What does work with no theme still works: the computed forms.
+			expect(css).toContain(".gap-4 {");
+			expect(css).toContain(".px-6 {");
+			expect(css).toContain(".text-white {");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("the from-scratch start renders the tokens the project declares", () => {
+		const dir = join(tmpdir(), `ri-cli-quickstart-scratch-${Date.now()}`);
+		try {
+			scaffold(dir);
+			runCLIIn(dir, "init", "--css", "src/index.css");
+			writeFileSync(
+				join(dir, "src/index.css"),
+				`${readFileSync(join(dir, "src/index.css"), "utf-8")}
+@color {
+	brand: 0.18 330;
+}
+
+@text { body: 1rem, 1.5; }
+@breakpoint { sm: 40rem; }
+`,
+			);
+			writeFileSync(
+				join(dir, "src/App.tsx"),
+				`export default function App() {
+	return <div className="sm:flex gap-4 px-6 py-3 text-body bg-brand-500 text-white">Hello</div>;
+}
+`,
+			);
+
+			const { stderr } = build(dir);
+			const css = readFileSync(join(dir, "out.css"), "utf-8");
+
+			expect(stderr).toBe("");
+			expect(css).toContain(".sm\\:flex {");
+			expect(css).toContain(".text-body {");
+			expect(css).toContain(".bg-brand-500 {");
+			expect(css).toContain("--color-brand-500:");
+			expect(css).toContain("@media (min-width: 40rem)");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("CLI create helper", () => {
 	test("scaffolds a Vite app and wires Rainbow Index", async () => {
 		const { createViteProject } = await import("../../src/cli/vite-setup.js");
@@ -665,5 +871,295 @@ describe("CLI scan", () => {
 	test("errors without positionals and on zero matches", () => {
 		expect(() => runCLI("scan")).toThrow();
 		expect(() => runCLI("scan", "src/Nope.tsx")).toThrow();
+	});
+});
+
+describe("CLI generate-tokens", () => {
+	const dir = join(tmpdir(), `ri-tokens-${Date.now()}`);
+
+	beforeAll(() => {
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, "app.css"),
+			`@import "rainbowindex";
+@color { brand: 0.18 330; surface: oklch(0.98 0.01 260); }
+@text { body: 1rem, 1.5; display: 3rem, 1.1; }
+@breakpoint { sm: 40rem; }
+@shadow { card: 0 4px 8px rgb(0 0 0 / 0.15); }
+@rounded { roof: 24px; }
+`,
+		);
+		runCLIIn(dir, "generate-tokens", "--css", "app.css");
+	});
+
+	afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+	test("writes both files", () => {
+		expect(existsSync(join(dir, "rainbowindex-tokens.ts"))).toBe(true);
+		expect(existsSync(join(dir, "tokens.json"))).toBe(true);
+	});
+
+	test("the module exports var() references, not literals", () => {
+		const ts = readFileSync(join(dir, "rainbowindex-tokens.ts"), "utf-8");
+		// A `var()` keeps following the cascade, so a `[data-theme]` override or
+		// a dark-mode flip still changes what the token resolves to. A baked
+		// literal would freeze whichever mode happened to be active at build.
+		expect(ts).toContain('"500": "var(--color-brand-500)"');
+		expect(ts).toContain('surface: "var(--color-surface)"');
+		expect(ts).toContain('display: "var(--text-display)"');
+		expect(ts).toContain('card: "var(--shadow-card)"');
+		expect(ts).toContain('roof: "var(--rounded-roof)"');
+		expect(ts).toContain("as const");
+	});
+
+	test("a generative palette carries every canonical stop, an explicit color does not", () => {
+		const ts = readFileSync(join(dir, "rainbowindex-tokens.ts"), "utf-8");
+		// Not pruned by usage: what reads this file is code the scanner never
+		// sees, so a stop no class mentions still has to be reachable.
+		expect(ts).toContain('"50": "var(--color-brand-50)"');
+		expect(ts).toContain('"950": "var(--color-brand-950)"');
+		expect(ts).not.toContain("var(--color-surface-500)");
+	});
+
+	test("stops are ordered numerically, matching how JavaScript orders the JSON", () => {
+		const ts = readFileSync(join(dir, "rainbowindex-tokens.ts"), "utf-8");
+		const stops = [...ts.matchAll(/"(\d+)": "var\(--color-brand-\d+\)"/g)].map((m) => Number(m[1]));
+		expect(stops.length).toBeGreaterThan(5);
+		expect(stops).toEqual([...stops].sort((a, b) => a - b));
+	});
+
+	test("omits namespaces the theme never declared", () => {
+		const ts = readFileSync(join(dir, "rainbowindex-tokens.ts"), "utf-8");
+		// The generated type should say what this theme has, not what the engine
+		// could support — an empty `{}` group is noise in every completion list.
+		expect(ts).not.toContain("blur:");
+		expect(ts).not.toContain("tracking:");
+	});
+
+	test("the JSON is W3C Design Tokens with resolved values", () => {
+		const json = JSON.parse(readFileSync(join(dir, "tokens.json"), "utf-8"));
+		// A design tool has no cascade, so `var()` would be meaningless there.
+		expect(json.color.brand["500"]).toEqual({ $type: "color", $value: expect.any(String) });
+		expect(json.color.brand["500"].$value).toMatch(/^#[0-9a-f]{6}$/);
+		expect(json.breakpoint.sm).toEqual({ $type: "dimension", $value: "40rem" });
+		expect(json.text.display).toEqual({ $type: "dimension", $value: "3rem" });
+		expect(json.shadow.card.$type).toBe("shadow");
+	});
+
+	test("re-running on an unchanged theme rewrites nothing", () => {
+		const before = [
+			readFileSync(join(dir, "rainbowindex-tokens.ts"), "utf-8"),
+			readFileSync(join(dir, "tokens.json"), "utf-8"),
+		];
+		runCLIIn(dir, "generate-tokens", "--css", "app.css");
+		expect([
+			readFileSync(join(dir, "rainbowindex-tokens.ts"), "utf-8"),
+			readFileSync(join(dir, "tokens.json"), "utf-8"),
+		]).toEqual(before);
+	});
+
+	test("-o moves the module and the JSON lands beside it", () => {
+		mkdirSync(join(dir, "gen"), { recursive: true });
+		runCLIIn(dir, "generate-tokens", "--css", "app.css", "-o", "gen/theme.ts");
+		expect(existsSync(join(dir, "gen/theme.ts"))).toBe(true);
+		expect(existsSync(join(dir, "gen/tokens.json"))).toBe(true);
+	});
+
+	test("declaration order does not reach the output", () => {
+		// Determinism is the point of sorting: two themes that declare the same
+		// tokens in different orders have to produce byte-identical files, or a
+		// committed token file churns every time someone reorders their CSS.
+		const a = join(tmpdir(), `ri-tokens-a-${Date.now()}`);
+		const b = join(tmpdir(), `ri-tokens-b-${Date.now()}`);
+		try {
+			mkdirSync(a, { recursive: true });
+			mkdirSync(b, { recursive: true });
+			const forward = `@import "rainbowindex";
+@color { alpha: 0.18 30; beta: 0.18 90; gamma: 0.18 150; }
+@breakpoint { sm: 40rem; md: 48rem; lg: 64rem; }
+`;
+			const reversed = `@import "rainbowindex";
+@color { gamma: 0.18 150; beta: 0.18 90; alpha: 0.18 30; }
+@breakpoint { lg: 64rem; md: 48rem; sm: 40rem; }
+`;
+			writeFileSync(join(a, "app.css"), forward);
+			writeFileSync(join(b, "app.css"), reversed);
+			runCLIIn(a, "generate-tokens", "--css", "app.css");
+			runCLIIn(b, "generate-tokens", "--css", "app.css");
+
+			for (const file of ["rainbowindex-tokens.ts", "tokens.json"]) {
+				expect(readFileSync(join(b, file), "utf-8"), file).toBe(
+					readFileSync(join(a, file), "utf-8"),
+				);
+			}
+			// And the order really is sorted, not merely equal.
+			const ts = readFileSync(join(a, "rainbowindex-tokens.ts"), "utf-8");
+			expect(ts.indexOf("alpha:")).toBeLessThan(ts.indexOf("beta:"));
+			expect(ts.indexOf("beta:")).toBeLessThan(ts.indexOf("gamma:"));
+			expect(ts.indexOf("lg:")).toBeLessThan(ts.indexOf("md:"));
+		} finally {
+			rmSync(a, { recursive: true, force: true });
+			rmSync(b, { recursive: true, force: true });
+		}
+	});
+
+	test("is listed in --help", () => {
+		expect(runCLIIn(dir, "--help")).toContain("generate-tokens");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// migrate tailwind
+// ---------------------------------------------------------------------------
+
+/**
+ * The migrator end to end, on a project shaped like a real Tailwind v4 app.
+ *
+ * `__tests__/core/migrate-tailwind.test.ts` proves the translation; this
+ * proves the command — entry detection, the preset resolving through an
+ * installed package, the dual build against real source files, what gets
+ * written, and above all that **nothing is overwritten without `--write`**.
+ */
+describe("migrate tailwind", () => {
+	const project = join(tmpdir(), `ri-migrate-${Date.now()}`);
+
+	const ENTRY = `@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+	--color-brand-500: oklch(0.66 0.21 329);
+	--color-brand-700: oklch(0.49 0.15 329);
+	--font-display: "Satoshi", sans-serif;
+	--text-hero: 3rem;
+	--text-hero--line-height: 1.1;
+	--radius-card: 0.75rem;
+	--breakpoint-tablet: 48rem;
+	--animate-shimmer: shimmer 2s linear infinite;
+
+	@keyframes shimmer {
+		from { background-position: 200% 0; }
+		to { background-position: -200% 0; }
+	}
+}
+
+.prose { max-width: 65ch; }
+`;
+
+	const APP = `export const App = () => (
+  <div className="flex items-center gap-3 rounded-card bg-brand-500 px-4 py-2 text-hero font-display tablet:gap-6 dark:bg-brand-700 animate-shimmer prose-lg">
+    <span className="text-sm font-bold shadow-md">Hi</span>
+  </div>
+);
+`;
+
+	beforeAll(() => {
+		mkdirSync(join(project, "src"), { recursive: true });
+		mkdirSync(join(project, "node_modules"), { recursive: true });
+		// The preset resolves through the consumer's installed package, exactly
+		// as it does in a real migration.
+		symlinkSync(
+			join(import.meta.dirname, "../.."),
+			join(project, "node_modules/rainbowindex"),
+			"dir",
+		);
+		writeFileSync(
+			join(project, "package.json"),
+			JSON.stringify({
+				name: "tw-app",
+				private: true,
+				devDependencies: { "@tailwindcss/vite": "^4.0.0", tailwindcss: "^4.0.0" },
+			}),
+		);
+		writeFileSync(join(project, "src/index.css"), ENTRY);
+		writeFileSync(join(project, "src/App.tsx"), APP);
+	});
+
+	afterAll(() => {
+		try {
+			rmSync(project, { recursive: true, force: true });
+		} catch {}
+	});
+
+	test("translates without touching the original", () => {
+		const out = runCLIIn(project, "migrate", "tailwind", "src/**/*.tsx");
+		expect(out).toContain("Migrated src/index.css");
+		expect(out).toContain("Nothing was overwritten");
+
+		// The entry is untouched, and the preview sits beside it.
+		expect(readFileSync(join(project, "src/index.css"), "utf-8")).toBe(ENTRY);
+		const migrated = readFileSync(join(project, "src/index.rainbowindex.css"), "utf-8");
+		expect(migrated).toContain('@import "rainbowindex";');
+		expect(migrated).toContain('@import "rainbowindex/tailwind.css";');
+		expect(migrated).toContain("brand-500: oklch(0.66 0.21 329);");
+		expect(migrated).toContain("hero: 3rem, 1.1;");
+		expect(migrated).toContain("variant: selector(.dark);");
+		// The project's own CSS survives.
+		expect(migrated).toContain(".prose { max-width: 65ch; }");
+	});
+
+	test("checks the project's real classes against the migrated theme", () => {
+		const out = runCLIIn(project, "migrate", "tailwind", "src/**/*.tsx");
+		// Only `prose-lg` should fail — it comes from the typography plugin,
+		// which the report already lists as needing a person.
+		expect(out).toMatch(/1 of \d+ classes in your source do not resolve/);
+
+		const report = readFileSync(join(project, "migration-report.md"), "utf-8");
+		expect(report).toContain("`prose-lg`");
+		expect(report).toContain("@plugin");
+		expect(report).not.toContain("`text-sm`");
+		expect(report).not.toContain("`shadow-md`");
+		// Scanner noise must not appear as a failing class.
+		expect(report).not.toContain("`const`");
+		expect(report).not.toContain("`export`");
+	});
+
+	test("the migrated entry builds", () => {
+		runCLIIn(project, "migrate", "tailwind", "src/**/*.tsx");
+		const css = runCLIIn(project, "build", "src/**/*.tsx", "--css", "src/index.rainbowindex.css");
+		for (const rule of [
+			".bg-brand-500",
+			".rounded-card",
+			".text-hero",
+			".font-display",
+			".shadow-md",
+			".animate-shimmer",
+		]) {
+			expect(css, rule).toContain(`${rule} {`);
+		}
+		// The dark strategy came across: `dark:` follows the class, not the media
+		// query, which is what the Tailwind project had.
+		expect(css).toContain(".dark");
+	});
+
+	test("--write applies it and keeps the original", () => {
+		const out = runCLIIn(project, "migrate", "tailwind", "--write");
+		expect(out).toContain("Applied.");
+		expect(readFileSync(join(project, "src/index.css"), "utf-8")).toContain(
+			'@import "rainbowindex";',
+		);
+		expect(readFileSync(join(project, "src/index.css.tailwind.bak"), "utf-8")).toBe(ENTRY);
+	});
+
+	test("says so when there is nothing to migrate", () => {
+		const empty = join(tmpdir(), `ri-migrate-empty-${Date.now()}`);
+		mkdirSync(join(empty, "src"), { recursive: true });
+		writeFileSync(join(empty, "src/index.css"), '@import "rainbowindex";\n');
+		const result = spawnSync(process.execPath, [distCLIPath, "migrate", "tailwind"], {
+			cwd: empty,
+			encoding: "utf-8",
+		});
+		expect(result.status).not.toBe(0);
+		expect(`${result.stdout}${result.stderr}`).toContain("No Tailwind CSS entry found");
+		rmSync(empty, { recursive: true, force: true });
+	});
+
+	test("rejects an unknown source", () => {
+		const result = spawnSync(process.execPath, [distCLIPath, "migrate", "bootstrap"], {
+			cwd: project,
+			encoding: "utf-8",
+		});
+		expect(result.status).not.toBe(0);
+		expect(`${result.stdout}${result.stderr}`).toContain('Unknown migration source "bootstrap"');
 	});
 });

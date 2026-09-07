@@ -9,10 +9,20 @@
  * export default defineConfig({
  * 	lint: {
  * 		jsPlugins: [{ name: "rainbowindex", specifier: "rainbowindex/oxlint" }],
- * 		rules: { "rainbowindex/prefer-ri": "error" },
+ * 		rules: {
+ * 			"rainbowindex/prefer-ri": "error",
+ * 			"rainbowindex/no-unknown-class": "error",
+ * 			"rainbowindex/no-conflicting-classes": "warn",
+ * 		},
  * 	},
  * });
  * ```
+ *
+ * `prefer-ri` is local to this file: it reads one import statement and needs
+ * no theme. The other two come from `lint/rules.ts`, shared with the ESLint
+ * entry, because a rule that says what a class *means* has to answer the same
+ * way in both linters — it reads the project's compiled theme through the
+ * editor API, and there is one right answer.
  *
  * The types below describe only the slice of the Oxlint rule API this plugin
  * touches. They are declared here rather than imported from `@oxlint/plugins`
@@ -20,6 +30,8 @@
  * cannot resolve, and its `definePlugin` / `defineRule` helpers are identity
  * functions with no runtime behavior to reuse.
  */
+
+import { noConflictingClassesRule, noUnknownClassRule, type LintRule } from "./lint/rules.js";
 
 interface ImportDeclarationNode {
 	source: { value: string };
@@ -40,7 +52,7 @@ export interface OxlintRule {
 
 export interface OxlintPlugin {
 	meta: { name: string };
-	rules: Record<string, OxlintRule>;
+	rules: Record<string, OxlintRule | LintRule>;
 }
 
 /**
@@ -84,7 +96,14 @@ export const preferRiRule: OxlintRule = {
 
 export const plugin: OxlintPlugin = {
 	meta: { name: "rainbowindex" },
-	rules: { "prefer-ri": preferRiRule },
+	rules: {
+		"prefer-ri": preferRiRule,
+		"no-unknown-class": noUnknownClassRule,
+		"no-conflicting-classes": noConflictingClassesRule,
+	},
 };
+
+export { noConflictingClassesRule, noUnknownClassRule } from "./lint/rules.js";
+export type { LintRule, ThemeLintOptions } from "./lint/index.js";
 
 export default plugin;

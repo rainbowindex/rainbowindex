@@ -132,6 +132,7 @@ No breakpoint ships. Each name comes from the `@breakpoint` directive: `@breakpo
 | `aria-[pressed=true]` | `[aria-pressed=true]` |
 | `group-hover` | `.group:hover &` |
 | `group-[sel]` | `.group:is(sel) &` |
+| `group-[&sel]` | `.group sel` — `&` is the group element, so `group-[&.open]` is `.group.open &` |
 | `peer-focus` | `.peer:focus ~ &` |
 | `peer-[sel]` | `.peer:is(sel) ~ &` |
 | `in-[sel]` | `:where(sel) &` |
@@ -228,6 +229,13 @@ When several utilities share one variant prefix, group them with `{...}`:
 ```
 
 Chained prefixes work: `sm:hover:{bg-theme-700 text-white}` expands to `sm:hover:bg-theme-700 sm:hover:text-white`.
+
+> [!IMPORTANT]
+> **Inside `@apply`, write the group with parentheses:** `@apply hover:(px-2 py-1);`.
+> A brace opens a block to every CSS parser, so the brace form only works where
+> the Vite plugin rewrites it first; the parenthesised form works in the CLI and
+> in plain PostCSS too. In a `class` attribute — which no CSS parser reads —
+> braces stay.
 
 Expansion happens at scan time. The compiler and the browser never see the braces.
 

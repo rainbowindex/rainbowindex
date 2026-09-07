@@ -15,7 +15,7 @@ import {
 } from "../engine/index.js";
 import { stripRIDirectives } from "../css/strip.js";
 import { assembleSections } from "../assembly.js";
-import { expandVariantGroups } from "../scanner/class-extraction.js";
+import { expandApplyBodyGroups } from "../scanner/class-extraction.js";
 import { pushWarningsDeduped } from "../warnings.js";
 
 export type FontResolver = (
@@ -52,7 +52,7 @@ export interface FinalizeProjectResult {
 function collectApplyClassNames(css: string, warnings: string[], cssPath?: string): string[] {
 	const classes: string[] = [];
 	for (const match of css.matchAll(APPLY_LIKE_MATCH_RE)) {
-		const params = expandVariantGroups(match[1], warnings, cssPath);
+		const params = expandApplyBodyGroups(match[1], warnings, cssPath);
 		for (const className of params.trim().split(/\s+/)) {
 			if (className) classes.push(className);
 		}

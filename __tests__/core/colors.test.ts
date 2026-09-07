@@ -449,7 +449,10 @@ describe("generateAllColorVariables — non-generative aliases", () => {
 		expect(vars).toContainEqual("--color-highlight: var(--color-accent);");
 	});
 
-	it("aliases a keyword color via var()", () => {
+	it("inlines a keyword an alias points at, rather than referencing it", () => {
+		// A keyword emits no variable of its own — every use is inlined — so the
+		// `var(--color-clear)` this used to emit resolved to nothing and made
+		// `bg-overlay` render nothing at all.
 		const vars = generateAllColorVariables(
 			{
 				clear: { type: "keyword", value: "transparent" },
@@ -458,7 +461,8 @@ describe("generateAllColorVariables — non-generative aliases", () => {
 			DEFAULT_DARK_CONFIG,
 			new Map(),
 		);
-		expect(vars).toContainEqual("--color-overlay: var(--color-clear);");
+		expect(vars).toContainEqual("--color-overlay: transparent;");
+		expect(vars.join("\n")).not.toContain("var(--color-clear)");
 	});
 
 	it("aliases a generative color with specific suffixes", () => {

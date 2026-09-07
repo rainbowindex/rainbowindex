@@ -9,6 +9,8 @@ The `@font` directive registers font slots: `sans`, `serif`, `mono`, or custom n
 
 Only the `@font { ... }` block form is a directive. A standard `@font-face` rule is normal CSS and passes through untouched.
 
+A slot with options is a nested rule: `sans { family: …; from: google; … }`. A slot with none stays a declaration: `mono: ui-monospace, monospace;`. The older `sans: "Inter" from google { … }` and `face: <src> { … }` forms still work and warn `RI-1046`.
+
 ## Grammar
 
 Each slot declaration is `slot: <preamble> [{ body }];`. The limit is 20 slots per block. When two blocks define the same slot, the last one wins with warning `[RI-1215]`.
@@ -44,13 +46,18 @@ Quotes are optional. Fallbacks come after the family, comma-separated, in the pr
 ```css
 @font {
 	/* Google slot with fallbacks and a weight range */
-	sans: "Inter", ui-sans-serif, sans-serif from google { weight: 400 700; }
+	sans {
+		family: "Inter", ui-sans-serif, sans-serif;
+		from: google;
+		weight: 400 700;
+	}
 
 	/* Local slot with an upright face and an italic face */
-	display: "Satoshi" {
+	display {
+		family: "Satoshi";
 		weight: 300 900;
-		face: /fonts/Satoshi.woff2;
-		face: /fonts/Satoshi-Italic.woff2 { style: italic; }
+		face { src: url("/fonts/Satoshi.woff2"); }
+		face { src: url("/fonts/Satoshi-Italic.woff2"); style: italic; }
 	}
 
 	/* System stack */

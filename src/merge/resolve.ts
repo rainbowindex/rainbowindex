@@ -10,17 +10,17 @@
  * thread it in through resolvePropsWith()'s parameters.
  */
 
+import { PREFIX_FIRST_SEGMENT_MAP } from "./props.js";
+import { BUILTIN_STATIC_PROPS } from "./static-props.js";
+import { PREFIX_PROPS } from "./prefix-props.js";
 import {
-	BUILTIN_STATIC_PROPS,
-	PREFIX_PROPS,
-	PREFIX_FIRST_SEGMENT_MAP,
 	isColorValue,
-	isImageValue,
 	isFontFamilyValue,
 	isGradientPositionValue,
-	isMaskStopPositionValue,
+	isImageValue,
 	isMaskRadialSizeValue,
-} from "./props.js";
+	isMaskStopPositionValue,
+} from "./value-kinds.js";
 import { scanBracketAware } from "../brackets.js";
 
 /** One functional `@utility name-*` root and the properties it claims. Declared
@@ -131,12 +131,56 @@ const RE_UNSIGNED_INT = /^\d+$/;
 // stroke-width) — kept local so the merge layer stays generator-free.
 const RE_DECIMAL = /^\d+(?:[._]\d+)?$/;
 
-/** Color-vs-default dual mode shared by the composable shadow/ring families. */
-function colorOrDefault(prefix: string, colorProps: readonly string[]): DualModeResolver {
+/**
+ * Color-vs-default dual mode shared by the composable shadow/ring families.
+ *
+ * `hasInitial` opts a family into the `*-initial` spelling, which sets the
+ * family's color var to `initial` and nothing else. It has to be decided here
+ * rather than by widening `isColorValue`, because `initial` is a color reset on
+ * exactly three families — box, inset and text shadow — and adding it to
+ * SPECIAL_COLORS would silently invent `ring-initial`, `bg-initial` and
+ * `text-initial`, none of which exist. Reading it as the default branch instead
+ * made `shadow-initial` claim the whole box-shadow, so it dominated an
+ * unrelated `shadow-md` while failing to dominate the `shadow-red-500` it
+ * actually overrides.
+ */
+function colorOrDefault(
+	prefix: string,
+	colorProps: readonly string[],
+	hasInitial = false,
+): DualModeResolver {
 	const defaultProps = PREFIX_PROPS[prefix];
 	return (value, _textSizes, _fontFamilies, colorNames) =>
-		isColorValue(value, undefined, colorNames) ? colorProps : defaultProps;
+		(hasInitial && value === "initial") || isColorValue(value, undefined, colorNames)
+			? colorProps
+			: defaultProps;
 }
+
+/**
+ * `ring` is three-way, not two.
+ *
+ * `ring-inset` is the odd member: it sets no width and no color, only the
+ * inset flag. It stays in the prefix layer rather than moving to
+ * BUILTIN_STATIC_PROPS now that it compiles, because a static match runs
+ * *before* prefix resolution — which would settle the name ahead of the colour
+ * test below and take `ring-inset` away from a project that declares
+ * `@color { inset: … }`. The engine resolves it in the same order, so the two
+ * layers agree about which of the two a given theme means.
+ *
+ * Without this row it claimed the `ring` family's own `box-shadow`, so
+ * `ri("ring-2 ring-inset")` returned `"ring-inset"` — deleting the ring.
+ */
+const RING_INSET_PROPS: readonly string[] = Object.freeze(["--ri-ring-inset"]);
+const RING_COLOR_PROPS: readonly string[] = Object.freeze(["--ri-ring-color"]);
+const RING_DEFAULT_PROPS = PREFIX_PROPS.ring;
+const RING_DUAL_MODE: DualModeResolver = (value, _textSizes, _fontFamilies, colorNames) => {
+	// The color test runs first, so a project that writes `@color { inset: … }`
+	// keeps `ring-inset` as the ring color it actually compiles to. The keyword
+	// only claims the flag when nothing else wants the name.
+	if (isColorValue(value, undefined, colorNames)) return RING_COLOR_PROPS;
+	if (value === "inset") return RING_INSET_PROPS;
+	return RING_DEFAULT_PROPS;
+};
 
 /**
  * Data-driven dispatch table for dual-mode prefix utilities.
@@ -198,11 +242,12 @@ const DUAL_MODE_PREFIXES: Readonly<Record<string, DualModeResolver>> = {
 	// so a color-first check would misclassify it) and background-color
 	// for everything else — never the full `background` shorthand.
 	bg: (value) => (isImageValue(value) ? BG_IMAGE_PROPS : PREFIX_PROPS.bg),
-	shadow: colorOrDefault("shadow", Object.freeze(["--ri-shadow-color"])),
-	"inset-shadow": colorOrDefault("inset-shadow", Object.freeze(["--ri-inset-shadow-color"])),
-	ring: colorOrDefault("ring", Object.freeze(["--ri-ring-color"])),
+	shadow: colorOrDefault("shadow", Object.freeze(["--ri-shadow-color"]), true),
+	"ring-offset": colorOrDefault("ring-offset", Object.freeze(["--ri-ring-offset-color"])),
+	"inset-shadow": colorOrDefault("inset-shadow", Object.freeze(["--ri-inset-shadow-color"]), true),
+	ring: RING_DUAL_MODE,
 	"inset-ring": colorOrDefault("inset-ring", Object.freeze(["--ri-inset-ring-color"])),
-	"text-shadow": colorOrDefault("text-shadow", Object.freeze(["--ri-text-shadow-color"])),
+	"text-shadow": colorOrDefault("text-shadow", Object.freeze(["--ri-text-shadow-color"]), true),
 	"drop-shadow": colorOrDefault("drop-shadow", Object.freeze(["--ri-drop-shadow-color"])),
 	from: (value) =>
 		isGradientPositionValue(value) ? PREFIX_PROPS["from-position"] : PREFIX_PROPS.from,

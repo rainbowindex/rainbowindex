@@ -2,16 +2,42 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CLIOptions } from "../../src/cli/args.js";
+import type { CLIOptions, Subcommand } from "../../src/cli/args.js";
 import { parseArgs, printHelp } from "../../src/cli/args.js";
 import { writeFileAtomic } from "../../src/cli/atomic-write.js";
 import { buildCSS } from "../../src/cli/build.js";
 import { findCSSFileAsync, loadProjectCSS, loadProjectTheme } from "../../src/cli/css-file.js";
+import { generateSnapshot } from "../../src/cli/generate-snapshot.js";
 import { generateTypes } from "../../src/cli/generate-types.js";
+import { createThemeSnapshot } from "../../src/engine/index.js";
+import { hydrateSnapshot } from "../../src/merge/context.js";
+import { analyzeProjectCSS } from "../../src/project/analyze.js";
 import { preloadFonts } from "../../src/cli/preload-fonts.js";
 import { scanFiles } from "../../src/cli/scan.js";
 
 const ACTIVATE = '@import "rainbowindex";\n';
+
+/** Every subcommand the parser accepts. Mirrors the `Subcommand` union, which
+ *  is a type and so cannot be enumerated at runtime — if the union grows and
+ *  this does not, the help test that reads it is the thing that notices. */
+const SUBCOMMANDS = [
+	"build",
+	"init",
+	"create",
+	"migrate",
+	"generate-types",
+	"generate-snapshot",
+	"generate-tokens",
+	"preload-fonts",
+	"scan",
+] as const satisfies readonly Subcommand[];
+
+/** `satisfies` proves every entry is a real subcommand; this proves the
+ *  reverse, so adding one to the union without adding it here fails to
+ *  compile rather than quietly narrowing what the help test checks. */
+type UncoveredSubcommand = Exclude<Subcommand, (typeof SUBCOMMANDS)[number]>;
+const _allSubcommandsCovered: UncoveredSubcommand extends never ? true : never = true;
+void _allSubcommandsCovered;
 
 let dir: string;
 let logs: string[];
@@ -68,6 +94,39 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // args
 // ---------------------------------------------------------------------------
+
+describe("printHelp", () => {
+	/**
+	 * The global help lists the subcommands as hand-written prose, so it is the
+	 * one place a new command can be added and never surface: `migrate` shipped,
+	 * was announced in the changelog and documented as one of the commands, and
+	 * was missing from this screen the whole time. Every declared subcommand has
+	 * to appear here, and has to be runnable from what the screen shows.
+	 */
+	it("lists every subcommand, and each one is reachable", () => {
+		printHelp();
+		const help = logs.join("\n");
+
+		const callbacks = { getVersion: () => "9.9.9", printHelp: vi.fn() };
+		for (const command of SUBCOMMANDS) {
+			// `build` is the default and is shown by its glob form, not its name.
+			if (command !== "build") {
+				expect(help, `\`${command}\` missing from the global help`).toContain(
+					`rainbowindex ${command}`,
+				);
+			}
+			expect(parseArgs([command, "--help"], callbacks).command).toBe(command);
+		}
+	});
+
+	it("gives every subcommand its own help screen", () => {
+		for (const command of SUBCOMMANDS) {
+			logs.length = 0;
+			printHelp(command);
+			expect(logs.join("\n")).toContain(`rainbowindex ${command}`);
+		}
+	});
+});
 
 describe("parseArgs", () => {
 	const callbacks = { getVersion: () => "9.9.9", printHelp: vi.fn() };
@@ -186,7 +245,12 @@ describe("loadProjectCSS", () => {
 	});
 
 	it("returns empty CSS when auto-detection finds nothing", async () => {
-		expect(await loadProjectCSS({}, dir)).toEqual({ css: "", cssFile: null });
+		expect(await loadProjectCSS({}, dir)).toEqual({
+			css: "",
+			cssFile: null,
+			imports: [],
+			warnings: [],
+		});
 	});
 
 	it("auto-detects a candidate that activates Rainbow Index", async () => {
@@ -311,6 +375,64 @@ describe("preloadFonts", () => {
 // ---------------------------------------------------------------------------
 // generate-types
 // ---------------------------------------------------------------------------
+
+describe("generateSnapshot", () => {
+	const THEME = `${ACTIVATE}@text { lg: 1.125rem, 1.5; }\n@color { brand: 0.18 330; }\n@font { display: "Satoshi"; }\n@utility card { border-radius: 4px; }\n`;
+
+	it("writes a module that publishes the theme and exports a bound ri", async () => {
+		write("src/app.css", THEME);
+		await generateSnapshot(options({ cssFile: "src/app.css" }), dir);
+
+		const module = read("rainbowindex-snapshot.ts");
+		expect(module).toContain('from "rainbowindex"');
+		expect(module).toContain("publishSnapshot(snapshot);");
+		expect(module).toContain("export const ri = createRi(snapshot);");
+		// The project's own tokens, which is the whole point.
+		expect(module).toContain('"lg"');
+		expect(module).toContain('"brand"');
+		expect(module).toContain('"display"');
+		expect(module).toContain('"card"');
+		expect(module).toContain("src/app.css");
+		expect(logs.join("\n")).toContain("rainbowindex-snapshot.ts");
+	});
+
+	it("hydrates back to the theme the compiler would have published", async () => {
+		write("src/app.css", THEME);
+		await generateSnapshot(options({ cssFile: "src/app.css" }), dir);
+
+		// Pull the literal back out of the generated module and hydrate it: the
+		// result must equal a snapshot built directly from the same CSS.
+		const module = read("rainbowindex-snapshot.ts");
+		const start = module.indexOf("hydrateSnapshot(") + "hydrateSnapshot(".length;
+		// The literal is tab-indented by JSON.stringify, so its own closing brace
+		// is the only one at column 0 — `\n});` cannot appear inside it.
+		const json = module.slice(start, module.indexOf("\n});", start) + 2);
+		expect(hydrateSnapshot(JSON.parse(json))).toEqual(
+			createThemeSnapshot(analyzeProjectCSS(THEME).theme),
+		);
+	});
+
+	it("rewrites byte-identical output for an unchanged theme", async () => {
+		write("src/app.css", THEME);
+		await generateSnapshot(options({ cssFile: "src/app.css" }), dir);
+		const first = read("rainbowindex-snapshot.ts");
+		await generateSnapshot(options({ cssFile: "src/app.css" }), dir);
+		expect(read("rainbowindex-snapshot.ts")).toBe(first);
+	});
+
+	it("honors -o and points its own import hint at that path", async () => {
+		write("src/app.css", THEME);
+		await generateSnapshot(options({ cssFile: "src/app.css", output: "src/theme.ts" }), dir);
+		expect(read("src/theme.ts")).toContain('import "./src/theme.ts";');
+	});
+
+	it("writes an empty-but-valid module when no CSS entry is found", async () => {
+		await generateSnapshot(options({}), dir);
+		const module = read("rainbowindex-snapshot.ts");
+		expect(module).toContain("no CSS entry found");
+		expect(module).toContain("publishSnapshot(snapshot);");
+	});
+});
 
 describe("generateTypes", () => {
 	const THEME = `${ACTIVATE}@color { brand: oklch(0.7 0.2 250); }\n@text { lg: 1.25rem, 1.4; }\n@weight { bold: 700; }\n@utility card { padding: 1rem; }\n@utility tab-* { tab-size: var(--value); }\n`;

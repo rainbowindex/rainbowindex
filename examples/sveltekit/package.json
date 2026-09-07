@@ -1,0 +1,20 @@
+{
+	"name": "@rainbowindex-example/sveltekit",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build"
+	},
+	"dependencies": {
+		"rainbowindex": "workspace:*"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-auto": "7.0.1",
+		"@sveltejs/kit": "2.70.3",
+		"@sveltejs/vite-plugin-svelte": "7.3.0",
+		"svelte": "5.57.0",
+		"typescript": "^6.0.3",
+		"vite": "8.0.0"
+	}
+}

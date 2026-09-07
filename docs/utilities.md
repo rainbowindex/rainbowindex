@@ -7,7 +7,7 @@ Two rules apply everywhere:
 1. **Directional utilities emit CSS logical properties.** `pl-4` emits `padding-inline-start`. `border-t` emits `border-block-start-width`. `top-0` emits `inset-block-start`. Add the `-physical-` infix for physical properties: `pl-physical-4` emits `padding-left`.
 2. **Numeric spacing values multiply the spacing base.** `p-4` emits `calc(4 * var(--spacing))`. The default base is `0.25rem`. Decimals accept `.` or `_`: `p-1.5` and `p-1_5` are equal. `px` means `1px`.
 
-Rainbow Index ships no named scale. Radii, shadows, text sizes, leading, tracking, breakpoints, weights, easing, blur, and animations are all empty until a directive names them — see [theming.md](theming.md). A class below that reads a named token resolves to nothing until you define it; the keyword and arbitrary forms always work.
+Rainbow Index ships no named scale. Radii, shadows, text sizes, leading, tracking, breakpoints, weights, easing, blur, and animations are all empty until a directive names them — see [theming.md](theming.md). A class below that reads a named token resolves to nothing until you define it; the keyword and arbitrary forms always work. For Tailwind v4's names in one line, add `@import "rainbowindex/tailwind.css";` after the package import — see [getting-started.md](getting-started.md#two-ways-to-start).
 
 ## Spacing
 
@@ -28,9 +28,9 @@ Rainbow Index ships no named scale. Radii, shadows, text sizes, leading, trackin
 
 | Family | Roots | Values |
 | --- | --- | --- |
-| Width and height | `w-`, `h-`, `size-` | Spacing scale, fractions up to `11/12`, `auto`, `full`, `screen`, `svw`, `lvw`, `dvw`, `svh`, `lvh`, `dvh`, `min`, `max`, `fit`, arbitrary. `h-screen` emits `100vh`. `h-lh` emits `1lh`. |
+| Width and height | `w-`, `h-`, `size-` | Spacing scale, fractions up to `11/12`, `auto`, `full`, `screen`, `svw`, `lvw`, `dvw`, `svh`, `lvh`, `dvh`, `min`, `max`, `fit`, arbitrary, plus the container ladder `3xs`–`7xl` on `w-` only. `h-screen` emits `100vh`. `h-lh` emits `1lh`. |
 | Logical sizing | `inline-`, `block-` | `inline-` takes the values of `w-`. `block-` takes the values of `h-`: `block-screen` emits `100vh`, and `block-lh` emits `1lh`. Bare `inline` and `block` stay display utilities. |
-| Constraints | `min-w-`, `max-w-`, `min-h-`, `max-h-`, `min-inline-`, `max-inline-`, `min-block-`, `max-block-` | `max-w` adds the container ladder `xs` to `7xl` (20rem to 80rem) and `prose` (65ch). |
+| Constraints | `min-w-`, `max-w-`, `min-h-`, `max-h-`, `min-inline-`, `max-inline-`, `min-block-`, `max-block-` | The inline axis adds the container ladder `3xs` to `7xl` (16rem to 80rem); `max-w` also has `prose` (65ch). The block axis does not — the ladder is an inline-axis scale. `auto` is on the `min-` roots only, because `max-width: auto` is not valid CSS. |
 
 ## Typography
 
@@ -39,7 +39,7 @@ No type scale ships. `text-{size}`, `leading-{name}`, and `tracking-{name}` reso
 | Family | Form | Values |
 | --- | --- | --- |
 | Font size | `text-{size}` | `@text` tokens. Each size also sets the line height. `text-[18px]` takes any value. |
-| Line-height modifier | `text-lg/7`, `text-lg/[1.5]`, `text-lg/(--lh)` | The `leading-*` values except `px`: `@leading` tokens, arbitrary, `(--var)`. |
+| Line-height modifier | `text-lg/6`, `text-lg/tight`, `text-lg/[1.5]`, `text-lg/(--lh)` | The `leading-*` values except `px`: a bare number (a spacing multiple), `@leading` tokens, arbitrary, `(--var)`. A modifier that resolves to nothing makes the whole class invalid — it does not fall back to the size's own line height. |
 | Fluid type | `text-fluid-{size}` | A `clamp()` from one step below up to the size. Display sizes from `4xl` up interpolate from two steps below. |
 | Fluid type pair | `text-fluid-sm/3xl` | Both sizes stated: from the first to the second across the `@fluid` range. The last size sets the line height. A trailing segment that is not a size is the line-height modifier: `text-fluid-lg/7`, `text-fluid-sm/3xl/tight`. |
 | Font family | `font-{name}` | `sans`, `serif`, `mono`, plus `@font` slots. For an arbitrary family, use a quote, a comma list, or a hint: `font-["Open_Sans"]`, `font-[Open_Sans,sans-serif]`, `font-[family-name:Open_Sans]`. A bare `font-[Open_Sans]` goes to the weight path and emits an invalid weight. |
@@ -61,7 +61,7 @@ No type scale ships. `text-{size}`, `leading-{name}`, and `tracking-{name}` reso
 
 | Family | Roots | Notes |
 | --- | --- | --- |
-| Color setters | `text-`, `bg-`, `border-` (with logical sides), `outline-`, `accent-`, `caret-`, `fill-`, `stroke-`, `decoration-`, `divide-` | Values: theme colors, stops such as `brand-500`, `transparent`, `current`, `inherit`, `black`, `white`, arbitrary, `(--var)`. All accept an alpha modifier. |
+| Color setters | `text-`, `bg-`, `border-` (with logical sides), `outline-`, `accent-`, `caret-`, `fill-`, `stroke-`, `decoration-`, `divide-`, `placeholder-` | Values: theme colors, stops such as `brand-500`, `transparent`, `current`, `inherit`, `black`, `white`, arbitrary, `(--var)`. All accept an alpha modifier. `divide-` colors the children, `placeholder-` colors `::placeholder`; both are scoped, so neither conflicts with `border-` or `text-`. |
 | Gradients | `bg-linear-to-{dir}`, `bg-linear-{angle}`, `bg-conic-*`, `bg-radial-*` | An interpolation modifier follows a slash: `bg-linear-to-r/oklch`. |
 | Gradient stops | `from-`, `via-`, `to-` | A color, a position such as `from-50%`, or arbitrary. `via-none` returns to two stops. |
 | Background keywords | `bg-cover`, `bg-contain`, `bg-auto`, positions, repeats, `bg-fixed`, `bg-local`, `bg-scroll`, `bg-clip-*`, `bg-origin-*`, `bg-blend-*`, `bg-none` | A theme color with the same name wins over the keyword. |
@@ -73,7 +73,7 @@ Color stops such as `brand-500` exist only for generative colors and their alias
 
 - Display: `block`, `inline-block`, `inline`, `flex`, `inline-flex`, `grid`, `inline-grid`, `contents`, `hidden`, `table` and the `table-*` set, `flow-root`, `list-item`.
 - Position: `static`, `relative`, `absolute`, `fixed`, `sticky`.
-- Flex: `flex-row`, `flex-col` and reverses, wrap control, `flex-auto`, `flex-initial`, `flex-none`, `flex-{n}`, `flex-{n/m}`, `grow-*`, `shrink-*`, `basis-*`. `basis-*` and `flex-*` compute any fraction.
+- Flex: `flex-row`, `flex-col` and reverses, wrap control, `flex-auto`, `flex-initial`, `flex-none`, `flex-{n}`, `flex-{n/m}`, `grow-*`, `shrink-*`, `basis-*`. `basis-*` and `flex-*` compute any fraction; `basis-*` also takes the whole spacing grammar, `basis-px` included, and the container ladder `3xs`–`7xl`.
 - Grid: `grid-cols-{n|none|subgrid|[v]}`, `grid-rows-*`, `grid-flow-*`, `col-span-*`, `col-start-*`, `col-end-*`, `col-{n}`, the same for rows, `auto-cols-*`, `auto-rows-*`.
 - Alignment: `items-*`, `justify-*`, `justify-items-*`, `justify-self-*`, `content-*`, `self-*`, `place-*`, plus `-safe` forms such as `items-center-safe`.
 - Order: `order-{first|last|none|n|[v]}`, negatable.
@@ -95,7 +95,7 @@ Color stops such as `brand-500` exist only for generative colors and their alias
 | --- | --- |
 | Width | `border`, `border-{0|2|4|8|n|[v]}`, sides `border-{t|b|l|r|s|e|bs|be|x|y}`. A bare side is 1px. Sides emit logical properties. |
 | Style | `border-{solid|dashed|dotted|double|hidden|none}`. |
-| Radius | `rounded-{n}` (`calc(var(--spacing) * n * var(--ri-rounded-scale, 1))`), `rounded-none`, `rounded-full`, arbitrary. Sides and corners take logical names: `rounded-t-4`, `rounded-ss-2`. There is no named scale and no bare `rounded` — a radius always states its value. |
+| Radius | `rounded-{n}` (`calc(var(--spacing) * n * var(--ri-rounded-scale, 1))`), `rounded-none`, `rounded-full`, arbitrary, plus named radii from `@rounded`. Sides and corners take logical names: `rounded-t-4`, `rounded-ss-2`. Bare `rounded`, and a bare side or corner such as `rounded-t` and `rounded-tl`, read the `DEFAULT` token — the convention `shadow` and `blur` already follow — and resolve to nothing until `@rounded { DEFAULT: …; }` names one. |
 | Radius scale | `rounded-scale-{n|none|[v]}` sets `--ri-rounded-scale` on the element. |
 | Corner shape | `corner-{round|scoop|bevel|notch|square|squircle}`, `corner-[superellipse(2)]`. |
 | Dividers | `divide-x`, `divide-y` with widths, `divide-{style}`, `divide-{color}`, reverse forms. Applies to `& > :not(:last-child)`. |
@@ -105,28 +105,33 @@ Color stops such as `brand-500` exist only for generative colors and their alias
 
 **Shadows and rings** compose. Each family writes its own slot variable, and one `box-shadow` combines them. A ring does not erase a shadow.
 
+`shadow-{color}` tints the shadow beside it: `shadow-md shadow-red-500`. It works by inlining the shadow's value with the family's colour variable in front of each layer's own colour, so the colour is the fallback when no `shadow-{color}` is present. A consequence worth knowing: a size utility emits the value rather than `var(--shadow-md)`, so the `--shadow-*` token reaches `:root` only when your own CSS references it. Tailwind does the same, for the same reason — a `var()` written into a `:root` token resolves against `:root`, where no element has set a colour.
+
 No shadow scale ships. `shadow-none`, `shadow-{color}`, and `shadow-[v]` always work; a named size such as `shadow-md` works only after `@shadow md: …;` defines it.
 
-- `shadow-none`, `shadow-{color}`, `shadow-[v]`, plus `shadow` and `shadow-{name}` for your own `@shadow` tokens (bare `shadow` reads the `DEFAULT` token).
-- `inset-shadow-none`, `inset-shadow-{color}`, `inset-shadow-[v]`.
+- `shadow-none`, `shadow-{color}`, `shadow-initial`, `shadow-[v]`, plus `shadow` and `shadow-{name}` for your own `@shadow` tokens (bare `shadow` reads the `DEFAULT` token).
+- `inset-shadow-none`, `inset-shadow-{color}`, `inset-shadow-initial`, `inset-shadow-[v]`.
 - `ring` (1px), `ring-{n}`, `ring-{color}`, `inset-ring-*`. The default ring color is `currentColor`.
-- `text-shadow-none`, `text-shadow-{color}`, `text-shadow-[v]`.
+- `text-shadow-none`, `text-shadow-{color}`, `text-shadow-initial`, `text-shadow-[v]`.
+
+  `*-initial` unsets the family's color variable so the shadow value's own color applies again — for `shadow-red-500 dark:shadow-initial`. It is a reset on these three families only, which is where Tailwind has it.
 
 **Filters** compose the same way:
 
 - `blur-{none|[v]}`, plus names from `@blur`. Bare `blur` reads the `DEFAULT` token.
 - `brightness-*`, `contrast-*`, `saturate-*`, `grayscale`, `invert`, `sepia`, `hue-rotate-*`, `drop-shadow-{none|color|[v]}`, `filter-none`, `filter-[v]`.
+- Bare `filter` and `backdrop-filter` turn the chain on without contributing to it — the Tailwind v3 spelling, kept so a migrated `filter blur-sm grayscale` works.
 - The full `backdrop-*` mirror set, plus `backdrop-opacity-*`.
 
 **Transitions**: `transition`, `transition-{all|colors|opacity|shadow|transform|none|[v]}`, `transition-{normal|discrete}`. `duration-{n}` and `delay-{n}` set both the transition and the animation timing. `ease-{linear|[v]}`, plus names from `@ease`. `opacity-{n}` emits a percentage: `opacity-50` emits `opacity: 50%`.
 
 **Transforms** emit the modern individual properties:
 
-- `translate-*`, `translate-x/y/z-*`, negatable.
+- `translate-*`, `translate-x/y-*`, negatable, taking spacing steps, `px`, `full` or a fraction (`translate-x-1/3`). `translate-z-*` takes lengths only — a percentage there is invalid against its registered `<length>` syntax. `translate-none`, `translate-3d`.
 - `rotate-{n}`, `rotate-x/y/z-*`, `rotate-none`.
 - `scale-{n}`, `scale-x/y/z-*`, `scale-3d`, `scale-none`.
 - `skew-{n}`, `skew-x/y-{n}`.
-- `transform-{none|gpu|cpu|flat|3d|content|border|fill|stroke|view}`, `origin-*`, `perspective-*`, `perspective-origin-*`.
+- `transform` and `transform-{none|gpu|cpu|flat|3d|content|border|fill|stroke|view}`, `origin-*`, `perspective-*`, `perspective-origin-*`. Bare `transform` is the same declaration as `transform-cpu`, as it is upstream.
 - `zoom-{n|[v]}` emits the CSS `zoom` property.
 
 **Masks**: the composable `mask-*` system — composite, clip, mode, origin, position, repeat, size, and type statics, gradient families `mask-linear-*`, `mask-conic-*`, `mask-radial-*`, edge fades `mask-{t|r|b|l}-from/to-*`, axis fades `mask-x/y-from/to-*`, and `mask-none`.
@@ -151,6 +156,33 @@ No shadow scale ships. `shadow-none`, `shadow-{color}`, and `shadow-[v]` always 
 - `stroke-opacity-{0..100|[v]}`. `stroke-opacity-50` emits `0.5`.
 - `paint-{normal|stroke|fill|markers}` and the combined `paint-order` forms.
 - `vector-{none|non-scaling-stroke|non-scaling-size|non-rotation|fixed-position}`.
+
+## Marker classes
+
+`group`, `peer`, and their named forms `group/{name}` and `peer/{name}` are classes the markup wears so a relational variant has something to anchor on. They emit no CSS of their own — `group-hover:underline` is what produces a rule — but they are valid classes, so an editor or lint rule will not flag them. Defining `@utility group { … }` yourself overrides the marker and emits your rule instead.
+
+```html
+<div class="group/item">
+	<span class="group-hover/item:underline">…</span>
+</div>
+```
+
+## Differences from Tailwind
+
+The utility families match. Four behaviors do not, and no theme file can change them.
+
+- **Directional utilities emit CSS logical properties.** `pl-4` is `padding-inline-start`, not `padding-left`; `rounded-t` sets the block-start corners. Identical in LTR, correct in RTL. Add the `-physical-` infix when you need the physical property.
+- **No named scale ships.** `text-lg`, `shadow-md`, `rounded-lg`, `sm:`, and the rest resolve only after a directive names them, or after `@import "rainbowindex/tailwind.css";`.
+- **`dark:` compiles to `prefers-color-scheme` by default,** while color tokens flip through `light-dark()` and `html[data-appearance]`. `@color dark { variant: appearance | selector(<sel>) }` switches it — `selector(.dark)` gives the class-based strategy — see [theming.md](theming.md).
+- **`opacity-50` emits `50%`,** not `0.5`. The computed value is the same.
+
+The `inset-shadow-*`, `text-shadow-*`, and `drop-shadow-*` families read no theme namespace, so no token block can name their sizes. The preset supplies Tailwind's sizes for them as `@utility` definitions instead.
+
+There is no class gap. `pnpm bench:parity` renders Tailwind v4.3.3's own 23,289-class list and reports **100.00%** coverage. `ring-offset-*` and `ring-inset` were the last 297 names outstanding and are implemented; the unsupported table in `__tests__/core/tailwind-preset.test.ts` is empty, and the test that reads it now guards against a new gap opening rather than recording an old one.
+
+Neither needs the preset. The offset width is a length and `ring-inset` is a keyword, so no theme namespace supplies them — they work on a bare install. One consequence is worth knowing: like Tailwind, `ring-offset-*` emits no `box-shadow` of its own, so it is visible only alongside a class that composes the chain, such as `ring-2`.
+
+`items-normal` is **not** one of them, despite looking like a gap: Tailwind registers eight `items-*` values and that is not among them. `justify-items-normal` exists and `items-normal` does not — an asymmetry of Tailwind's, reproduced here faithfully.
 
 ## Resolution order
 

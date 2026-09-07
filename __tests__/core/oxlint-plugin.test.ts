@@ -16,7 +16,9 @@ function lintImport(specifier: string): string[] {
 describe("oxlint plugin", () => {
 	it("registers prefer-ri under the rainbowindex namespace", () => {
 		expect(plugin.meta.name).toBe("rainbowindex");
-		expect(Object.keys(plugin.rules)).toEqual(["prefer-ri"]);
+		// The theme-aware rules are covered in lint-rules.test.ts; what matters
+		// here is that prefer-ri is still registered and still this object.
+		expect(Object.keys(plugin.rules)).toContain("prefer-ri");
 		expect(plugin.rules["prefer-ri"]).toBe(preferRiRule);
 	});
 

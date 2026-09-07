@@ -9,7 +9,7 @@
 import type { ColorDefinition, ColorDarkOverride } from "../theme/index.js";
 import { isValidColorSuffix } from "../theme/colors.js";
 import { clampAlphaPercent, mixColorAlpha } from "../css/alpha.js";
-import { IDENT_KEY_RE, scanEntries, topLevelIndexOf } from "./foundation.js";
+import { IDENT_KEY_RE, legacySyntaxWarning, scanEntries, topLevelIndexOf } from "./foundation.js";
 import { stripCSSComments } from "../shared.js";
 
 /** Maximum number of entries allowed in @color body to bound memory allocation. */
@@ -52,15 +52,43 @@ function splitColorAlpha(side: string): { base: string; alpha: string | null } {
 	return { base: side, alpha: null };
 }
 
+/** The three CSS keywords `@color` stores verbatim; never a token reference. */
+const COLOR_KEYWORDS = new Set(["transparent", "currentColor", "inherit"]);
+
+/**
+ * Expand a bare color name to `var(--color-<name>)`.
+ *
+ * `theme-700` has always expanded; a bare `surface` did not, and was emitted as
+ * a literal — `color-mix(in oklab, surface 50%, transparent)`, invalid CSS at
+ * computed-value time, with no warning. It only reads as a name in the first
+ * place, so the reference is what it must become.
+ *
+ * Returns the input unchanged for anything that is not a plain identifier, and
+ * for the CSS keywords, which are real color values rather than references.
+ */
+function expandBareColorRef(v: string): string {
+	if (COLOR_KEYWORDS.has(v)) return v;
+	return /^[\w-]+$/.test(v) ? `var(--color-${v})` : v;
+}
+
 /**
  * Resolve one side of a color value: expand a stop shorthand to a `var()` and
  * apply an optional `/alpha` modifier as a color-mix() — the same opacity model
  * the utility layer uses ({@link mixColorAlpha}). Non-stop bases (functions, hex)
  * pass through, gaining only the alpha mix when one is present.
+ *
+ * `bareNames` says whether a bare identifier may be expanded here. It may not
+ * in the single-value form, where a bare name is the alias spelling
+ * (`accent: brand`) and has to survive for `parseColorValue` to see it. It may
+ * everywhere else — both halves of a pair, and any side carrying an alpha
+ * modifier, since neither shape can be an alias.
  */
-function expandColorSide(side: string): string {
+function expandColorSide(side: string, bareNames = false): string {
 	const { base, alpha } = splitColorAlpha(side);
-	const expanded = expandColorStopRef(base);
+	const stop = expandColorStopRef(base);
+	// The stop form won: leave it. Otherwise a bare name may still be one.
+	const expanded =
+		stop !== base || !(bareNames || alpha !== null) ? stop : expandBareColorRef(base);
 	if (alpha === null) return expanded;
 	const isPercent = alpha.endsWith("%");
 	const num = Number.parseFloat(isPercent ? alpha.slice(0, -1) : alpha);
@@ -98,15 +126,28 @@ export function parseColorBody(
 	for (const entry of scanEntries(cleanedBody, { newlineTerminates: true })) {
 		if (entry.removal) {
 			removals.push(entry.key);
+			if (entry.legacyRemoval) {
+				warnings?.push(legacySyntaxWarning(`!${entry.key};`, `${entry.key}: initial;`, "color"));
+			}
 			continue;
 		}
+		// The canonical entry: `punchy { ramp: 0.18 330; inline: true; }`.
+		// A colon-less entry with a block is that; one without is a stray value.
+		let { key, value } = entry;
+		let darkBlockOverride: string | null = null;
 		if (entry.fragment) {
-			warnings?.push(
-				`[RI-1035] Invalid @color key "${entry.value}" — color names may only contain letters, numbers, hyphens, and underscores. The entry was skipped.`,
-			);
-			continue;
+			if (entry.block === undefined) {
+				warnings?.push(
+					`[RI-1035] Invalid @color key "${entry.value}" — color names may only contain letters, numbers, hyphens, and underscores. The entry was skipped.`,
+				);
+				continue;
+			}
+			const nested = readNestedColorEntry(entry.value, entry.block, warnings);
+			if (nested === null) continue;
+			key = entry.value;
+			value = nested.value;
+			darkBlockOverride = nested.options;
 		}
-		const { key, value } = entry;
 		if (!key || !value) continue;
 
 		// Guard against pathological input with excessive color entries.
@@ -124,14 +165,27 @@ export function parseColorBody(
 			continue;
 		}
 
-		const darkBlock = entry.block ?? null;
+		const darkBlock = darkBlockOverride ?? entry.block ?? null;
+		if (darkBlockOverride === null && entry.block !== undefined) {
+			warnings?.push(
+				legacySyntaxWarning(
+					`${key}: <value> { … }`,
+					`${key} { ${isGenerativeValue(value) ? "ramp" : "value"}: <value>; … }`,
+					"color",
+				),
+			);
+		}
 
-		// Parse the options block if present. It is a `;`-separated list of bare
-		// flags (`inline`, `parabolic`/`no-parabolic`), their Vite-rewritten
-		// `--ri-*: bool` equivalents (the Vite plugin converts bare keywords PostCSS
-		// can't parse), and at most one `dark: …` override. Parsing
-		// statement-by-statement keeps a bare flag from being confused with the
-		// `shift` strategy inside a `dark: shift …` value.
+		// Parse the options block if present. It is a `;`-separated list of
+		// options and at most one `dark: …` override. Three spellings reach
+		// here for the same flag:
+		//
+		//   inline: true;      canonical, and valid CSS
+		//   --ri-inline: true; the Vite plugin's rewrite of the bare form
+		//   inline;            the legacy bare keyword, which no parser accepts
+		//
+		// Parsing statement-by-statement keeps a bare flag from being confused
+		// with the `shift` strategy inside a `dark: shift …` value.
 		let darkOverride: ColorDarkOverride | undefined;
 		let hasInline = false;
 		let hasParabolic: boolean | undefined;
@@ -143,9 +197,16 @@ export function parseColorBody(
 				if (colonIdx === -1) {
 					// Bare flag(s) — a single statement may hold several, space-separated.
 					for (const flag of stmt.split(/\s+/)) {
-						if (flag === "inline") hasInline = true;
-						else if (flag === "parabolic") hasParabolic = true;
-						else if (flag === "no-parabolic") hasParabolic = false;
+						if (flag === "inline") {
+							hasInline = true;
+							warnings?.push(legacySyntaxWarning("inline;", "inline: true;", "color"));
+						} else if (flag === "parabolic") {
+							hasParabolic = true;
+							warnings?.push(legacySyntaxWarning("parabolic;", "parabolic: true;", "color"));
+						} else if (flag === "no-parabolic") {
+							hasParabolic = false;
+							warnings?.push(legacySyntaxWarning("no-parabolic;", "parabolic: false;", "color"));
+						}
 					}
 					continue;
 				}
@@ -153,9 +214,9 @@ export function parseColorBody(
 				const optVal = stmt.slice(colonIdx + 1).trim();
 				if (optKey === "dark") {
 					darkOverride = parseDarkOverrideValue(optVal);
-				} else if (optKey === "--ri-inline") {
+				} else if (optKey === "inline" || optKey === "--ri-inline") {
 					if (optVal === "true") hasInline = true;
-				} else if (optKey === "--ri-parabolic") {
+				} else if (optKey === "parabolic" || optKey === "--ri-parabolic") {
 					if (optVal === "true") hasParabolic = true;
 					else if (optVal === "false") hasParabolic = false;
 				}
@@ -182,6 +243,50 @@ export function parseColorBody(
 	return { colors, removals };
 }
 
+/** Two numbers and nothing else — the generative `chroma hue` pair. */
+function isGenerativeValue(value: string): boolean {
+	return /^-?[\d.]+\s+-?[\d.]+$/.test(value.trim());
+}
+
+/**
+ * Read the canonical `@color` entry: `punchy { ramp: …; inline: true; }`.
+ *
+ * Returns the value the legacy form put before the block, plus the remaining
+ * declarations as an options block — so everything downstream sees exactly what
+ * the old spelling produced and neither has a path of its own.
+ *
+ * `ramp` and `value` are two names for the same slot on purpose: a generative
+ * pair and an `oklch()` behave differently enough that a reader should not have
+ * to work out which one they are looking at. Either key is accepted for either
+ * kind; the names are documentation, not a check.
+ */
+function readNestedColorEntry(
+	name: string,
+	block: string,
+	warnings?: string[],
+): { value: string; options: string } | null {
+	let value: string | null = null;
+	const options: string[] = [];
+	for (const statement of block.split(";")) {
+		const stmt = statement.trim();
+		if (!stmt) continue;
+		const colon = stmt.indexOf(":");
+		const key = colon === -1 ? "" : stmt.slice(0, colon).trim();
+		if (key === "ramp" || key === "value") {
+			value = stmt.slice(colon + 1).trim();
+			continue;
+		}
+		options.push(stmt);
+	}
+	if (value === null || value === "") {
+		warnings?.push(
+			`[RI-1126] @color entry "${name}" has a block but no \`ramp:\` or \`value:\` declaration, so it defines no colour. Write \`${name} { ramp: <chroma> <hue>; }\` or \`${name} { value: oklch(…); }\`.`,
+		);
+		return null;
+	}
+	return { value, options: options.join("; ") };
+}
+
 /**
  * Parse one @color entry value into a ColorDefinition. Generative extras
  * (dark override, inline, parabolic, shift) are applied by the caller since
@@ -193,8 +298,8 @@ function parseColorValue(key: string, value: string, warnings?: string[]): Color
 	// per-side alpha `theme-282/52 / theme-344/52`.
 	const slashIdx = findPairSeparator(value);
 	if (slashIdx !== -1) {
-		const light = expandColorSide(value.slice(0, slashIdx).trim());
-		const dark = expandColorSide(value.slice(slashIdx + 1).trim());
+		const light = expandColorSide(value.slice(0, slashIdx).trim(), true);
+		const dark = expandColorSide(value.slice(slashIdx + 1).trim(), true);
 		return { type: "pair", light, dark };
 	}
 
@@ -203,8 +308,8 @@ function parseColorValue(key: string, value: string, warnings?: string[]): Color
 		const inner = value.slice(value.indexOf("(") + 1, value.lastIndexOf(")")).trim();
 		const commaIdx = topLevelIndexOf(inner, ",");
 		if (commaIdx !== -1) {
-			const light = expandColorSide(inner.slice(0, commaIdx).trim());
-			const dark = expandColorSide(inner.slice(commaIdx + 1).trim());
+			const light = expandColorSide(inner.slice(0, commaIdx).trim(), true);
+			const dark = expandColorSide(inner.slice(commaIdx + 1).trim(), true);
 			return { type: "pair", light, dark };
 		}
 	}
@@ -249,8 +354,9 @@ function parseColorValue(key: string, value: string, warnings?: string[]): Color
 	}
 	if (parts.length === 1) {
 		// Color-stop reference, optionally with /alpha: `theme-700`, `theme-282/52`.
-		// expandColorSide returns the input unchanged when it is not a stop ref, so
-		// a bare color name still falls through to the alias case below.
+		// Bare names are left alone here (no `bareNames`) so `accent: brand` still
+		// falls through to the alias case below — but `accent: brand/50` cannot be
+		// an alias, so expandColorSide expands it on the strength of the modifier.
 		const expanded = expandColorSide(value);
 		if (expanded !== value) return { type: "explicit", value: expanded };
 		// Alias: references another color by name (e.g., theme: brand)

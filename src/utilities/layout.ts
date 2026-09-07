@@ -7,6 +7,7 @@
 import type { ResolvedTheme } from "../directives/foundation.js";
 import {
 	type UtilityResult,
+	fractionValue,
 	single,
 	multi,
 	extractArbitrary,
@@ -23,17 +24,6 @@ import { CSS_CUSTOM_IDENT_RE } from "../shared.js";
 /** Bare aspect ratio: `16/9` → `16 / 9`. Bracket/custom-property forms go through extractArbitrary. */
 const ASPECT_RATIO_RE = /^(\d+)\/(\d+)$/;
 
-/**
- * Named container-width scale for `columns-{name}` (and any future
- * container-scale utility): the shared xs–7xl ladder from sizing.ts plus the
- * two sub-xs steps only this family exposes.
- */
-const CONTAINER_SCALE: Readonly<Record<string, string>> = Object.freeze({
-	"3xs": "16rem",
-	"2xs": "18rem",
-	...CONTAINER_WIDTHS,
-});
-
 /** Resolve a grid-line value (col/row start/end and bare col/row): auto / number / arbitrary / custom-property, with negation. */
 function resolveGridLine(name: string, negative: boolean): string | null {
 	if (name === "auto") return "auto";
@@ -41,16 +31,6 @@ function resolveGridLine(name: string, negative: boolean): string | null {
 	const arb = extractArbitrary(name);
 	if (arb !== null) return negative ? `calc(${arb} * -1)` : arb;
 	return null;
-}
-
-/** Fraction → percentage: `1/2` → `50%` (4-decimal rounding). Null when not a fraction. */
-function fractionToPercent(name: string): string | null {
-	const slash = name.indexOf("/");
-	if (slash === -1) return null;
-	const num = Number(name.slice(0, slash));
-	const den = Number(name.slice(slash + 1));
-	if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return null;
-	return `${Math.round((num / den) * 1000000) / 10000}%`;
 }
 
 /** Shared body for grid-cols-* / grid-rows-*: none | subgrid | <n> | arbitrary. */
@@ -686,7 +666,7 @@ function resolveColumns(full: string): UtilityResult | null {
 	const name = full.slice(8);
 	if (name === "auto") return single("columns", "auto");
 	if (INTEGER_RE.test(name)) return single("columns", name);
-	if (Object.hasOwn(CONTAINER_SCALE, name)) return single("columns", CONTAINER_SCALE[name]);
+	if (Object.hasOwn(CONTAINER_WIDTHS, name)) return single("columns", CONTAINER_WIDTHS[name]);
 	const arb = extractArbitrary(name);
 	if (arb) return single("columns", arb);
 	return null;
@@ -715,17 +695,20 @@ function resolveCursor(full: string): UtilityResult | null {
 	return arb !== null ? single("cursor", arb) : null;
 }
 
-// basis-{n}, basis-{fraction}, basis-[arbitrary]
+// basis-{n}, basis-px, basis-{fraction}, basis-[arbitrary]
 function resolveBasis(full: string): UtilityResult | null {
 	const name = full.slice(6);
 	const arb = extractArbitrary(name);
 	if (arb !== null) return single("flex-basis", arb);
-	const pct = fractionToPercent(name);
+	if (Object.hasOwn(CONTAINER_WIDTHS, name)) return single("flex-basis", CONTAINER_WIDTHS[name]);
+	const pct = fractionValue(name);
 	if (pct !== null) return single("flex-basis", pct);
-	if (DECIMAL_RE.test(name)) {
-		const sp = spacingLookup(name, false);
-		if (sp) return single("flex-basis", sp);
-	}
+	// `spacingLookup` owns the whole spacing grammar, `px` included, and rejects
+	// what is not in it — the same call `resolveConstrainedSize` makes unguarded.
+	// Gating it behind DECIMAL_RE here re-implemented half of it and lost the
+	// one value that is not a decimal, so `basis-px` alone had no rule.
+	const sp = spacingLookup(name, false);
+	if (sp) return single("flex-basis", sp);
 	return null;
 }
 
@@ -734,7 +717,7 @@ function resolveFlex(full: string): UtilityResult | null {
 	const name = full.slice(5);
 	const arb = extractArbitrary(name);
 	if (arb !== null) return single("flex", arb);
-	const pct = fractionToPercent(name);
+	const pct = fractionValue(name);
 	if (pct !== null) return single("flex", pct);
 	if (DECIMAL_RE.test(name)) return single("flex", normalizeDecimalToken(name));
 	return null;

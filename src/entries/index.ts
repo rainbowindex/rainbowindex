@@ -2,14 +2,21 @@ export type { CompilationResult, CompiledRule } from "../engine/index.js";
 export { createCompiler } from "../engine/index.js";
 export type { RainbowIndexOptions } from "../integrations/postcss/index.js";
 export { default } from "../integrations/postcss/index.js";
-export type { CompilationContext, CompilationSnapshot } from "../merge/context.js";
+export type {
+	CompilationContext,
+	CompilationSnapshot,
+	SerializedSnapshot,
+} from "../merge/context.js";
 export {
 	createCompilationContext,
 	finalizeCompilationContext,
+	hydrateSnapshot,
+	publishSnapshot,
 	registerColorNames,
 	registerCustomFontFamilies,
 	registerCustomTextSizes,
 	registerCustomUtility,
+	serializeSnapshot,
 } from "../merge/context.js";
 export { createRi, ri } from "../merge/index.js";
 
@@ -18,6 +25,15 @@ export type {
 	CompileProjectResult,
 } from "../project/index.js";
 export { compileProject } from "../project/index.js";
+/** `@import` inlining, so directives in imported files reach the analyzer. */
+export { inlineDirectiveImports } from "../project/imports.js";
+export type {
+	ImportResolution,
+	ImportResolver,
+	InlineImportsOptions,
+	InlineImportsResult,
+} from "../project/imports.js";
+export { createNodeImportResolver } from "../project/resolve-import.js";
 export { safelist } from "../safelist.js";
 export type {
 	ColorDefinition,

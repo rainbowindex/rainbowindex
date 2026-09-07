@@ -389,6 +389,58 @@ describe("parseColorBody", () => {
 		});
 	});
 
+	/**
+	 * A bare color name only ever reads as a name, but it used to be emitted as
+	 * the literal text — `color-mix(in oklab, surface 50%, transparent)` and
+	 * `light-dark(surface, brand)` — which is invalid at computed-value time and
+	 * warned about nothing. It expands to a reference everywhere it cannot be
+	 * the alias spelling.
+	 */
+	it("expands a bare name carrying an /alpha modifier", () => {
+		const { colors } = parseColorBody("soft: surface/50;");
+		expect(colors["soft"]).toEqual({
+			type: "explicit",
+			value: "color-mix(in oklab, var(--color-surface) 50%, transparent)",
+		});
+	});
+
+	it("expands bare names on both halves of a pair", () => {
+		const { colors } = parseColorBody("duo: surface / raised;");
+		expect(colors["duo"]).toEqual({
+			type: "pair",
+			light: "var(--color-surface)",
+			dark: "var(--color-raised)",
+		});
+	});
+
+	it("expands bare names inside light-dark()", () => {
+		const { colors } = parseColorBody("duo: light-dark(surface, raised);");
+		expect(colors["duo"]).toEqual({
+			type: "pair",
+			light: "var(--color-surface)",
+			dark: "var(--color-raised)",
+		});
+	});
+
+	it("still reads a bare name with no modifier as an alias", () => {
+		// The carve-out the expansion has to respect: this shape is the alias
+		// spelling, and turning it into an explicit var() would break aliasing.
+		const { colors } = parseColorBody("accent: brand;");
+		expect(colors["accent"]).toEqual({ type: "alias", source: "brand" });
+	});
+
+	it("leaves the CSS keywords alone, with or without an alpha modifier", () => {
+		const { colors } = parseColorBody(
+			"a: transparent/50; b: transparent / currentColor; c: inherit;",
+		);
+		expect(colors["a"]).toEqual({
+			type: "explicit",
+			value: "color-mix(in oklab, transparent 50%, transparent)",
+		});
+		expect(colors["b"]).toEqual({ type: "pair", light: "transparent", dark: "currentColor" });
+		expect(colors["c"]).toEqual({ type: "keyword", value: "inherit" });
+	});
+
 	it("applies per-side /alpha across a light/dark stop pair", () => {
 		const { colors } = parseColorBody("border: theme-282/52 / theme-344/52;");
 		expect(colors["border"]).toEqual({

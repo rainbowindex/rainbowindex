@@ -11,7 +11,7 @@ The scanner finds your source files, extracts class candidates from them, and fe
 When you give no positive glob, the scanner uses the defaults:
 
 - `*.html` at the project root.
-- `src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}`.
+- `src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte,astro}`.
 
 CAUTION: One positive glob replaces the defaults completely. If you add `@source "emails/**/*.html";`, the `src/**` scan stops. Add the patterns you still need. Negated `@source not` patterns and `inline(...)` entries do not replace the defaults.
 
@@ -42,6 +42,7 @@ The scanner is lexer-based, not AST-based. It finds class-shaped tokens anywhere
 | `.html` | Quoted `class=` attribute values. |
 | `.vue` | `:class` and `v-bind:class` expressions, static `class=`. |
 | `.svelte` | `class:` directive names, `class=` expressions. |
+| `.astro` | Static `class=`, `class:list={…}`, and the frontmatter's helper and recipe calls. |
 | `.js` `.jsx` `.ts` `.tsx` `.md` `.mdx` | `className=`, `class=`, `tw=`, `classList=`, helper calls, `cva()`/`tv()` configs, `classMap()` keys. |
 | Other extensions | The token scan only. |
 
@@ -51,7 +52,9 @@ The token scan understands variants, negatives, arbitrary values, fractions, the
 
 It cannot drop a bare lowercase identifier, because `mode` and `flex` have the same shape and `@utility mode` would make `mode` a real class. Those tokens are still collected — they simply never match a utility, so they cost nothing in the output. Editor tooling tells them apart with the candidate origin; see [editor-api.md](editor-api.md#candidate-origins).
 
-`.md` files are not in the default patterns. Add them with `@source`. `.astro` and other unknown extensions get only the token scan.
+`.md` files are not in the default patterns. Add them with `@source`. Unknown extensions get only the token scan.
+
+`.astro` files are scanned in both halves: the markup for `class="…"` and Astro's `class:list={…}` directive, and the frontmatter for helper calls (`clsx`, `cn`, `ri`) and recipe configs (`cva`, `tv`). Only a `---` fence at the very top opens a frontmatter block; a `---` in the body is body.
 
 ### Whitespace inside brackets
 
@@ -87,6 +90,8 @@ A library can advertise its scan globs in its own `package.json`:
 ```
 
 The scanner walks the consumer's `dependencies` and `peerDependencies`, and scans those globs inside each package. `devDependencies` are skipped by design — add a manual `@source "node_modules/<dep>/..."` for a dev dependency. Patterns must stay inside the package root, or the entry is skipped with warning `[RI-1410]`.
+
+This is one half of the [preset protocol](preset-protocol.md): a package that ships tokens declares them in a stylesheet and declares where its classes live, and a consumer writes one `@import`.
 
 ## Caching
 

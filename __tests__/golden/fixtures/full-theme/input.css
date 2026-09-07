@@ -1,0 +1,165 @@
+/*
+ * Every theme directive at least once: token scales, utility blocks, aliases,
+ * fluid ranges, and both font kinds. Fonts resolve through an identity
+ * resolver in the runner, so nothing here reaches the network.
+ *
+ * This comment deliberately names no directive with its at-sign — see the
+ * directive-strip-comment fixture for why.
+ */
+@import "rainbowindex";
+
+@source inline("underline");
+@source not "sources/**/ignored/*";
+
+@layer {
+	order: base, components, utilities;
+	base: base;
+	utilities: utilities;
+}
+
+@preflight {
+	forms: off;
+}
+
+@spacing {
+	base: 0.25rem;
+}
+
+@color dark {
+	mode: auto;
+	chroma-boost: 0.015;
+	hue-shift: -4;
+}
+
+@color {
+	brand: 0.18 330;
+	punchy: 0.2 30 {
+		inline;
+		dark: shift chroma +0.02 hue +10;
+	};
+	surface: oklch(0.98 0.01 260) / oklch(0.15 0.01 260);
+	accent: brand;
+	hairline: theme-282/52;
+	clear: transparent;
+}
+
+@text {
+	body: 1rem, 1.5;
+	display: 4rem, 1.05;
+}
+
+@breakpoint {
+	sm: 40rem;
+	lg: 64rem;
+}
+
+@weight {
+	regular: 400;
+	black: 900;
+}
+
+@leading {
+	snug: 1.375;
+}
+
+@tracking {
+	wide: 0.025em;
+}
+
+@opacity {
+	muted: 65%;
+}
+
+@duration {
+	slow: 400ms;
+}
+
+@ease {
+	swift: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@blur {
+	sm: 4px;
+}
+
+@z {
+	modal: 100;
+}
+
+@shadow {
+	md: 0 4px 8px oklch(0 0 0 / 0.15);
+	card: shadow-md;
+	inset-md {
+		box-shadow: inset 0 4px 8px oklch(0 0 0 / 0.15);
+	}
+}
+
+@rounded {
+	roof: 24px;
+	roof-minus-* {
+		border-radius: calc(var(--rounded-roof) - var(--value) * var(--spacing));
+	}
+}
+
+@animate {
+	shimmer: 2s linear infinite {
+		from {
+			background-position: 200% 0;
+		}
+		to {
+			background-position: -200% 0;
+		}
+	}
+}
+
+@fluid {
+	min: 20rem;
+	max: 80rem;
+}
+@fluid text {
+	unit: vw;
+}
+@fluid spacing {
+	multiplier: 2.5;
+}
+@fluid compact {
+	min: 20rem;
+	max: 48rem;
+}
+
+@font {
+	sans: "Inter", ui-sans-serif, sans-serif from google {
+		weight: 400 700;
+	}
+	display: "Satoshi" {
+		weight: 300 900;
+		face: /fonts/Satoshi.woff2;
+		face: /fonts/Satoshi-Italic.woff2 {
+			style: italic;
+		}
+	}
+	mono: system;
+}
+
+@register --glow {
+	syntax: "<length>";
+	inherits: false;
+	initial-value: 0px;
+}
+
+@custom hocus (&:hover, &:focus);
+
+@custom any-hover {
+	@media (any-hover: hover) {
+		@slot;
+	}
+}
+
+@utility card {
+	background: var(--color-surface);
+	border-radius: var(--rounded-roof);
+}
+
+@utility tab-size-* {
+	tab-size: var(--value);
+}

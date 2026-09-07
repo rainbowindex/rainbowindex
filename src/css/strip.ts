@@ -59,10 +59,10 @@ function buildProtectedRanges(css: string): Array<[number, number]> {
 }
 
 /**
- * Check if a position is inside a protected range using binary search
- * on the sorted ranges array. O(log n) per lookup.
+ * End of the protected range containing `pos`, or -1 when `pos` is not inside
+ * one. Binary search on the sorted ranges array, O(log n) per lookup.
  */
-function isInsideProtectedRange(pos: number, ranges: Array<[number, number]>): boolean {
+function protectedRangeEnd(pos: number, ranges: Array<[number, number]>): number {
 	let lo = 0;
 	let hi = ranges.length - 1;
 	while (lo <= hi) {
@@ -70,9 +70,17 @@ function isInsideProtectedRange(pos: number, ranges: Array<[number, number]>): b
 		const [start, end] = ranges[mid];
 		if (pos < start) hi = mid - 1;
 		else if (pos >= end) lo = mid + 1;
-		else return true;
+		else return end;
 	}
-	return false;
+	return -1;
+}
+
+/**
+ * Check if a position is inside a protected range using binary search
+ * on the sorted ranges array. O(log n) per lookup.
+ */
+function isInsideProtectedRange(pos: number, ranges: Array<[number, number]>): boolean {
+	return protectedRangeEnd(pos, ranges) !== -1;
 }
 
 // isAtRuleBoundary is imported from shared.ts — single source of truth.
@@ -101,7 +109,20 @@ function replaceOutsideProtectedRanges(
 	for (;;) {
 		const match = re.exec(css);
 		if (match === null) break;
-		if (isInsideProtectedRange(match.index, ranges) || !isAtRuleBoundary(css, match.index)) {
+		// A match that STARTS inside a comment or a string is not a directive —
+		// but it can still run past the protected range, because the patterns
+		// only stop at `{` or `;`. `/* see @source */ @color { … }` is one
+		// `@source[^{;]*;`-shaped match spanning both. Resuming where the match
+		// ended would step over the real directive it swallowed, so resume at
+		// the end of the comment instead. Anything else strictly advances by
+		// one, so neither branch can loop.
+		const guardEnd = protectedRangeEnd(match.index, ranges);
+		if (guardEnd !== -1) {
+			re.lastIndex = guardEnd;
+			continue;
+		}
+		if (!isAtRuleBoundary(css, match.index)) {
+			re.lastIndex = match.index + 1;
 			continue;
 		}
 		let end = match.index + match[0].length;
@@ -158,11 +179,17 @@ function stripBalancedBlocks(
 		const match = re.exec(css);
 		if (match === null) break;
 		const start = match.index;
-		// Skip matches inside comments or string literals (O(log n) lookup)
-		if (isInsideProtectedRange(start, protectedRanges)) {
+		// Same false-start handling as replaceOutsideProtectedRanges: a match
+		// beginning inside a comment reaches forward to the next `{`, which may
+		// well be a real directive's own opener, so resume at the end of the
+		// comment rather than at the end of the match.
+		const guardEnd = protectedRangeEnd(start, protectedRanges);
+		if (guardEnd !== -1) {
+			re.lastIndex = guardEnd;
 			continue;
 		}
 		if (!isAtRuleBoundary(css, start)) {
+			re.lastIndex = start + 1;
 			continue;
 		}
 		// The regex stops at the first `{`, which can sit inside a quoted
@@ -262,6 +289,66 @@ const RI_IMPORT_RE = new RegExp(
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/** Characters a joining space would be pointless next to — the token on that
+ *  side already ends or begins a value. */
+const NO_JOIN_NEEDED = new Set([";", ",", "(", ")", "{", "}", ":"]);
+
+/**
+ * Remove every CSS comment, leaving string literals untouched.
+ *
+ * Applied to the contents of a *package* `@import` and nothing else — see
+ * [preset-protocol.md](../../docs/preset-protocol.md). A stylesheet shipped by
+ * a package is consumed as CSS; its comments are addressed to whoever opens
+ * that package's source, not to whoever reads the build output. The Tailwind
+ * preset alone contributed 4.3 KB of section headings to every unminified
+ * build. A file the project wrote — anything reached by a relative import, and
+ * the entry itself — keeps its comments, because those *are* addressed to the
+ * person reading the output.
+ *
+ * A comment can stand where a separator is required (`1px/*c*\/solid`), so one
+ * space replaces it when dropping it outright would weld two value tokens
+ * together. Everywhere else it leaves nothing behind.
+ *
+ * `/*!` survives. That is the convention every CSS minifier already implements
+ * for the one kind of comment that must reach the consumer — a licence header
+ * or an attribution notice — so honouring it here follows an existing rule
+ * rather than inventing a second one, and leaves package authors a way to ship
+ * a notice that is not "do not use comments".
+ */
+export function stripCSSComments(css: string): string {
+	if (!css.includes("/*")) return css;
+	const parts: string[] = [];
+	let cursor = 0;
+	for (const [start, end] of buildProtectedRanges(css)) {
+		// buildProtectedRanges returns strings as well as comments; a range that
+		// opens with a quote is a string and must survive verbatim.
+		if (css[start] !== "/") continue;
+		if (css[start + 2] === "!") continue;
+		const before = css[start - 1];
+		const after = css[end];
+		const welds =
+			before !== undefined &&
+			after !== undefined &&
+			!/\s/.test(before) &&
+			!/\s/.test(after) &&
+			!NO_JOIN_NEEDED.has(before) &&
+			!NO_JOIN_NEEDED.has(after);
+		parts.push(css.slice(cursor, start), welds ? " " : "");
+		cursor = end;
+	}
+	if (cursor === 0) return css;
+	parts.push(css.slice(cursor));
+	return (
+		parts
+			.join("")
+			// A comment on its own line leaves the line's indentation and newline
+			// behind; without this the saved bytes come back as whitespace and the
+			// output ends in the run of blank lines that made this visible.
+			.replace(/[ \t]+$/gm, "")
+			.replace(/\n{3,}/g, "\n\n")
+	);
+}
 
 export function stripRIDirectives(css: string): string {
 	// Build protected ranges once for the original CSS.

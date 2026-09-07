@@ -125,8 +125,11 @@ describe("a named entry replaces the built-in it shadows", () => {
 
 	it("shadow-none", async () => {
 		const result = await build("@shadow { none: 0 0 9px lime; }", "shadow-none");
-		expect(result.css).toContain("--shadow-none: 0 0 9px lime;");
-		expect(result.css).toContain("--ri-shadow: var(--shadow-none)");
+		// The theme entry wins over the built-in reset, and it is inlined with a
+		// colour slot like any other named shadow — so the `:root` token is no
+		// longer referenced and prunes away.
+		expect(result.css).toContain("--ri-shadow: 0 0 9px var(--ri-shadow-color, lime)");
+		expect(result.css).not.toContain("--shadow-none:");
 	});
 
 	it("blur-none", async () => {

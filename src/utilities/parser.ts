@@ -450,19 +450,19 @@ function findVariantColon(input: string): number {
 		// (plus an optional trailing space), or a single non-hex character.
 		// This prevents escaped brackets like \5d (']') from changing depth.
 		if (ch === "\\" && i + 1 < input.length) {
-			const next = input[i + 1];
-			if (isHexDigit(next)) {
-				// Consume up to 6 hex digits + optional trailing whitespace
-				let hexLen = 0;
-				while (hexLen < 6 && i + 1 + hexLen < input.length && isHexDigit(input[i + 1 + hexLen]))
-					hexLen++;
-				i += hexLen; // position on last hex digit; loop's i++ advances past it
-				// Optional single trailing whitespace after hex escape
-				if (i + 1 < input.length && /\s/.test(input[i + 1])) i++;
-			} else {
-				i++; // skip single escaped character
-			}
+			i = endOfEscape(input, i);
 			continue;
+		}
+		// Only inside a bracket: a `]` there is the variant's content, not its
+		// end (`data-[x="]"]` is one bracket). Depth-guarded so a stray quote in
+		// a scanned token can never swallow the rest of a class, and skipped only
+		// when the quote actually closes, so `data-[x=it's]` keeps working.
+		if (depth > 0 && (ch === "'" || ch === '"')) {
+			const close = endOfQuoted(input, i);
+			if (close !== -1) {
+				i = close;
+				continue;
+			}
 		}
 		if (ch === "[" || ch === "(") depth++;
 		else if (ch === "]" || ch === ")") depth--;
@@ -476,13 +476,83 @@ function findVariantColon(input: string): number {
 	return -1;
 }
 
+/**
+ * Last index of the CSS escape starting at the backslash `i` — `\[` is two
+ * characters, `\5d ` up to eight.
+ *
+ * Extracted so the bracket scanner and the colon scanner cannot disagree about
+ * where an escape ends; a disagreement there is the same class of bug this
+ * change fixes, one level down.
+ */
+function endOfEscape(s: string, i: number): number {
+	if (i + 1 >= s.length) return i;
+	if (!isHexDigit(s[i + 1])) return i + 1;
+	let hexLen = 0;
+	while (hexLen < 6 && i + 1 + hexLen < s.length && isHexDigit(s[i + 1 + hexLen])) hexLen++;
+	let end = i + hexLen;
+	if (end + 1 < s.length && /\s/.test(s[end + 1])) end++;
+	return end;
+}
+
+/**
+ * Index of the quote closing the span opened at `i`, or -1 when it never
+ * closes. Callers treat -1 as "this quote is an ordinary character", so a lone
+ * apostrophe in `data-[x=it's]` was harmless before and stays harmless.
+ */
+function endOfQuoted(s: string, i: number): number {
+	const quote = s[i];
+	for (let j = i + 1; j < s.length; j++) {
+		if (s[j] === "\\" && j + 1 < s.length) {
+			j++;
+			continue;
+		}
+		if (s[j] === quote) return j;
+	}
+	return -1;
+}
+
+/**
+ * Index of the `]` closing the bracket opened at `start`, matched by depth.
+ *
+ * The old `\[[^\]]*\]` stopped at the first `]`, so every nested bracket —
+ * `has-[[data-x]]`, `group-[&[href^="/x"]]` — failed the variant-prefix test,
+ * the colon after it was never found, and the whole class was read as a utility
+ * name. That is why the failure reported `unknown-utility` rather than
+ * `unknown-variant`, and why it looked like a different problem than it was.
+ */
+function findVariantBracketEnd(s: string, start: number): number {
+	let depth = 0;
+	for (let i = start; i < s.length; i++) {
+		const ch = s[i];
+		if (ch === "\\") {
+			i = endOfEscape(s, i);
+			continue;
+		}
+		if (ch === "'" || ch === '"') {
+			const close = endOfQuoted(s, i);
+			if (close !== -1) i = close;
+			continue;
+		}
+		if (ch === "[") depth++;
+		else if (ch === "]") {
+			depth--;
+			if (depth === 0) return i;
+		}
+	}
+	return -1;
+}
+
 /** Inline hex-digit check — faster than regex .test() in the hot findVariantColon loop. */
 function isHexDigit(ch: string): boolean {
 	const c = ch.charCodeAt(0);
 	return (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102); // 0-9, A-F, a-f
 }
-/** Precompiled regex for variant prefix validation (avoids per-call allocation). */
-const VARIANT_PREFIX_RE = /^[a-z0-9][a-z0-9-]*(\[[^\]]*\])?$/;
+/** The name before a variant's bracket: `data`, `group-hover`, `nth-last`; and
+ *  the `/name` suffix of a named group (`group-hover/item`, `group-[[x]]/item`),
+ *  which has to survive this check or the colon after it is never found and the
+ *  whole class is read as a utility. */
+const VARIANT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+const VARIANT_MODIFIER_RE = /^\/[a-zA-Z0-9_-]+$/;
 
 /**
  * Check if a string looks like a variant prefix.
@@ -496,7 +566,25 @@ function isVariantPrefix(s: string): boolean {
 	// Child (*) and descendant (**) variants
 	if (s === "*" || s === "**") return true;
 	// Standard variants: hover, sm, focus, dark, data-[...], aria-[...], has-[...], not-*
-	return VARIANT_PREFIX_RE.test(s);
+	let name = s;
+	let tail = "";
+	const bracketStart = s.indexOf("[");
+	if (bracketStart !== -1) {
+		const bracketEnd = findVariantBracketEnd(s, bracketStart);
+		if (bracketEnd === -1) return false;
+		name = s.slice(0, bracketStart);
+		tail = s.slice(bracketEnd + 1);
+	} else {
+		// No bracket: the only tail a variant may carry is a named group's
+		// `/item`. Dropping this branch silently kills `group-hover/item`,
+		// because the name pattern alone rejects the slash.
+		const slash = s.indexOf("/");
+		if (slash !== -1) {
+			name = s.slice(0, slash);
+			tail = s.slice(slash);
+		}
+	}
+	return VARIANT_NAME_RE.test(name) && (tail === "" || VARIANT_MODIFIER_RE.test(tail));
 }
 
 /**

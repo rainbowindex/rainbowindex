@@ -14,6 +14,7 @@ const SOURCE_FILE_EXTENSIONS = Object.freeze([
 	"mdx",
 	"vue",
 	"svelte",
+	"astro",
 ]);
 
 export function isSourceFile(file: string): boolean {

@@ -1,5 +1,9 @@
 import { describe, expect, it, test } from "vitest";
 import { resolveUtility } from "../../../src/utilities/index.js";
+import { createCompiler } from "../../../src/engine/index.js";
+import { resolveDirectives } from "../../../src/directives/index.js";
+import { analyzeProjectCSS } from "../../../src/project/analyze.js";
+import { FRACTIONAL } from "../../../src/utilities/helpers.js";
 import { fixtureTheme } from "../../helpers/fixture-colors.js";
 import { scalesTheme } from "../../helpers/fixture-scales.js";
 
@@ -138,7 +142,7 @@ describe("effects utilities", () => {
 		["transition-normal", "transition-behavior", "normal"],
 		["mix-blend-screen", "mix-blend-mode", "screen"],
 		["bg-blend-overlay", "background-blend-mode", "overlay"],
-		["backdrop-blur-none", "backdrop-filter", "none"],
+		["backdrop-filter-none", "backdrop-filter", "none"],
 		["filter-none", "filter", "none"],
 	])("%s resolves to %s: %s", (className, property, value) => {
 		const r = resolveUtility(className, null, false, theme);
@@ -206,7 +210,7 @@ describe("effects utilities", () => {
 		const arb = resolveUtility("drop-shadow-[0_1px_2px_red]", null, false, theme);
 		expect(arb!.declarations[0]).toEqual({
 			property: "--ri-drop-shadow",
-			value: "drop-shadow(0 1px 2px red)",
+			value: "drop-shadow(0 1px 2px var(--ri-drop-shadow-color, red))",
 		});
 		expect(arb!.declarations[1].property).toBe("filter");
 		expect(resolveUtility("drop-shadow-none", null, false, theme)!.declarations[0]).toEqual({
@@ -237,9 +241,11 @@ describe("effects utilities", () => {
 	});
 
 	it("supports arbitrary shadow values", () => {
+		// The colour slot goes in here too, so `shadow-[…] shadow-blue-500` tints
+		// an arbitrary shadow the same way it tints a named one.
 		const r = resolveUtility("shadow-[0_0_10px_red]", null, false, theme);
 		expect(r!.declarations[0].property).toBe("--ri-shadow");
-		expect(r!.declarations[0].value).toBe("0 0 10px red");
+		expect(r!.declarations[0].value).toBe("0 0 10px var(--ri-shadow-color, red)");
 	});
 
 	it("shadow-[#hex] resolves as shadow-color, not box-shadow", () => {
@@ -287,7 +293,7 @@ describe("effects utilities", () => {
 		const r = resolveUtility("inset-shadow-[inset_0_1px_2px_red]", null, false, theme);
 		expect(r!.declarations[0]).toEqual({
 			property: "--ri-inset-shadow",
-			value: "inset 0 1px 2px red",
+			value: "inset 0 1px 2px var(--ri-inset-shadow-color, red)",
 		});
 		expect(r!.declarations.find((d) => d.property === "box-shadow")).toBeDefined();
 	});
@@ -303,16 +309,93 @@ describe("effects utilities", () => {
 	});
 
 	it("ring / ring-2 / ring-[3px] → --ri-ring-shadow with currentColor fallback", () => {
+		// The inset flag and the offset width are read at use time, so every ring
+		// width carries slots for them whether or not `ring-inset` /
+		// `ring-offset-*` appear anywhere — the rule is emitted before either is
+		// known. Both fallbacks are inert on their own: an unset flag contributes
+		// nothing and `calc(1px + 0px)` is 1px.
 		expect(resolveUtility("ring", null, false, theme)!.declarations[0]).toEqual({
 			property: "--ri-ring-shadow",
-			value: "0 0 0 1px var(--ri-ring-color, currentColor)",
+			value:
+				"var(--ri-ring-inset, ) 0 0 0 calc(1px + var(--ri-ring-offset-width, 0px)) var(--ri-ring-color, currentColor)",
 		});
 		expect(resolveUtility("ring-2", null, false, theme)!.declarations[0].value).toBe(
-			"0 0 0 2px var(--ri-ring-color, currentColor)",
+			"var(--ri-ring-inset, ) 0 0 0 calc(2px + var(--ri-ring-offset-width, 0px)) var(--ri-ring-color, currentColor)",
 		);
 		expect(resolveUtility("ring-[3px]", null, false, theme)!.declarations[0].value).toBe(
-			"0 0 0 3px var(--ri-ring-color, currentColor)",
+			"var(--ri-ring-inset, ) 0 0 0 calc(3px + var(--ri-ring-offset-width, 0px)) var(--ri-ring-color, currentColor)",
 		);
+	});
+
+	it("ring-inset sets only the flag, and a themed `inset` colour outranks it", () => {
+		expect(resolveUtility("ring-inset", null, false, theme)!.declarations).toEqual([
+			{ property: "--ri-ring-inset", value: "inset" },
+		]);
+		// The keyword is answered only after the colour lookup declines, so a
+		// project that names a colour `inset` keeps `ring-inset` as that colour —
+		// the same order src/merge/resolve.ts's RING_DUAL_MODE uses, which is what
+		// stops the two layers disagreeing about what the class means.
+		const named = analyzeProjectCSS("@color { inset: #123456; }").theme;
+		expect(resolveUtility("ring-inset", null, false, named)!.declarations[0].property).toBe(
+			"--ri-ring-color",
+		);
+	});
+
+	it("ring-offset-{width} sets width + its own layer; ring-offset-{color} sets only the colour", () => {
+		const two = resolveUtility("ring-offset-2", null, false, theme)!;
+		expect(two.declarations).toEqual([
+			{ property: "--ri-ring-offset-width", value: "2px" },
+			{
+				property: "--ri-ring-offset-shadow",
+				value:
+					"var(--ri-ring-inset, ) 0 0 0 var(--ri-ring-offset-width, 0px) var(--ri-ring-offset-color, #fff)",
+			},
+		]);
+		expect(resolveUtility("ring-offset-[2rem]", null, false, theme)!.declarations[0].value).toBe(
+			"2rem",
+		);
+		// No `box-shadow` on either form. The offset layer joins a chain some
+		// other class composes; claiming the shorthand here would let
+		// `ring-offset-2` dominate the `ring-2` doing the visible work.
+		expect(two.declarations.some((d) => d.property === "box-shadow")).toBe(false);
+		const white = resolveUtility("ring-offset-white", null, false, theme)!;
+		expect(white.declarations).toHaveLength(1);
+		expect(white.declarations[0].property).toBe("--ri-ring-offset-color");
+	});
+
+	it("ring-offset- gets first refusal on the name, not sole claim to it", () => {
+		// A theme may name a colour `offset-blue`, and then `ring-offset-blue` is a
+		// ring colour wearing the longer prefix. Routing the prefix straight to the
+		// offset family and returning its answer made the class an *unknown
+		// utility* under such a theme — strictly worse than the ambiguity it was
+		// meant to settle, since the old code at least resolved it. So the offset
+		// family answers first and the name falls through when it cannot.
+		const offsetNamed = analyzeProjectCSS("@color { offset-blue: 0.18 250; }").theme;
+		expect(resolveUtility("ring-offset-blue", null, false, offsetNamed)!.declarations[0]).toEqual({
+			property: "--ri-ring-color",
+			value: "var(--color-offset-blue)",
+		});
+		// With `blue` itself named, the offset family does make sense of it and
+		// keeps the name — the prefix is not simply ignored.
+		const blueNamed = analyzeProjectCSS("@color { blue: 0.18 250; }").theme;
+		expect(resolveUtility("ring-offset-blue", null, false, blueNamed)!.declarations[0]).toEqual({
+			property: "--ri-ring-offset-color",
+			value: "var(--color-blue)",
+		});
+		// And a name neither family can explain is still rejected, rather than
+		// falling through into something invented.
+		expect(resolveUtility("ring-offset-zzz", null, false, theme)).toBeNull();
+	});
+
+	it("inset-ring is neither inset-flagged nor offset — it is always both-by-construction", () => {
+		// The sibling family is always inset and can never be offset, so it takes
+		// the literal prefix and the bare width. Pinned because the two families
+		// share one resolver and a flag flipped the wrong way would be invisible
+		// until a ring-offset class appeared somewhere else on the page.
+		const value = resolveUtility("inset-ring-2", null, false, theme)!.declarations[0].value;
+		expect(value).toBe("inset 0 0 0 2px var(--ri-inset-ring-color, currentColor)");
+		expect(value).not.toContain("--ri-ring-offset-width");
+		expect(value).not.toContain("--ri-ring-inset");
 	});
 
 	it("ring-{color} → --ri-ring-color (no ring shadow)", () => {
@@ -349,7 +432,7 @@ describe("effects utilities", () => {
 			resolveUtility("text-shadow-[0_1px_2px_red]", null, false, theme)!.declarations[0],
 		).toEqual({
 			property: "text-shadow",
-			value: "0 1px 2px red",
+			value: "0 1px 2px var(--ri-text-shadow-color, red)",
 		});
 		expect(resolveUtility("text-shadow-[var(--c)]", null, false, theme)!.declarations[0]).toEqual({
 			property: "text-shadow",
@@ -396,6 +479,181 @@ describe("effects utilities", () => {
 		const half = resolveUtility("translate-x-1/2", null, true, theme);
 		expect(full!.declarations[0].value).toBe("100%");
 		expect(half!.declarations[0].value).toBe("-50%");
+	});
+
+	it("supports every fraction the sizing family supports, on x, y and the shorthand", () => {
+		// Only `1/2` was special-cased, so 25 of Tailwind's 26 translate
+		// fractions — 150 classes with their negatives — resolved to nothing.
+		// The table is now the shared one, so `translate-x-1/3` and `w-1/3`
+		// cannot disagree about what a third is.
+		for (const [cls, expected] of [
+			["translate-x-1/3", "33.333333%"],
+			["translate-y-2/3", "66.666667%"],
+			["translate-x-5/12", "41.666667%"],
+			["translate-3/4", "75%"],
+			["translate-x-2/4", "50%"],
+		] as const) {
+			const r = resolveUtility(cls, null, false, theme);
+			expect(r, cls).not.toBeNull();
+			expect(r!.declarations[0].value, cls).toBe(expected);
+		}
+		const negated = resolveUtility("translate-y-2/3", null, true, theme);
+		expect(negated!.declarations[0].value).toBe("-66.666667%");
+	});
+
+	it("agrees with the sizing family on every fraction", () => {
+		for (const key of [...Object.keys(FRACTIONAL), "7/9", "13/17", "1/7"]) {
+			const width = resolveUtility(`w-${key}`, null, false, theme);
+			const translate = resolveUtility(`translate-x-${key}`, null, false, theme);
+			expect(translate, key).not.toBeNull();
+			expect(translate!.declarations[0].value, key).toBe(width!.declarations[0].value);
+		}
+	});
+
+	it("negates a computed fraction as well as a precomputed one", () => {
+		expect(resolveUtility("translate-x-1/3", null, true, theme)!.declarations[0].value).toBe(
+			"-33.333333%",
+		);
+		// A calc() cannot take a leading minus; it has to be multiplied.
+		expect(resolveUtility("translate-x-7/9", null, true, theme)!.declarations[0].value).toBe(
+			"calc(calc(7 / 9 * 100%) * -1)",
+		);
+	});
+
+	it("keeps percentages off the Z axis, where they are invalid", () => {
+		// `--ri-translate-z` is registered `syntax: "<length>"`, so a percentage
+		// is invalid at computed-value time and the browser substitutes the
+		// registered `0px`. These used to compile to a rule that could not do
+		// anything; Tailwind has no Z-axis percentage values either.
+		for (const cls of ["translate-z-full", "translate-z-1/2", "translate-z-2/3"]) {
+			expect(resolveUtility(cls, null, false, theme), cls).toBeNull();
+		}
+		// Lengths on Z still work, and still compose the three-axis shorthand.
+		const r = resolveUtility("translate-z-5", null, false, theme);
+		const byProp = new Map(r!.declarations.map((d) => [d.property, d.value]));
+		expect(byProp.get("--ri-translate-z")).toBe("calc(5 * var(--spacing))");
+		expect(byProp.get("translate")).toBe(
+			"var(--ri-translate-x, 0) var(--ri-translate-y, 0) var(--ri-translate-z, 0)",
+		);
+	});
+
+	it("backdrop-blur-none clears the blur slot, it does not reset the chain", () => {
+		// It used to emit `backdrop-filter: none`, which is the Tailwind v3
+		// reading: v4.3.3 emits `--tw-backdrop-blur: ;` followed by the chain, so
+		// a sibling `backdrop-invert` survives. The asymmetry with `blur-none`,
+		// which had always composed, was the tell. `backdrop-filter-none` is the
+		// spelling that really does reset everything.
+		const r = resolveUtility("backdrop-blur-none", null, false, theme);
+		const byProp = new Map(r!.declarations.map((d) => [d.property, d.value]));
+		expect(byProp.get("--ri-backdrop-blur")).toBe("blur(0)");
+		expect(byProp.get("backdrop-filter")).toContain("var(--ri-backdrop-invert,");
+		expect(byProp.get("backdrop-filter")).not.toBe("none");
+
+		// Same shape as its filter-side twin.
+		const blurNone = resolveUtility("blur-none", null, false, theme);
+		expect(blurNone!.declarations.map((d) => d.property)).toEqual(["--ri-blur", "filter"]);
+
+		// A theme that names `none` still replaces the reset, on both sides —
+		// the same theme-first rule every named scale follows.
+		const themed = resolveDirectives([{ type: "blur", body: "none: 7px;" }]);
+		expect(resolveUtility("backdrop-blur-none", null, false, themed)!.declarations[0].value).toBe(
+			"blur(7px)",
+		);
+		expect(resolveUtility("blur-none", null, false, themed)!.declarations[0].value).toBe(
+			"blur(7px)",
+		);
+	});
+
+	it("*-initial resets the shadow color var, on exactly the three families that have it", () => {
+		// `shadow-initial` unsets the family's color so the shadow value's own
+		// baked-in color applies again — the use is `shadow-red-500
+		// dark:shadow-initial`. Found by the Tailwind class-surface parity sweep.
+		for (const [cls, prop] of [
+			["shadow-initial", "--ri-shadow-color"],
+			["inset-shadow-initial", "--ri-inset-shadow-color"],
+			["text-shadow-initial", "--ri-text-shadow-color"],
+		] as const) {
+			const r = resolveUtility(cls, null, false, theme);
+			expect(r, cls).not.toBeNull();
+			expect(r!.declarations).toEqual([{ property: prop, value: "initial" }]);
+		}
+		// `initial` is not a general color keyword. These share the resolvers and
+		// must stay unknown, because Tailwind has none of them.
+		for (const cls of ["drop-shadow-initial", "ring-initial", "inset-ring-initial"]) {
+			expect(resolveUtility(cls, null, false, theme), cls).toBeNull();
+		}
+	});
+
+	it("the bare chain-enablers emit the chain with no contribution of their own", () => {
+		// `transform`, `filter` and `backdrop-filter` fell in the seam between
+		// the statics tables (which stopped at the -none/-gpu/-cpu spellings)
+		// and the arbitrary-value resolvers (which slice past a hyphen a bare
+		// class does not have), so all three silently produced no rule. Found
+		// by the Tailwind class-surface parity sweep.
+		const transform = resolveUtility("transform", null, false, theme);
+		const cpu = resolveUtility("transform-cpu", null, false, theme);
+		// Upstream emits these two byte-identically; so do we.
+		expect(transform!.declarations).toEqual(cpu!.declarations);
+		expect(transform!.declarations[0].property).toBe("transform");
+		expect(transform!.declarations[0].value).toContain("var(--ri-rotate-x,");
+
+		const filter = resolveUtility("filter", null, false, theme);
+		expect(filter!.declarations[0].property).toBe("filter");
+		expect(filter!.declarations[0].value).toContain("var(--ri-blur,");
+		// Same value the individual functions emit as their second declaration.
+		const grayscale = resolveUtility("grayscale", null, false, theme);
+		expect(filter!.declarations[0].value).toBe(
+			grayscale!.declarations.find((d) => d.property === "filter")!.value,
+		);
+
+		const backdrop = resolveUtility("backdrop-filter", null, false, theme);
+		expect(backdrop!.declarations[0].property).toBe("backdrop-filter");
+		expect(backdrop!.declarations[0].value).toContain("var(--ri-backdrop-blur,");
+
+		// The resets and the arbitrary spellings are untouched.
+		expect(resolveUtility("filter-none", null, false, theme)!.declarations[0].value).toBe("none");
+		expect(resolveUtility("filter-[blur(1px)]", null, false, theme)!.declarations[0].value).toBe(
+			"blur(1px)",
+		);
+	});
+
+	it("the whole-property translate utilities sort after the axis ones", () => {
+		// `translate-none` and `translate-3d` both emit the `translate` shorthand
+		// as their only declaration, and an axis utility emits it as its second.
+		// They shared a sort key, so the codepoint tie-break decided — and it put
+		// `.translate-3d` and `.translate-none` FIRST, which made the reset reset
+		// nothing and left `translate-3d` unable to add the Z axis it exists for.
+		// Tailwind's own class order agrees: translate-x-4, translate-z-4,
+		// translate-3d, translate-none.
+		const order = (classes: string[]) =>
+			createCompiler()
+				.compile(classes, theme)
+				.rules.map((r) => r.selector);
+
+		expect(order(["translate-3d", "translate-x-4", "translate-z-4"])).toEqual([
+			".translate-x-4",
+			".translate-z-4",
+			".translate-3d",
+		]);
+		expect(order(["translate-none", "translate-x-4"])).toEqual([
+			".translate-x-4",
+			".translate-none",
+		]);
+		// The sibling families were already right, and must stay right — the
+		// renumbering moved rotate, scale and zoom by one.
+		expect(order(["rotate-none", "rotate-45"])).toEqual([".rotate-45", ".rotate-none"]);
+		expect(order(["scale-none", "scale-110"])).toEqual([".scale-110", ".scale-none"]);
+		expect(order(["transform-none", "skew-x-3"])).toEqual([".skew-x-3", ".transform-none"]);
+	});
+
+	it("translate-3d opts into the Z axis without setting one", () => {
+		const r = resolveUtility("translate-3d", null, false, theme);
+		expect(r!.declarations).toEqual([
+			{
+				property: "translate",
+				value: "var(--ri-translate-x, 0) var(--ri-translate-y, 0) var(--ri-translate-z, 0)",
+			},
+		]);
 	});
 
 	it("translate-x-px → --ri-translate-x: 1px", () => {
@@ -454,7 +712,9 @@ describe("effects utilities", () => {
 
 	it("supports arbitrary drop shadows", () => {
 		const r = resolveUtility("drop-shadow-[0_2px_4px_rgb(0_0_0_/_0.2)]", null, false, theme);
-		expect(r!.declarations[0].value).toBe("drop-shadow(0 2px 4px rgb(0 0 0 / 0.2))");
+		expect(r!.declarations[0].value).toBe(
+			"drop-shadow(0 2px 4px var(--ri-drop-shadow-color, rgb(0 0 0 / 0.2)))",
+		);
 	});
 
 	it("supports arbitrary backdrop blur values", () => {

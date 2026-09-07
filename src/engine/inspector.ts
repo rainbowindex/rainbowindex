@@ -21,6 +21,7 @@ import { STATIC_UTILITIES } from "../utilities/metadata.js";
 import { parseUtility, type ParsedUtility } from "../utilities/parser.js";
 import type { CSSDeclaration } from "../utilities/helpers.js";
 import { buildBreakpointWeights } from "./ordering.js";
+import { escapeSelector } from "../css/escape.js";
 import { findClosest } from "./suggest.js";
 import { listVariants, type VariantInfo, type VariantWrapper } from "./variants.js";
 import {
@@ -51,6 +52,13 @@ export interface ClassExplanation {
 	css: string;
 	/** Deterministic ordering key — lower emits earlier in generated CSS. */
 	sortKey: number;
+	/**
+	 * A marker class (`group`, `peer/sidebar`): valid, and wearing no CSS of its
+	 * own. `declarations` is empty and `css` is "", so a caller rendering a
+	 * preview shows nothing; `selector` is the anchor a `group-*` / `peer-*`
+	 * variant matches on this element.
+	 */
+	marker?: true;
 }
 
 export interface ClassInspector {
@@ -173,6 +181,21 @@ export function createClassInspector(theme: ResolvedTheme): ClassInspector {
 					selector: rule.selector,
 					css: rule.css,
 					sortKey: rule.sortKey,
+				},
+			};
+		} else if (detail.reason === "marker") {
+			// Valid with no rule — the one case where those two go together. The
+			// selector is what a relational variant will look for, which is the
+			// only useful thing to show for a class that emits nothing.
+			entry = {
+				validation: OK,
+				explanation: {
+					parsed,
+					declarations: [],
+					selector: `.${escapeSelector(parsed.utility)}`,
+					css: "",
+					sortKey: 0,
+					marker: true,
 				},
 			};
 		} else if (detail.reason === "unknown-variant" && detail.variant !== null) {

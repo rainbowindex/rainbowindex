@@ -8,7 +8,7 @@ How diagnostics behave:
 - Severity comes from the range: `RI-0xxx` and `RI-2xxx` are errors, all other ranges are warnings.
 - Most codes warn. These throw and stop the build or the call: `RI-0001`, `RI-0002`, `RI-1605`, `RI-1606`, `RI-2003`, `RI-2007`, `RI-2008`.
 - The `ri()` runtime warnings throttle to one per kind per 60 seconds.
-- Dev-only messages (`RI-1301`, `RI-1302`, the console half of `RI-2003`) are silent when `NODE_ENV=production`.
+- Dev-only messages (`RI-1301`, `RI-1302`, `RI-2013`, the console half of `RI-2003`) are silent when `NODE_ENV=production`.
 - `[RI-DEBUG]` and `[RI-DEV]` messages have no number and never count against the cap. `RI_DEBUG=1` turns the first group on.
 - Scanner codes that point at one file name it directly after the code: `RI-1407`, `RI-1408`, `RI-1409`, `RI-1411`. Deduplication is on the full text, so you get one warning per file, not one per project.
 
@@ -130,6 +130,15 @@ Entry precision is available where the emitter knows the entry — `RI-1035`, `R
 | `RI-1038` | An uppercase `@utility` name. Markup never triggers it. | Use a lowercase name. |
 | `RI-1039` | A `unit` on a named `@fluid` range. | Set the unit on `@fluid`, `@fluid text`, or `@fluid spacing`. |
 | `RI-1040` | A `ri-disable` comment you cannot read, or one naming a code that cannot be silenced. | Name one or more codes, such as `RI-1124`. See [Disabling a diagnostic](#disabling-a-diagnostic). |
+| `RI-1041` | An `@import` did not resolve. The at-rule was left in place and its directives were not read. | Correct the path, or install the package. |
+| `RI-1042` | A circular `@import`. The repeat was dropped. | Break the cycle. |
+| `RI-1043` | An `@import` chain nests more than 8 deep. The deepest import was left in place. | Flatten the chain. |
+| `RI-1044` | The inlined `@import` files exceed 5 MB in total. That import and any later one were left in place. | Split the stylesheet. |
+| `RI-1045` | A conditional `@import` — one carrying a media query, `layer()`, or `supports()`. It was left in place and its directives were not read. | Move the directives into an unconditional `@import`. |
+| `RI-1046` | A deprecated directive spelling. It still works, and is not valid CSS — a formatter cannot read the file. | Write the canonical form the message names. Removed at 1.0. |
+| `RI-1047` | An `@animate` entry has a block but no animation in it — no `@keyframes`, or no `animation:` declaration. It defines nothing. | Add the missing half, or move the block out of `@animate` if a custom utility was meant. |
+| `RI-1048` | An `@animate` entry's `@keyframes` name does not match the entry name, so the emitted `animation` would name keyframes that do not exist. | Rename one of them. |
+| `RI-1049` | An `@animate` shorthand never names its own entry, so the class sets no `animation-name` and the keyframes never run. | Put the entry name first: `spin: spin 1s linear infinite`. |
 
 ## 11xx — Colors and resolver catch-alls
 
@@ -143,13 +152,16 @@ Entry precision is available where the emitter knows the entry — `RI-1035`, `R
 | `RI-1106` | A used stop has low APCA contrast against both paper and ink. | Pick a darker or lighter stop for text. |
 | `RI-1107` | A circular alias chain. | Break the cycle. |
 | `RI-1108` | An options block on a non-generative color. | Remove the block, or use the `chroma hue` form. |
+| `RI-1109` | A `@color` value names a generative palette with no stop, as in `duo: surface / brand`. A generative palette defines `--color-brand-<stop>` and no bare `--color-brand`. | Name a stop: `brand-500`. |
 | `RI-1110` | An internal resolver bug. | Report it upstream. |
+| `RI-1111` | An unknown `@color dark { variant: … }` value. | Use `media`, `appearance`, or `selector(<sel>)`. |
 | `RI-1120` | An unknown `@layer` option. | Use `order`, `utilities`, or `base`. |
 | `RI-1121` | An invalid `--corner-scale`. | Use a positive number. |
 | `RI-1122` | An unknown `--` key in the `@rounded` body. | Use `--corner-scale`. A key without `--` names a radius. |
 | `RI-1123` | A `@shadow` alias points to an undefined shadow token. | Define the target token, or write the value out. |
 | `RI-1124` | A named scale entry clashes with a built-in class of the same name, such as `@rounded { full: 30px; }` over `rounded-full`. The message says which side wins: your value replaces the built-in, unless the built-in belongs to another utility family (`blur-in`), in which case your value never applies. | Rename the entry if the clash was not intended. |
 | `RI-1125` | A circular `@shadow` alias chain. The `var()` references point at each other, so the shadow resolves to nothing. | Break the cycle. |
+| `RI-1126` | An `@color` entry has a block but no `ramp:` or `value:` declaration, so it defines no colour. | Write `name { ramp: <chroma> <hue>; }` or `name { value: oklch(…); }`. |
 
 ## 12xx — Fonts
 
@@ -175,6 +187,7 @@ Entry precision is available where the emitter knows the entry — `RI-1035`, `R
 | `RI-1218` | A deprecated `@font` form. It still works. | Apply the named replacement. |
 | `RI-1219` | `preload` on a non-local slot. No effect. | Remove it. Only local files can preload. |
 | `RI-1220` | An invalid or partial `metrics` value. | Give all four percentages, one match font, or `none`. |
+| `RI-1221` | An `@font` slot has a block but no `family:` declaration, so it names no font. | Write `sans { family: "<Family>", <fallback>; }`. |
 
 ## 13xx — Merge context (dev only)
 
@@ -227,7 +240,7 @@ Entry precision is available where the emitter knows the entry — `RI-1035`, `R
 | `RI-2001` | A theme function references an unknown token. | Use an existing token. |
 | `RI-2002` | A theme function in inline mode has a value that is not static. | Drop inline mode, or make the value static. |
 | `RI-2003` | The default export was called in a browser bundle. Thrown. | Use named imports: `import { ri } from "rainbowindex"`. |
-| `RI-2004` | The default `ri()` ran in a Node process. Throttled to one per 60 seconds. | Use `createRi(snapshot)` for isolation. |
+| `RI-2004` | The default `ri()` merged a class whose meaning depends on the theme, and no theme was published. The merge guessed. | With Vite, install the plugin. Otherwise run `rainbowindex generate-snapshot` and import the generated module once at startup, or use `createRi(snapshot)`. |
 | `RI-2005` | `--spacing()` got a non-numeric argument. Left unchanged. | Use a literal number, or `calc(x * var(--spacing))`. |
 | `RI-2006` | A class token above 500 characters was dropped. | Shorten it. |
 | `RI-2007` | `compile()` got a theme that is not an object. Thrown. | Pass a `ResolvedTheme`. |
@@ -236,3 +249,4 @@ Entry precision is available where the emitter knows the entry — `RI-1035`, `R
 | `RI-2010` | CSS function output above 1 MB. The last stable result was kept. | Slim the theme values involved. |
 | `RI-2011` | `ri()` array nesting above depth 10. Excess dropped. | Flatten the arrays. |
 | `RI-2012` | More than 10,000 classes in one `ri()` call. Excess dropped. | Reduce the input. |
+| `RI-2013` | A `recipe()` compound rule names a variant group the recipe does not define, so it can never apply. Dev only. | Correct the spelling, or add the group to `variants`. |

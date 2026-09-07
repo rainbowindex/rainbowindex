@@ -14,16 +14,52 @@ import {
 
 type Plugin = ReturnType<typeof rainbowindexVite>;
 
+/** One plugin's hooks, as the plain call signatures these tests use. */
+type HookBag = {
+	config: (config: { root?: string }) => Promise<Record<string, unknown>>;
+	configureServer: (server: unknown) => void;
+	resolveId: (id: string) => string | null;
+	load: (id: string) => Promise<string | null>;
+	transform: (code: string, id: string) => string | { code: string } | null;
+	handleHotUpdate: (ctx: unknown) => Promise<unknown>;
+};
+
 const ACTIVE_CSS = `@import "rainbowindex";\n.a { color: red; }\n`;
 const PLAIN_CSS = `.a { color: red; }\n`;
+/** A stylesheet Oxfmt cannot parse — one of the four legacy forms. */
+const LEGACY_CSS = `@import "rainbowindex";\n@color { brand: 0.18 330; !brand; }\n`;
 
-function hooks(plugin: Plugin) {
-	return plugin as unknown as {
-		config: (config: { root?: string }) => Promise<Record<string, unknown>>;
-		configureServer: (server: unknown) => void;
-		transform: (code: string, id: string) => string | null;
-		handleHotUpdate: (ctx: unknown) => Promise<unknown>;
+/**
+ * Drive the plugin pair as one hook bag.
+ *
+ * `rainbowindexVite()` returns two plugins — CSS at `pre`, snapshot injection
+ * at `post` — because the two need opposite positions in Vite's pipeline. Every
+ * hook but `transform` is defined on exactly one of them, so they merge
+ * cleanly; `transform` runs both in order and threads the code between them,
+ * which is what Vite does.
+ */
+function hooks(plugins: Plugin) {
+	const bag = Object.fromEntries(
+		plugins.flatMap((plugin) =>
+			Object.entries(plugin)
+				.filter(([key, value]) => key !== "transform" && typeof value === "function")
+				.map(([key, value]) => [key, (value as (...a: unknown[]) => unknown).bind(plugin)]),
+		),
+	) as Partial<HookBag>;
+
+	bag.transform = (code: string, id: string) => {
+		let out: string | { code: string } | null = null;
+		let current = code;
+		for (const plugin of plugins) {
+			const result = (plugin as unknown as Partial<HookBag>).transform?.(current, id) ?? null;
+			if (result === null) continue;
+			out = result;
+			current = typeof result === "string" ? result : result.code;
+		}
+		return out;
 	};
+
+	return bag as HookBag;
 }
 
 /** Minimal ViteDevServer stand-in; `listening` fires the httpServer callback. */
@@ -35,6 +71,10 @@ function fakeServer(root: string, files: string[] = []) {
 	for (const f of files) fileToModulesMap.set(f, new Set());
 	const modulesByFile = new Map<string, Set<unknown>>();
 	const watcherEvents = new Map<string, () => void>();
+	// Modules the plugin created by id (the snapshot virtual module), and the
+	// ids it asked to invalidate — the theme-edit path is asserted on these.
+	const modulesById = new Map<string, { id: string }>();
+	const invalidated: string[] = [];
 	return {
 		info,
 		warn,
@@ -42,6 +82,8 @@ function fakeServer(root: string, files: string[] = []) {
 			await onListening?.();
 		},
 		modulesByFile,
+		modulesById,
+		invalidated,
 		watcherEvents,
 		server: {
 			config: { root, logger: { info, warn } },
@@ -58,6 +100,8 @@ function fakeServer(root: string, files: string[] = []) {
 			moduleGraph: {
 				fileToModulesMap,
 				getModulesByFile: (f: string) => modulesByFile.get(f),
+				getModuleById: (id: string) => modulesById.get(id),
+				invalidateModule: (mod: { id: string }) => invalidated.push(mod.id),
 			},
 		},
 	};
@@ -96,12 +140,22 @@ describe("vite plugin — config hook", () => {
 		expect(result.css).toBeDefined();
 	});
 
-	it("hides stylesheets that carry RI syntax from the Vite+ formatter", async () => {
+	it("hides a stylesheet Oxfmt cannot parse from the Vite+ formatter", async () => {
 		await mkdir(join(dir, "src", "css"), { recursive: true });
-		await writeFile(join(dir, "src", "css", "index.css"), ACTIVE_CSS);
+		await writeFile(join(dir, "src", "css", "index.css"), LEGACY_CSS);
 		await writeFile(join(dir, "src", "css", "plain.css"), PLAIN_CSS);
 		const result = await hooks(rainbowindexVite()).config({ root: dir });
 		expect(result.fmt).toEqual({ ignorePatterns: ["src/css/index.css"] });
+	});
+
+	it("leaves a canonical stylesheet in the formatter", async () => {
+		// The point of the canonical forms. This file activates Rainbow Index and
+		// uses none of the four deprecated forms, so there is nothing Oxfmt cannot
+		// read — and a project's own stylesheets stop being the only unformatted
+		// files in it.
+		await writeFile(join(dir, "index.css"), ACTIVE_CSS);
+		const result = await hooks(rainbowindexVite()).config({ root: dir });
+		expect(result.fmt).toBeUndefined();
 	});
 
 	it("adds no formatter block when no stylesheet carries RI syntax", async () => {
@@ -110,9 +164,9 @@ describe("vite plugin — config hook", () => {
 		expect(result.fmt).toBeUndefined();
 	});
 
-	it("hides RI stylesheets even when a local PostCSS config suppresses injection", async () => {
+	it("hides a legacy stylesheet even when a local PostCSS config suppresses injection", async () => {
 		await writeFile(join(dir, "postcss.config.js"), "export default {};");
-		await writeFile(join(dir, "index.css"), ACTIVE_CSS);
+		await writeFile(join(dir, "index.css"), LEGACY_CSS);
 		const result = await hooks(rainbowindexVite()).config({ root: dir });
 		expect(result.css).toBeUndefined();
 		expect(result.fmt).toEqual({ ignorePatterns: ["index.css"] });
@@ -493,5 +547,238 @@ describe("vite plugin — source-file-list cache", () => {
 		await writeFile(added, "export {};");
 		// A stale cached in-flight result would hide the new file here.
 		expect((await resolveSourceFilesAsync([], dir)).files).toEqual([first, added]);
+	});
+});
+
+describe("vite plugin — the client theme snapshot", () => {
+	const THEMED_CSS = `@import "rainbowindex";\n@text { lg: 1.125rem, 1.5; }\n@color { brand: 0.18 330; }\n`;
+	const SNAPSHOT_ID = "virtual:rainbowindex/snapshot";
+	const RESOLVED_ID = `\0${SNAPSHOT_ID}`;
+
+	/** A plugin that has seen one themed CSS entry, as a dev server would. */
+	async function themedPlugin(css: string = THEMED_CSS) {
+		const entry = join(dir, "index.css");
+		await writeFile(entry, css);
+		const plugin = rainbowindexVite();
+		const f = fakeServer(dir, [entry]);
+		hooks(plugin).configureServer(f.server);
+		await f.listen();
+		hooks(plugin).transform(css, entry);
+		return { plugin, f, entry };
+	}
+
+	it("resolves the virtual id to a NUL-prefixed module id", async () => {
+		const { plugin } = await themedPlugin();
+		expect(hooks(plugin).resolveId(SNAPSHOT_ID)).toBe(RESOLVED_ID);
+		expect(hooks(plugin).resolveId("some-other-module")).toBeNull();
+	});
+
+	it("serves a module that publishes the entry's theme", async () => {
+		const { plugin } = await themedPlugin();
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(code).toContain('from "rainbowindex"');
+		expect(code).toContain("publishSnapshot(hydrateSnapshot(");
+		// The theme itself, not a placeholder: the project's own tokens.
+		expect(code).toContain('"lg"');
+		expect(code).toContain('"brand"');
+		// Self-accepting, so a theme edit does not reload the whole page.
+		expect(code).toContain("import.meta.hot.accept()");
+	});
+
+	it("publishes a theme that lives behind an @import", async () => {
+		// Every other case here writes its theme inline in the entry, which is
+		// why this went unseen: the plugin is `enforce: "pre"`, so it sees the
+		// entry BEFORE Vite inlines its imports, and the snapshot was built from
+		// that raw text. The documented start puts the whole theme behind
+		// `@import "rainbowindex/tailwind.css"`, so `ri()` was handed an empty
+		// snapshot and went back to guessing — the very bug C1 exists to fix.
+		await writeFile(join(dir, "tokens.css"), `@text { imported: 2rem, 1.5; }\n`);
+		const { plugin } = await themedPlugin(
+			`@import "rainbowindex";\n@import "./tokens.css";\n@color { brand: 0.18 330; }\n`,
+		);
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(code).toContain('"imported"');
+		expect(code).toContain('"brand"');
+	});
+
+	it("survives an import it cannot resolve rather than taking the server down", async () => {
+		// A resolver fault in `load` would be a dev-server crash, so the snapshot
+		// degrades to what it can see instead of throwing.
+		const { plugin } = await themedPlugin(
+			`@import "rainbowindex";\n@import "./nope.css";\n@color { brand: 0.18 330; }\n`,
+		);
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(code).toContain('"brand"');
+	});
+
+	it("serves nothing for any other id", async () => {
+		const { plugin } = await themedPlugin();
+		expect(await hooks(plugin).load("\0virtual:something-else")).toBeNull();
+	});
+
+	it("merges several CSS entries in path order, so the theme is deterministic", async () => {
+		const plugin = rainbowindexVite();
+		const f = fakeServer(dir);
+		hooks(plugin).configureServer(f.server);
+		await f.listen();
+		// Fed out of path order on purpose.
+		hooks(plugin).transform(
+			`@import "rainbowindex";\n@color { zed: 0.1 20; }\n`,
+			join(dir, "z.css"),
+		);
+		hooks(plugin).transform(
+			`@import "rainbowindex";\n@color { alpha: 0.1 20; }\n`,
+			join(dir, "a.css"),
+		);
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(code).toContain('"alpha"');
+		expect(code).toContain('"zed"');
+		expect(code.indexOf('"alpha"')).toBeLessThan(code.indexOf('"zed"'));
+	});
+
+	it("prepends the snapshot import to a module that imports the package", async () => {
+		const { plugin } = await themedPlugin();
+		const code = `import { ri } from "rainbowindex";\nexport const A = () => ri("text-lg");\n`;
+		const result = hooks(plugin).transform(code, join(dir, "App.tsx"));
+		expect(result).not.toBeNull();
+		const out = typeof result === "string" ? result : (result?.code ?? "");
+		// Before the module body: ES imports evaluate in order, so the theme is
+		// published before any ri() call in this module can run.
+		expect(out.startsWith(`import "${SNAPSHOT_ID}";`)).toBe(true);
+		expect(out).toContain(code);
+	});
+
+	it("shifts no line, so a stack trace still points where the author looks", async () => {
+		const { plugin } = await themedPlugin();
+		const code = `import { ri } from "rainbowindex";\nconst a = 1;\nthrow new Error("x");\n`;
+		const result = hooks(plugin).transform(code, join(dir, "App.tsx"));
+		const out = typeof result === "string" ? result : (result?.code ?? "");
+		const lineOf = (src: string, needle: string) =>
+			src.split("\n").findIndex((l) => l.includes(needle));
+		expect(lineOf(out, "throw new Error")).toBe(lineOf(code, "throw new Error"));
+		expect(out.split("\n").length).toBe(code.split("\n").length);
+	});
+
+	it.each(["App.tsx", "App.jsx", "app.ts", "app.js", "app.mjs", "app.cts"])(
+		"prepends it in %s",
+		async (name) => {
+			const { plugin } = await themedPlugin();
+			const result = hooks(plugin).transform(
+				`import { ri } from "rainbowindex";\n`,
+				join(dir, name),
+			);
+			expect(result).not.toBeNull();
+		},
+	);
+
+	// Injection runs at `enforce: "post"`, so what it sees for a component file
+	// is the framework compiler's JavaScript output, never the SFC source. At
+	// `pre` this prepended a line to markup: Svelte compiled it to a text node
+	// and rendered `import "virtual:rainbowindex/snapshot";` onto the page while
+	// publishing nothing. The extension is not the question — the code is.
+	it.each(["App.vue", "App.svelte", "App.astro"])("prepends it in compiled %s", async (name) => {
+		const { plugin } = await themedPlugin();
+		const compiled = `import { ri } from "rainbowindex";\nexport default function render() { return ri("text-lg"); }\n`;
+		const result = hooks(plugin).transform(compiled, join(dir, name));
+		const out = typeof result === "string" ? result : (result?.code ?? "");
+		expect(out.startsWith(`import "${SNAPSHOT_ID}";`)).toBe(true);
+	});
+
+	it("leaves untouched a component still in its source form", async () => {
+		const { plugin } = await themedPlugin();
+		// No compiler has run yet, so there is no import here to find — and a
+		// prepended line would land in the template rather than the script.
+		const source = `<script>\n  let n = 1;\n</script>\n<div class="p-4">{n}</div>\n`;
+		expect(hooks(plugin).transform(source, join(dir, "App.svelte"))).toBeNull();
+	});
+
+	it("leaves modules that never import the package alone", async () => {
+		const { plugin } = await themedPlugin();
+		expect(hooks(plugin).transform(`export const A = 1;\n`, join(dir, "App.tsx"))).toBeNull();
+		expect(
+			hooks(plugin).transform(`import { x } from "other-pkg";\n`, join(dir, "App.tsx")),
+		).toBeNull();
+	});
+
+	it("does not inject into the virtual module itself", async () => {
+		const { plugin } = await themedPlugin();
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(hooks(plugin).transform(code, RESOLVED_ID)).toBeNull();
+	});
+
+	// A module that already imports the snapshot gets a second import of the
+	// same specifier, which ES module semantics evaluate once. Sniffing the
+	// text to avoid it bought nothing and misfired on any module that merely
+	// mentioned the id — in a comment, or in a string it generates.
+	it("is harmless on a module that already imports the snapshot", async () => {
+		const { plugin } = await themedPlugin();
+		const once = `import "${SNAPSHOT_ID}";\nimport { ri } from "rainbowindex";\n`;
+		const result = hooks(plugin).transform(once, join(dir, "App.tsx"));
+		const out = typeof result === "string" ? result : (result?.code ?? "");
+		expect(out.split(SNAPSHOT_ID).length - 1).toBe(2);
+	});
+
+	it("finds the theme on disk when loaded before any CSS is transformed", async () => {
+		// In a build this module is the first import of the first entry, so
+		// Rollup can load it before index.css has been through `transform`. That
+		// silently shipped an empty theme, and the class merge was wrong in the
+		// exact way the whole feature exists to prevent.
+		await writeFile(join(dir, "index.css"), THEMED_CSS);
+		const plugin = rainbowindexVite();
+		await hooks(plugin).config({ root: dir });
+
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(code).toContain('"lg"');
+		expect(code).toContain('"brand"');
+	});
+
+	it("prefers what transform saw over what is on disk", async () => {
+		// Vite inlines a CSS file's own @import at-rules before `transform`, so
+		// the transformed text is the whole theme and the raw file is not.
+		await writeFile(join(dir, "index.css"), THEMED_CSS);
+		const plugin = rainbowindexVite();
+		await hooks(plugin).config({ root: dir });
+		hooks(plugin).transform(
+			`@import "rainbowindex";\n@text { fromtransform: 1rem, 1.5; }\n`,
+			join(dir, "index.css"),
+		);
+
+		const code = (await hooks(plugin).load(RESOLVED_ID)) ?? "";
+		expect(code).toContain('"fromtransform"');
+		expect(code).not.toContain('"lg"');
+	});
+
+	it("invalidates the published module when the theme changes", async () => {
+		const { plugin, f, entry } = await themedPlugin();
+		f.modulesById.set(RESOLVED_ID, { id: RESOLVED_ID });
+		f.invalidated.length = 0;
+
+		await writeFile(entry, `${THEMED_CSS}@text { xl: 1.25rem, 1.5; }\n`);
+		await hooks(plugin).handleHotUpdate({ file: entry, server: f.server, modules: [] });
+
+		expect(f.invalidated).toContain(RESOLVED_ID);
+		// And the next load serves the new theme.
+		expect((await hooks(plugin).load(RESOLVED_ID)) ?? "").toContain('"xl"');
+	});
+
+	it("does not invalidate when a CSS edit leaves the theme text unchanged", async () => {
+		const { plugin, f, entry } = await themedPlugin();
+		f.modulesById.set(RESOLVED_ID, { id: RESOLVED_ID });
+		f.invalidated.length = 0;
+
+		await hooks(plugin).handleHotUpdate({ file: entry, server: f.server, modules: [] });
+		expect(f.invalidated).toEqual([]);
+	});
+
+	it("drops a CSS entry's theme when it stops activating Rainbow Index", async () => {
+		const { plugin, f, entry } = await themedPlugin();
+		f.modulesById.set(RESOLVED_ID, { id: RESOLVED_ID });
+		f.invalidated.length = 0;
+
+		await writeFile(entry, PLAIN_CSS);
+		await hooks(plugin).handleHotUpdate({ file: entry, server: f.server, modules: [] });
+
+		expect(f.invalidated).toContain(RESOLVED_ID);
+		expect((await hooks(plugin).load(RESOLVED_ID)) ?? "").not.toContain('"lg"');
 	});
 });

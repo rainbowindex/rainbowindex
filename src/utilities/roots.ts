@@ -18,9 +18,9 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import type { UtilityResult } from "./helpers.js";
+import { FRACTIONAL, type UtilityResult } from "./helpers.js";
 import { spacingGenerator } from "./spacing.js";
-import { sizingGenerator } from "./sizing.js";
+import { CONTAINER_WIDTHS, SIZING_KEYWORDS, sizingGenerator } from "./sizing.js";
 import { typographyGenerator } from "./typography.js";
 import { colorGenerator } from "./color.js";
 import { layoutGenerator } from "./layout.js";
@@ -32,6 +32,11 @@ import { svgGenerator } from "./svg.js";
 // `full` is the reassembled class name (`utility` when value is null, else
 // `utility-value`), computed once by resolveUtility so generators doing
 // static-table lookups never rebuild it per probe.
+/** The container ladder's names, offered as completions by every family that
+ *  reads it. Derived rather than written twice, so a new step cannot be
+ *  resolvable but unlisted. */
+const CONTAINER_KEYS = Object.keys(CONTAINER_WIDTHS);
+
 export type UtilityResolver = (
 	utility: string,
 	value: string | null,
@@ -83,6 +88,9 @@ export interface RootGroup {
 	spec: ValueSpaceSpec;
 }
 
+/** The fraction keys `translate-*` accepts, from the one shared table. */
+const FRACTION_KEYS = Object.keys(FRACTIONAL);
+
 /** Common spacing-scale steps to enumerate concretely; the space itself is
  *  infinite (`${number}`, underscores for decimals) — see templates. */
 export const SPACING_SAMPLES = Object.freeze([
@@ -119,8 +127,20 @@ const ANIMATION_EFFECTS = [animationGenerator, effectsGenerator];
 
 // Shared value-space specs.
 const STATICS_ONLY: ValueSpaceSpec = { kinds: [] };
-const SHADOW_SPEC: ValueSpaceSpec = { kinds: ["shadow", "color", "special-color"] };
+// `none` and `initial` are the two shadow values that come from no namespace:
+// the built-in reset, and the colour reset. Neither is a theme token, so the
+// `shadow` kind cannot produce them and they were resolvable but unlistable.
+// `drop-shadow-initial` is filtered out on its way through, because the
+// enumerator drops what does not resolve and Tailwind has no such class.
+const SHADOW_SPEC: ValueSpaceSpec = {
+	kinds: ["shadow", "color", "special-color"],
+	keywords: ["none", "initial"],
+};
 const RING_SPEC: ValueSpaceSpec = { kinds: ["int", "color", "special-color"] };
+// `ring-inset` is a keyword the outer ring alone has: `inset-ring` is already
+// inset, and `inset-ring-inset` is not a class in either engine. The value
+// space is otherwise identical, so only the outer root carries the keyword.
+const OUTER_RING_SPEC: ValueSpaceSpec = { ...RING_SPEC, keywords: ["inset"] };
 const ROTATE_SKEW_SPEC: ValueSpaceSpec = {
 	kinds: ["keywords"],
 	keywords: [
@@ -223,21 +243,36 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 		resolvers: SPACING,
 		spec: { kinds: ["fluid-range"] },
 	},
-	// Sizing
+	// Sizing. Every root here is offered the whole union of named sizing values
+	// and its own table decides — the enumerator drops a candidate that does not
+	// resolve, so a shared list cannot over-report, while a per-root list can and
+	// did under-report (the logical spellings had none of their own).
 	{
-		roots: ["w", "h", "size", "min", "max", "min-w"],
+		roots: ["h", "size", "min", "max"],
 		resolvers: SIZING,
-		spec: { kinds: ["spacing", "fraction"] },
+		spec: { kinds: ["spacing", "fraction"], keywords: SIZING_KEYWORDS },
+	},
+	{
+		// The inline axis reads the container ladder; the block axis does not,
+		// which is why these two are not in the row above.
+		roots: ["w", "min-w", "inline", "min-inline", "max-inline"],
+		resolvers: SIZING,
+		spec: { kinds: ["spacing", "fraction"], keywords: [...CONTAINER_KEYS, ...SIZING_KEYWORDS] },
 	},
 	{
 		roots: ["max-w"],
 		resolvers: SIZING,
-		spec: { kinds: ["spacing", "fraction", "breakpoint"] },
+		spec: { kinds: ["spacing", "fraction"], keywords: [...CONTAINER_KEYS, ...SIZING_KEYWORDS] },
 	},
 	{
-		roots: ["min-h", "max-h"],
+		// `min-block` / `max-block` are roots in their own right, the way
+		// `min-inline` / `max-inline` are. Without them these fell through to the
+		// bare `min` / `max` roots, where the value would have had to be spelled
+		// `block-full` — so the whole logical block axis was unenumerable while
+		// resolving perfectly well.
+		roots: ["min-h", "max-h", "min-block", "max-block"],
 		resolvers: SIZING,
-		spec: { kinds: ["spacing", "fraction"] },
+		spec: { kinds: ["spacing", "fraction"], keywords: SIZING_KEYWORDS },
 	},
 	// Typography
 	{
@@ -353,7 +388,7 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 		spec: { kinds: ["color", "special-color", "int"] },
 	},
 	{
-		roots: ["accent", "caret", "fill"],
+		roots: ["accent", "caret", "fill", "placeholder"],
 		resolvers: COLOR_BORDER_EFFECTS_SVG,
 		spec: { kinds: ["color", "special-color"] },
 	},
@@ -522,7 +557,7 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 	{
 		roots: ["columns"],
 		resolvers: LAYOUT,
-		spec: { kinds: ["breakpoint", "int"] },
+		spec: { kinds: ["int"], keywords: CONTAINER_KEYS },
 	},
 	{
 		roots: ["sr"],
@@ -542,7 +577,7 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 	{
 		roots: ["basis"],
 		resolvers: LAYOUT,
-		spec: { kinds: ["spacing", "fraction", "breakpoint"] },
+		spec: { kinds: ["spacing", "fraction"], keywords: CONTAINER_KEYS },
 	},
 	// caret/accent color values are registered on the color-bearing row above.
 	{
@@ -574,7 +609,7 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 	{
 		roots: ["inline", "block"],
 		resolvers: SIZING,
-		spec: { kinds: ["spacing", "fraction"] },
+		spec: { kinds: ["spacing", "fraction"], keywords: SIZING_KEYWORDS },
 	},
 	// Borders
 	{
@@ -619,6 +654,14 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 	},
 	{
 		roots: ["ring"],
+		resolvers: EFFECTS,
+		spec: OUTER_RING_SPEC,
+	},
+	// `ring-offset-*` shares the ring's value space — an integer width or a
+	// colour — but is its own root so the enumerator offers the whole family
+	// rather than leaving it to be spelled through `ring`.
+	{
+		roots: ["ring-offset"],
 		resolvers: EFFECTS,
 		spec: RING_SPEC,
 	},
@@ -699,9 +742,17 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 	// Statics-only registration for the remaining filter roots — their dynamic
 	// value spaces (percentages, angles, drop-shadow tokens) are not enumerated.
 	{
-		roots: ["brightness", "contrast", "saturate", "hue", "drop"],
+		roots: ["brightness", "contrast", "saturate", "hue"],
 		resolvers: EFFECTS,
 		spec: STATICS_ONLY,
+	},
+	{
+		// `drop-shadow-*` dispatches through the bare `drop` root, so its value
+		// carries the `shadow-` segment. Only the two namespace-free spellings
+		// are listed; the named scale comes from the preset's @utility blocks.
+		roots: ["drop"],
+		resolvers: EFFECTS,
+		spec: { kinds: ["keywords"], keywords: ["shadow-none", "shadow-initial"] },
 	},
 	{
 		roots: ["mask"],
@@ -720,6 +771,11 @@ export const ROOT_GROUPS: readonly RootGroup[] = [
 			kinds: ["keywords"],
 			keywords: [
 				...SPACING_SAMPLES.flatMap((s) => [`x-${s}`, `y-${s}`, `z-${s}`]),
+				// Every fraction on both axes and the shorthand — the resolver
+				// reads the whole shared FRACTIONAL table, so a spec listing only
+				// `1/2` would under-report the family by 75 names.
+				...FRACTION_KEYS.flatMap((f) => [`x-${f}`, `y-${f}`, f]),
+				"3d",
 				"x-full",
 				"y-full",
 				"x-1/2",

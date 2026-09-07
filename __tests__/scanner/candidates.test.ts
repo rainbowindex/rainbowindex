@@ -108,6 +108,16 @@ export function App({ active }) {
 		});
 	});
 
+	test("Astro markup, class:list, and frontmatter helpers", () => {
+		assertValueParity({
+			path: "Page.astro",
+			content: `---
+const extra = clsx("text-lg", cond && "font-bold");
+---
+<div class="flex gap-4" class:list={["shadow-md", extra, { underline: on }]}>x</div>`,
+		});
+	});
+
 	test("variant groups, arbitrary values, important, negatives", () => {
 		assertValueParity({
 			path: "kitchen.html",

@@ -51,6 +51,15 @@
  *   1038  @utility name contains uppercase (never matched by the markup scanner)
  *   1039  Unit on a named @fluid range (ranges carry no unit)
  *   1040  Unreadable ri-disable comment, or one naming a code that cannot be silenced
+ *   1041  @import could not be resolved (left in place, directives unread)
+ *   1042  Circular @import (the repeat is dropped)
+ *   1043  @import nests past the depth cap (left in place)
+ *   1044  Inlined @import files exceed the size budget (left in place)
+ *   1045  Conditional @import — media/layer()/supports() (left in place)
+ *   1046  A deprecated directive spelling; the canonical form is named
+ *   1047  @animate entry with a block but no animation (near miss for a utility)
+ *   1048  @animate entry whose @keyframes name does not match the entry name
+ *   1049  @animate shorthand that never names its own entry (nothing animates)
  *
  * RI-11xx — Color directives + directive-resolver catch-alls
  *   1101  Invalid @color value
@@ -61,13 +70,16 @@
  *   1106  Color stop has low APCA contrast against both paper and ink
  *   1107  Circular alias chain
  *   1108  dark/options block on a non-generative @color value is ignored
+ *   1109  @color value references a generative palette with no stop
  *   1110  Unknown directive type reached the resolver — internal bug signal
+ *   1111  Invalid @color dark variant strategy
  *   1120  Unknown @layer option key
  *   1121  Invalid --corner-scale value in @rounded
  *   1122  Unknown @rounded option key
  *   1123  @shadow alias references a shadow token that is not defined
  *   1124  A named scale entry replaces a built-in class name of the same name
  *   1125  @shadow alias chain is circular
+ *   1126  @color entry with a block but no ramp:/value: declaration
  *
  * RI-12xx — Font system
  *   1201  Unknown font provider
@@ -90,6 +102,7 @@
  *   1218  Deprecated @font syntax (still desugared, will be removed)
  *   1219  @font preload on a non-local slot has no effect
  *   1220  @font metrics problem (invalid value, partial overrides, no effect, or family not in the metrics table)
+ *   1221  @font slot with a block but no family: declaration
  *
  * RI-13xx — Merge / compilation context
  *   1301  registerCustomUtility() empty name
@@ -136,6 +149,7 @@
  *   2010  CSS function output size limit
  *   2011  ri() input nesting exceeds depth limit
  *   2012  ri() input exceeds class count limit
+ *   2013  recipe() compound rule names an undefined variant group (dev only)
  */
 
 import { warningCode } from "./diagnostics.js";

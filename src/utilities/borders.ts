@@ -4,7 +4,7 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import { BORDER_DIR_PROPS } from "../merge/props.js";
+import { BORDER_DIR_PROPS } from "./property-maps.js";
 import {
 	type UtilityResult,
 	single,
@@ -222,6 +222,15 @@ export function borderGenerator(
 		}
 	}
 
+	// Bare `rounded`, and a bare side or corner (`rounded-t`, `rounded-tl`),
+	// read the theme's DEFAULT radius — the same convention `shadow` and `blur`
+	// already follow. Without a DEFAULT token these resolve to nothing, which
+	// is what a theme that never named one should do.
+	if (full === "rounded") {
+		const r = resolveRadius("DEFAULT", theme);
+		if (r) return single("border-radius", r);
+	}
+
 	// rounded-{...}: border-radius
 	if (full.startsWith("rounded-")) {
 		const rest = full.slice(8);
@@ -229,6 +238,10 @@ export function borderGenerator(
 		// Check for corner: rounded-tl-4, rounded-ss-2, etc.
 		// `rest.startsWith(suffix + "-")` via charCode — no per-entry template.
 		for (const [suffix, prop] of ROUNDED_CORNER_ENTRIES) {
+			if (rest === suffix) {
+				const r = resolveRadius("DEFAULT", theme);
+				if (r) return single(prop, r);
+			}
 			if (rest.startsWith(suffix) && rest.charCodeAt(suffix.length) === 45 /* '-' */) {
 				const size = rest.slice(suffix.length + 1);
 				const r = resolveRadius(size, theme);
@@ -238,6 +251,10 @@ export function borderGenerator(
 
 		// Check for side: rounded-t-4, rounded-s-2, etc.
 		for (const [suffix, props] of ROUNDED_SIDE_ENTRIES) {
+			if (rest === suffix) {
+				const r = resolveRadius("DEFAULT", theme);
+				if (r) return multi(...props.map((p) => [p, r] as [string, string]));
+			}
 			if (rest.startsWith(suffix) && rest.charCodeAt(suffix.length) === 45 /* '-' */) {
 				const size = rest.slice(suffix.length + 1);
 				const r = resolveRadius(size, theme);

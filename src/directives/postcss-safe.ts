@@ -9,9 +9,14 @@
  * directive→body-grammar mapping cannot drift across layers.
  */
 
-import { isAtRuleBoundary } from "../shared.js";
+import { isAtRuleBoundary, stripCSSComments } from "../shared.js";
 import { isAtRuleNameChar } from "./activation.js";
-import { DIRECTIVE_TYPE_NAMES, type DirectiveType, findClosingBrace } from "./foundation.js";
+import {
+	DIRECTIVE_TYPE_NAMES,
+	type DirectiveType,
+	findClosingBrace,
+	scanEntries,
+} from "./foundation.js";
 
 /**
  * Body grammar of each directive type:
@@ -195,4 +200,101 @@ export function rewriteDirectiveBodies(code: string): string {
 	}
 	if (last === 0) return code;
 	return out + code.slice(last);
+}
+
+// ---------------------------------------------------------------------------
+// Is this file already written the standard way?
+// ---------------------------------------------------------------------------
+
+/** Directives whose entries may carry a block after a declaration — form A. */
+const BLOCK_AFTER_DECLARATION_DIRECTIVES: ReadonlySet<string> = new Set([
+	"font",
+	"animate",
+	"color",
+]);
+
+/** A variant group written with braces inside an `@apply` — form D. */
+const LEGACY_APPLY_GROUP_RE = /@a(?:pply)?\b[^;{}]*[\w@-]+:\{/;
+
+/**
+ * Does this stylesheet use any of the four deprecated spellings?
+ *
+ * The Vite plugin hides a stylesheet from the formatter because Oxfmt cannot
+ * parse those four forms. A file written the canonical way needs no hiding, and
+ * this is what tells the two apart — the whole point of the RFC being to stop
+ * a project's own stylesheets from being the only unformatted files in it.
+ *
+ * **Errs toward "legacy".** A false negative un-hides a file the formatter then
+ * chokes on; a false positive only keeps the status quo. Anything this cannot
+ * read confidently is reported as legacy.
+ */
+export function usesLegacyDirectiveSyntax(code: string): boolean {
+	if (LEGACY_APPLY_GROUP_RE.test(code)) return true;
+
+	let i = 0;
+	while (i < code.length) {
+		const at = code.indexOf("@", i);
+		if (at === -1) return false;
+		if (!isAtRuleBoundary(code, at)) {
+			i = at + 1;
+			continue;
+		}
+		let nameEnd = at + 1;
+		while (nameEnd < code.length && isAtRuleNameChar(code.charCodeAt(nameEnd))) nameEnd++;
+		const name = code.slice(at + 1, nameEnd);
+		const removals = REMOVAL_BODY_DIRECTIVES.has(name);
+		const keywords = KEYWORD_BODY_DIRECTIVES.has(name);
+		const blocks = BLOCK_AFTER_DECLARATION_DIRECTIVES.has(name);
+		if (!removals && !keywords && !blocks) {
+			i = nameEnd;
+			continue;
+		}
+		let braceIdx = nameEnd;
+		while (braceIdx < code.length) {
+			const ch = code[braceIdx];
+			if (ch === "{" || ch === ";" || ch === "}") break;
+			braceIdx++;
+		}
+		if (code[braceIdx] !== "{") {
+			i = braceIdx + 1;
+			continue;
+		}
+		const close = findClosingBrace(code, braceIdx);
+		if (close === -1) return true; // unreadable; assume the worst
+		const body = code.slice(braceIdx + 1, close);
+
+		if (removals && matches(REMOVAL_RE, stripBlocks(body))) return true;
+		if (keywords && matches(FLUID_KEYWORD_RE, stripBlocks(body))) return true;
+		if (name === "color" && matches(COLOR_FLAG_RE, body)) return true;
+		// Form A: an entry with both a value and a block. `scanEntries` is the
+		// same grammar the parsers read, so this cannot disagree with them.
+		if (blocks) {
+			for (const entry of scanEntries(stripCSSComments(body), {
+				newlineTerminates: name !== "animate",
+			})) {
+				if (entry.key !== "" && entry.value !== "" && entry.block !== undefined) return true;
+			}
+		}
+		i = close + 1;
+	}
+	return false;
+}
+
+/**
+ * `.test()` against a `/g` regex, safely.
+ *
+ * The rewrite patterns are global because `String.replace` needs them to be,
+ * and a global regex carries `lastIndex` between calls — so a bare `.test()`
+ * on the second file starts mid-string and misses. Found by a test that
+ * checked the same shape twice.
+ */
+function matches(pattern: RegExp, text: string): boolean {
+	pattern.lastIndex = 0;
+	return pattern.test(text);
+}
+
+/** Blank out every top-level `{ … }` interior, so a match inside one — an
+ *  `!important` in a keyframe — is never read as a top-level statement. */
+function stripBlocks(body: string): string {
+	return mapTopLevelSpans(body, keepSpan, (interior) => " ".repeat(interior.length));
 }

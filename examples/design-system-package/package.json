@@ -1,0 +1,28 @@
+{
+	"name": "@rainbowindex-example/design-system",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "A design-system package that ships Rainbow Index tokens and the sources its classes live in.",
+	"main": "./lib/index.js",
+	"exports": {
+		".": "./lib/index.js",
+		"./rainbow.css": "./rainbow.css",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"lib",
+		"rainbow.css"
+	],
+	"rainbowindex": {
+		"safelistSources": [
+			"./lib/**/*.js"
+		]
+	},
+	"scripts": {
+		"build": "node --check lib/index.js"
+	},
+	"peerDependencies": {
+		"rainbowindex": "workspace:*"
+	}
+}

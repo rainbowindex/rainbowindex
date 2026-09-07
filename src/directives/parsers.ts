@@ -28,7 +28,9 @@ import type {
 
 import {
 	findClosingBrace,
+	hasTopLevelKeyframes,
 	IDENT_KEY_RE,
+	legacySyntaxWarning,
 	parseKeyValueBody,
 	scanEntries,
 	topLevelIndexOf,
@@ -122,7 +124,10 @@ export function parseSpacingBody(body: string): {
  * }
  * ```
  */
-export function parseAnimateBody(body: string): {
+export function parseAnimateBody(
+	body: string,
+	warnings?: string[],
+): {
 	animations: Record<string, AnimationDefinition>;
 	removals: string[];
 } {
@@ -138,18 +143,179 @@ export function parseAnimateBody(body: string): {
 	for (const entry of scanEntries(cleaned, { newlineTerminates: false })) {
 		if (entry.removal) {
 			removals.push(entry.key);
+			if (entry.legacyRemoval) {
+				warnings?.push(legacySyntaxWarning(`!${entry.key};`, `${entry.key}: initial;`, "animate"));
+			}
 			continue;
 		}
-		// Entries without a keyframes block (colon-less fragments, stray
-		// `name: value;` lines, unterminated blocks) are dropped, as before.
 		if (entry.block === undefined) continue;
+
+		// Canonical: `name { animation: …; @keyframes name { … } }`.
+		// A colon-less entry with a block is either this or a utility block, and
+		// `extractUtilityBlocks` has already taken the utility blocks away — so
+		// anything colon-less that still has a block is an animation.
+		if (entry.fragment) {
+			const parsed = parseNestedAnimation(entry.value, entry.block, warnings);
+			if (parsed !== null) animations[entry.value] = parsed;
+			continue;
+		}
+
+		// Legacy: `name: shorthand { keyframes }`.
 		// Names that would emit broken keyframe selectors never parse.
 		if (!IDENT_KEY_RE.test(entry.key)) continue;
-		animations[entry.key] = { shorthand: entry.value, keyframes: entry.block };
+		warnings?.push(
+			legacySyntaxWarning(
+				`${entry.key}: <animation> { … }`,
+				`${entry.key} { animation: <animation>; @keyframes ${entry.key} { … } }`,
+				"animate",
+			),
+		);
+		animations[entry.key] = {
+			shorthand: entry.value,
+			keyframes: normalizeKeyframes(entry.block),
+		};
+	}
+
+	// The emitted rule is `animation: var(--animate-<name>)`, and the token is
+	// the shorthand verbatim — so a shorthand that does not name the entry
+	// leaves `animation-name` unset and the keyframes never run. The class
+	// resolves, the CSS is valid, and nothing moves.
+	for (const [name, definition] of Object.entries(animations)) {
+		if (definition.shorthand.split(/\s+/).includes(name)) continue;
+		warnings?.push(
+			`[RI-1049] @animate entry "${name}" has the shorthand "${definition.shorthand}", which never names "${name}" — so \`animate-${name}\` sets no animation-name and the keyframes never run. Write \`${name} ${definition.shorthand}\`.`,
+		);
 	}
 
 	return { animations, removals };
 }
+
+/**
+ * Read one canonical `@animate` entry: `name { animation: …; @keyframes … }`.
+ *
+ * Returns null — with a warning — when the block is not an animation after
+ * all. That case is the near miss this grammar makes possible: a block with an
+ * `animation:` declaration and no keyframes is almost certainly someone
+ * reaching for an animation entry, and it would otherwise be read as a custom
+ * utility named `animate-<name>` that validates clean and animates nothing.
+ */
+function parseNestedAnimation(
+	name: string,
+	block: string,
+	warnings?: string[],
+): AnimationDefinition | null {
+	if (!IDENT_KEY_RE.test(name)) return null;
+
+	// The keyframes at-rule, lifted out; what remains is the entry's own
+	// declarations.
+	let shorthand = "";
+	let keyframes: string | null = null;
+	let keyframesName: string | null = null;
+	let rest = "";
+	let at = 0;
+	const cleaned = stripCSSComments(block);
+	for (const rule of scanTopLevelAtRules(cleaned)) {
+		rest += cleaned.slice(at, rule.start);
+		at = rule.end;
+		if (rule.name !== "keyframes" || rule.body === null) continue;
+		keyframes = rule.body.trim();
+		keyframesName = rule.prelude.trim();
+	}
+	rest += cleaned.slice(at);
+
+	for (const [key, value] of parseKeyValueBody(rest).entries) {
+		if (key === "animation") shorthand = value;
+	}
+
+	if (keyframes === null) {
+		warnings?.push(
+			`[RI-1047] @animate entry "${name}" has no @keyframes block, so it defines no animation. Add \`@keyframes ${name} { … }\` inside it — or, if a custom utility was intended, move the block out of @animate.`,
+		);
+		return null;
+	}
+	if (shorthand === "") {
+		warnings?.push(
+			`[RI-1047] @animate entry "${name}" has @keyframes but no \`animation:\` declaration, so nothing says how to run them. Add \`animation: ${keyframesName || name} <duration> <timing> <iteration>;\`.`,
+		);
+		return null;
+	}
+	// The emitted `@keyframes` is named after the *entry*, so a block that names
+	// them anything else says one thing and compiles another. The legacy form
+	// could not state a name at all, which is why this check is new with the
+	// canonical one rather than a rule that was always there.
+	if (keyframesName !== null && keyframesName !== "" && keyframesName !== name) {
+		warnings?.push(
+			`[RI-1048] @animate entry "${name}" holds \`@keyframes ${keyframesName}\`, but the emitted keyframes are named after the entry — so "${keyframesName}" would never exist. Rename one of them to match. To reuse another entry's keyframes, name them here too.`,
+		);
+		return null;
+	}
+	// The `animation` shorthand carries the animation-name, exactly as the
+	// legacy form's value does — `spin: spin 1s linear infinite` in the shipped
+	// preset. Checked below, for both forms.
+	return { shorthand, keyframes: normalizeKeyframes(keyframes) };
+}
+
+/**
+ * Strip the source's own indentation off a keyframes body.
+ *
+ * The body is emitted verbatim inside `@keyframes`, so without this the
+ * emitted stylesheet's indentation depends on how deeply the *source* nested
+ * the block — and the canonical form nests one level deeper than the legacy
+ * one, which would make two spellings of the same animation emit different
+ * bytes. The first line is already trimmed by the scanner, so the common
+ * indent is measured over the rest.
+ */
+function normalizeKeyframes(body: string): string {
+	const lines = body.split("\n");
+	if (lines.length < 2) return body;
+	let common = Number.POSITIVE_INFINITY;
+	for (const line of lines.slice(1)) {
+		if (line.trim() === "") continue;
+		common = Math.min(common, line.length - line.trimStart().length);
+	}
+	if (!Number.isFinite(common) || common === 0) return body;
+	return [lines[0], ...lines.slice(1).map((line) => line.slice(common))].join("\n");
+}
+
+/** Top-level at-rules inside a directive block. Comment-stripped input. */
+function scanTopLevelAtRules(
+	css: string,
+): Array<{ name: string; prelude: string; body: string | null; start: number; end: number }> {
+	const out: Array<{
+		name: string;
+		prelude: string;
+		body: string | null;
+		start: number;
+		end: number;
+	}> = [];
+	for (let i = 0; i < css.length; i++) {
+		if (css[i] !== "@") continue;
+		let nameEnd = i + 1;
+		while (nameEnd < css.length && /[\w-]/.test(css[nameEnd])) nameEnd++;
+		const name = css.slice(i + 1, nameEnd);
+		if (!name) continue;
+		let j = nameEnd;
+		while (j < css.length && css[j] !== "{" && css[j] !== ";") j++;
+		if (j >= css.length) break;
+		const prelude = css.slice(nameEnd, j).trim();
+		if (css[j] === ";") {
+			out.push({ name, prelude, body: null, start: i, end: j + 1 });
+			i = j;
+			continue;
+		}
+		const close = findClosingBrace(css, j);
+		if (close === -1) break;
+		out.push({ name, prelude, body: css.slice(j + 1, close), start: i, end: close + 1 });
+		i = close;
+	}
+	return out;
+}
+
+/** Keywords `@fluid` bodies have accepted and never acted on. The one
+ *  deprecated form with nothing to migrate to: `FluidConfig` has no such
+ *  option, so `parabolic;` has always been ignored — loudly now, because a
+ *  silently ignored option reads exactly like a working one. */
+const DEAD_FLUID_KEYWORDS = new Set(["parabolic", "no-parabolic", "shift", "no-shift"]);
 
 /**
  * Parse @fluid body.
@@ -159,19 +325,32 @@ export function parseAnimateBody(body: string): {
  * max: 80rem;
  * ```
  */
-export function parseFluidBody(body: string): {
+export function parseFluidBody(
+	body: string,
+	warnings?: string[],
+): {
 	min?: string;
 	max?: string;
 	unit?: string;
 	multiplier?: string;
 } {
-	const { entries } = parseKeyValueBody(body);
+	const { entries } = parseKeyValueBody(body, warnings, "fluid");
 	const result: { min?: string; max?: string; unit?: string; multiplier?: string } = {};
 	for (const [key, value] of entries) {
 		if (key === "min") result.min = value;
 		if (key === "max") result.max = value;
 		if (key === "unit") result.unit = value;
 		if (key === "multiplier") result.multiplier = value;
+	}
+	if (warnings) {
+		for (const statement of stripCSSComments(body).split(/[;\n]/)) {
+			const word = statement.trim();
+			if (DEAD_FLUID_KEYWORDS.has(word)) {
+				warnings.push(
+					`[RI-1046] \`${word};\` in @fluid is a deprecated spelling that never had an effect — @fluid takes min, max, unit and multiplier, and nothing else. Delete it. The bare keyword is not valid CSS, so a formatter cannot read the file.`,
+				);
+			}
+		}
 	}
 	return result;
 }
@@ -279,6 +458,9 @@ export function parseUtilityDirective(
 	return { name, functional, body: normalizedBody };
 }
 
+/** An `animation` (or `animation-name`) declaration at any depth in a block. */
+const ANIMATION_DECL_RE = /(^|[;{\s])animation(?:-name)?\s*:/;
+
 /**
  * Lift colon-less `name { … }` blocks out of a named-scale directive body.
  *
@@ -307,6 +489,20 @@ export function extractUtilityBlocks(
 	const cuts: Array<[number, number]> = [];
 	for (const entry of scanEntries(cleaned, { newlineTerminates })) {
 		if (!entry.fragment || entry.block === undefined) continue;
+		// `shimmer { animation: …; @keyframes shimmer { … } }` inside `@animate`
+		// is the canonical animation entry, not a utility block. The two
+		// are the same shape, and the keyframes are what tell them apart — see
+		// `hasTopLevelKeyframes`. Leaving the span uncut is what lets
+		// `parseAnimateBody` see it.
+		if (hasTopLevelKeyframes(entry.block)) continue;
+		// The near miss the shared shape makes possible: an `animation:` and no
+		// keyframes reads as a perfectly good custom utility, validates clean,
+		// and animates nothing, because the keyframes it names do not exist.
+		if (prefix === "animate" && ANIMATION_DECL_RE.test(entry.block)) {
+			warnings?.push(
+				`[RI-1047] @animate entry "${entry.value}" sets \`animation\` but has no @keyframes block, so it was read as a custom utility named "animate-${entry.value}" and the animation it names is never defined. Add \`@keyframes … { … }\` inside the entry, or move the block out of @animate if a utility was intended.`,
+			);
+		}
 		const util = parseUtilityDirective(entry.block, `${prefix}-${entry.value}`, warnings);
 		if (util) utilities.push(util);
 		// Cut the span even when the name was rejected: leaving a malformed block

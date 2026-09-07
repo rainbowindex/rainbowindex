@@ -114,6 +114,106 @@ export class OutputMap {
 // mid-scan.
 const BODY_TOKEN_RE = /\S+/g;
 
+/**
+ * Rewrite `variant:( … )` groups into `variant:{ … }`, in place.
+ *
+ * The canonical spelling replaces the brace group inside `@apply` with a
+ * parenthesised one, because a brace opens a block to every CSS parser and a
+ * parenthesis is an ordinary component value.
+ *
+ * Written as two character swaps into a copy, so every offset in the result is
+ * the offset it had in `input` — by construction rather than by argument. That
+ * is what lets the expander, and the `OutputMap` it builds, run on the result
+ * without knowing anything happened. It also keeps the scan reading `input`,
+ * which is what `matchingParen` was given.
+ *
+ * **`@apply` only.** A class attribute keeps the brace form, and this is not
+ * applied there: a JS expression like `x ? 1 :(2)` contains `1:(` and would be
+ * rewritten by a rule this liberal. Inside an `@apply` body there is no such
+ * ambiguity — see `__tests__/core/syntax-compat.test.ts`.
+ */
+export function normalizeApplyParenGroups(input: string): string {
+	if (!input.includes("(")) return input;
+	let out: string[] | null = null;
+	for (let i = 0; i < input.length; i++) {
+		// A bracketed value is opaque: the `(` in `p-[--x:(]` opens no group, and
+		// pairing it with the group's own `)` would end the group in the wrong
+		// place. Scanned to the first `]` with no escape handling, matching the
+		// brace expander exactly — the two spellings have to agree about where a
+		// group ends, and `matchingParen` is what owns the escape rules.
+		if (input[i] === "[") {
+			while (i < input.length && input[i] !== "]") i++;
+			continue;
+		}
+		if (input[i] !== "(") continue;
+		// A group opens only where the brace form would: a run of segment
+		// characters, then a `:`, then the delimiter. `supports-(display:grid)`
+		// has no colon before its paren and is left alone.
+		if (i < 2 || input[i - 1] !== ":") continue;
+		if (!isGroupSegmentCharCode(input.charCodeAt(i - 2))) continue;
+
+		const close = matchingParen(input, i);
+		if (close === -1) continue;
+		out ??= [...input];
+		out[i] = "{";
+		out[close] = "}";
+		// A nested group is left to its own turn of this loop: the scan runs
+		// through the body it just opened rather than over it.
+	}
+	return out === null ? input : out.join("");
+}
+
+/** Index of the `)` closing the `(` at `open`, or -1. Quote- and
+ *  bracket-aware, so `p-[calc(1rem)]` inside a group cannot end it early. */
+function matchingParen(input: string, open: number): number {
+	let depth = 0;
+	for (let i = open; i < input.length; i++) {
+		const ch = input[i];
+		if (ch === "\\") {
+			i++;
+			continue;
+		}
+		if (ch === "'" || ch === '"') {
+			const quote = ch;
+			i++;
+			while (i < input.length && input[i] !== quote) {
+				if (input[i] === "\\") i++;
+				i++;
+			}
+			continue;
+		}
+		if (ch === "[") {
+			while (i < input.length && input[i] !== "]") {
+				if (input[i] === "\\") i++;
+				i++;
+			}
+			continue;
+		}
+		if (ch === "(") depth++;
+		else if (ch === ")") {
+			depth--;
+			if (depth === 0) return i;
+		}
+	}
+	return -1;
+}
+
+/** A brace group written where the canonical spelling wants a parenthesised one. */
+const LEGACY_APPLY_GROUP_RE = /[\w@-]+:\{/;
+
+/**
+ * Variant-group expansion for an `@apply` body: parentheses first, then the
+ * shared expander. The brace form still works and says so once.
+ */
+export function expandApplyBodyGroups(input: string, warnings?: string[], path?: string): string {
+	if (LEGACY_APPLY_GROUP_RE.test(input)) {
+		warnings?.push(
+			`[RI-1046] \`@apply variant:{ … }\`${path ? ` in ${path}` : ""} is a deprecated spelling — write \`@apply variant:( … )\` instead. A brace opens a block to every CSS parser, so the old form makes the file unreadable to a formatter; it still works, and will be removed at 1.0.`,
+		);
+	}
+	return expandVariantGroups(normalizeApplyParenGroups(input), warnings, path);
+}
+
 export function expandVariantGroups(input: string, warnings?: string[], path?: string): string {
 	return expandVariantGroupsCore(input, warnings, null, path);
 }
@@ -328,8 +428,10 @@ const APPLY_AT_RULE_RE = /@(?:apply|a)\s+/g;
  * inside group syntax otherwise looks like the start of a CSS block to the
  * PostCSS parser.
  */
-export function expandApplyGroups(css: string, warnings?: string[], path?: string): string {
-	if (!css.includes("{") || !css.includes("@")) return css;
+export function expandGroupsInStylesheet(css: string, warnings?: string[], path?: string): string {
+	// A stylesheet whose groups are all parenthesised has no `variant:{` in it,
+	// so the brace check alone would skip the file entirely.
+	if ((!css.includes("{") && !css.includes("(")) || !css.includes("@")) return css;
 
 	APPLY_AT_RULE_RE.lastIndex = 0;
 	let match: RegExpExecArray | null = APPLY_AT_RULE_RE.exec(css);
@@ -353,8 +455,8 @@ export function expandApplyGroups(css: string, warnings?: string[], path?: strin
 		}
 
 		const body = css.slice(bodyStart, i);
-		if (body.includes("{")) {
-			const expanded = expandVariantGroups(body, warnings, path);
+		if (body.includes("{") || body.includes("(")) {
+			const expanded = expandApplyBodyGroups(body, warnings, path);
 			if (expanded !== body) {
 				out.push(css.slice(lastEnd, bodyStart));
 				out.push(expanded);

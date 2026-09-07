@@ -3,9 +3,10 @@ import rainbowindexVite from "../../src/integrations/vite.js";
 
 type TransformFn = (code: string, id: string) => string | null;
 
+/** The CSS rewrites live on the `pre` half of the plugin pair. */
 function transform(code: string): string | null {
-	const plugin = rainbowindexVite() as { transform?: unknown };
-	return (plugin.transform as TransformFn)(code, "/app/src/index.css");
+	const [css] = rainbowindexVite() as unknown as [{ transform: TransformFn }];
+	return css.transform(code, "/app/src/index.css");
 }
 
 // Every input includes an RI directive so hasRIActivation() is true and the

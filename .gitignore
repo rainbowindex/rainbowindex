@@ -3,3 +3,31 @@ dist/
 coverage/
 *.log
 .DS_Store
+
+# Generated benchmark fixture trees (V1). Reproducible from a seed by
+# `pnpm bench`, tens of thousands of files, and useless in a diff.
+# bench/results/ is deliberately NOT ignored — the published numbers are the
+# point of the harness.
+bench/fixtures/
+bench/**/.bench-out/
+bench/parity-entry.css
+
+# Example app build output. The examples themselves are committed; what their
+# frameworks generate is not.
+examples/*/dist/
+examples/*/.next/
+examples/*/.svelte-kit/
+examples/*/.astro/
+examples/*/next-env.d.ts
+examples/nextjs/app/rainbowindex-snapshot.ts
+examples/design-system-consumer/dist/
+
+# Editor package build output (D1). `dist/` above already covers these,
+# and they are listed for the same reason the examples' output is: what a
+# bundler produces is never a source file.
+packages/*/dist/
+
+# Docs site build output and dev cache (V2). The site renders docs/*.md in
+# place, so nothing here is a source file.
+site/.vitepress/dist/
+site/.vitepress/cache/

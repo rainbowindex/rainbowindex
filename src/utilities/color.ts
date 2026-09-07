@@ -7,7 +7,11 @@
 import type { ResolvedTheme } from "../directives/foundation.js";
 import { type UtilityResult, single, multi, extractArbitrary, INTEGER_RE } from "./helpers.js";
 import { resolveStaticBackground } from "./background.js";
-import { COLOR_FUNCTION_ALTERNATION, RE_IMAGE_VALUE, SPECIAL_COLORS } from "../merge/props.js";
+import {
+	COLOR_FUNCTION_ALTERNATION,
+	RE_IMAGE_VALUE,
+	SPECIAL_COLORS,
+} from "../merge/value-kinds.js";
 import { type ColorDefinition, isValidColorSuffix } from "../theme/index.js";
 import {
 	ARBITRARY_TYPE_HINTS,
@@ -453,6 +457,20 @@ export function colorGenerator(
 
 			const resolved = resolveColor(colorName, theme, dataType);
 			if (resolved) return single(cssProperty, resolved);
+		}
+	}
+
+	// placeholder-{color}: the input's placeholder text, not the input's own.
+	// Kept out of COLOR_PREFIX_MAP because every entry there emits a plain
+	// declaration; without the nested selector this would recolour the value the
+	// user typed, which looks right in a screenshot and is wrong in use.
+	if (full.startsWith("placeholder-")) {
+		const resolved = resolveColor(full.slice(12), theme, dataType);
+		if (resolved) {
+			return {
+				declarations: [{ property: "color", value: resolved }],
+				nestedSelector: "&::placeholder",
+			};
 		}
 	}
 

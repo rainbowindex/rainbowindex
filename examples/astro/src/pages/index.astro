@@ -1,0 +1,29 @@
+---
+import "../styles.css";
+
+// Classes in the frontmatter are scanned too, not just the markup below.
+const card = "rounded-xl border border-gray-200 bg-white p-6 shadow-md";
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Rainbow Index + Astro</title>
+	</head>
+	<body class="min-h-screen bg-gray-50 p-8">
+		<main class="mx-auto grid max-w-prose gap-6">
+			<h1 class="text-3xl font-bold text-brand-700">Rainbow Index + Astro</h1>
+			<div class={card}>
+				<p class="text-gray-600">
+					This card's classes are declared in the frontmatter. The scanner reads the
+					JavaScript block as well as the markup, so both resolve.
+				</p>
+			</div>
+			<div class="flex gap-3">
+				<span class="rounded-lg bg-brand-500 px-4 py-2 font-medium text-white">brand-500</span>
+				<span class="rounded-lg bg-brand-700 px-4 py-2 font-medium text-white">brand-700</span>
+			</div>
+		</main>
+	</body>
+</html>

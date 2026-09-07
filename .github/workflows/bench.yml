@@ -1,0 +1,84 @@
+name: Benchmark
+
+# Weekly, so the published numbers cannot quietly go stale, plus a manual
+# trigger for checking a change before it lands. Deliberately NOT on push:
+# a shared CI runner's timings are too noisy to gate a pull request on, and a
+# benchmark that fails a PR for being 8% slower on a noisy neighbour teaches
+# people to ignore it.
+on:
+  schedule:
+    # Sundays at 05:00 UTC — off the hour, because the top of the hour is when
+    # every cron on GitHub fires at once and the runners are at their busiest.
+    - cron: "17 5 * * 0"
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: "Fixture sizes to run (comma-separated: 1k,10k,50k)"
+        required: false
+        default: "1k,10k"
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bench:
+    name: benchmark
+    runs-on: ubuntu-latest
+    # The 50k tree is 50,000 files and three engines; give it room without
+    # letting a hung run occupy a runner for six hours.
+    timeout-minutes: 60
+    env:
+      RI_OFFLINE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rainbowindex
+        # The harness measures the built artifact through the package's public
+        # entry points, so dist/ has to exist before anything is timed.
+        run: pnpm build
+
+      - name: Install hyperfine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y hyperfine
+
+      - name: Run library benchmarks
+        run: pnpm bench --sizes=${{ inputs.sizes || '1k,10k' }}
+
+      - name: Run CLI benchmarks
+        run: pnpm bench:cli --sizes=1k
+
+      - name: Check Tailwind parity
+        # Deterministic and machine-independent, unlike the timings — so unlike
+        # them it is safe to fail the job on. The floor is the current number;
+        # raise it whenever parity improves.
+        run: pnpm bench:parity --min=100
+
+      - name: Commit results
+        run: |
+          if [ -z "$(git status --porcelain bench/results)" ]; then
+            echo "No results changed; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bench/results
+          git commit -m "bench: results for $(date -u +%Y-%m-%d)"
+          git push

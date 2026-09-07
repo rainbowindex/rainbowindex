@@ -24,7 +24,19 @@ const IMPORTANT_SUFFIX = /!?/.source;
 // must accept the same character set — deriving both from this one segment
 // keeps dotted variants strippable exactly where they are matchable.
 // Allows bracket-enclosed arbitrary variants like [&_p]: or [@media(...)]:
-const VARIANT_SEGMENT = /(?:[\w.@-]+(?:\[[^\]]*\])?|\[[^\]]*\]):/.source;
+/** One level of nesting inside a variant's bracket: `[&[href^="/x"]]`,
+ *  `[[data-x]]`. A flat `[^\]]*` body stopped at the first inner `]`, so the
+ *  token tore in half — and the tail was often a valid utility, which meant the
+ *  compiler emitted a real rule for a class nobody wrote. One level is what the
+ *  spellings in real markup need; deeper nesting is not expressible in a regex
+ *  and is not a shape anyone writes. */
+const VARIANT_BRACKET = /\[(?:[^[\]]|\[[^\]]*\])*\]/.source;
+/** The `/name` of a named group or a named container: `group-hover/item`,
+ *  `@sidebar/sm`. Without it the scanner split `group-hover/item:underline`
+ *  into two tokens — so the named group never compiled from real markup, and
+ *  the tail `underline` was emitted as a rule nobody asked for. */
+const VARIANT_NAME_SUFFIX = /(?:\/[\w-]+)?/.source;
+const VARIANT_SEGMENT = `(?:[\\w.@-]+(?:${VARIANT_BRACKET})?|${VARIANT_BRACKET})${VARIANT_NAME_SUFFIX}:`;
 const VARIANT_PREFIX = `(?:${VARIANT_SEGMENT})*`;
 // Allow paren values for CSS var shorthand and bracket/paren modifiers.
 // The value-position paren MUST be preceded by `-` (the `prefix-(` separator
@@ -65,7 +77,11 @@ const CLASS_HELPERS = [
 	"twMerge",
 ] as const;
 
-const VARIANT_HELPERS = ["cva", "tv"] as const;
+// `recipe` is this package's own variant helper; `cva` and `tv` are the two
+// third-party ones whose configs have the same shape. All three take the
+// config object as an argument whose text starts with `{`, which is what the
+// scan below uses to tell a config from leading base classes.
+const VARIANT_HELPERS = ["cva", "tv", "recipe"] as const;
 
 /** Helper-call names whose string arguments are walked for class literals.
  *  Exported for editor tooling so completion-context detection can match the
@@ -92,8 +108,28 @@ const TRANSLATE_SCRATCH = new Int32Array(4);
 // and resets lastIndex — never run .test()/.exec() against it.
 const BRACKET_SPAN_RE = /\[[^\]]*\]/g;
 const HAS_UPPERCASE_RE = /[A-Z]/;
-const BRACKET_WHITESPACE_RE = /\[[^\]]*\s+[^\]]*\]/;
-const INDEX_ACCESS_RE = /\[\d*\]$/;
+const BRACKET_WHITESPACE_RE = /\[(?:[^[\]]|\[[^\]]*\])*\s(?:[^[\]]|\[[^\]]*\])*\]/;
+// Reject `items[0]`, `rows[12]` — a subscript, never a utility. The leading
+// `[^-/]` is the same rule PROPERTY_ACCESS_RE below relies on and states: a
+// utility's bracket is ALWAYS preceded by `-`, or by `/` when it is a modifier
+// (`text-lg/[6]`, `bg-red-500/[50]`). Matching on the digits alone rejected
+// every arbitrary value that happens to be a bare integer — `z-[60]`,
+// `order-[3]`, `flex-[2]`, `col-span-[7]`, and every numeric modifier — all of
+// which compiled fine when passed by hand and vanished when scanned out of
+// markup.
+//
+// It needs no `^` alternative for a bracket-only `[0]`: CLASS_RE's
+// ARBITRARY_PROPERTY branch is the only way a token can begin with `[`, and it
+// requires a letter or `-` after the bracket and a `:` inside, so `[0]` is
+// never tokenized as a candidate in the first place.
+const INDEX_ACCESS_RE = /[^-/]\[\d+\]$/;
+
+// An empty bracket is never a utility: `string[]` and `Props[]` are TypeScript
+// array types, and `p-[]` is a typo that used to be caught only as a side
+// effect of the digits pattern above (`\d*` matches nothing). It has to be its
+// own test now that the digits are required — otherwise `p-[]` reaches the
+// compiler, which emits the empty declaration `padding: ;`.
+const EMPTY_BRACKET_RE = /\[\]$/;
 const PROPERTY_ACCESS_RE = /^[\w.@]+\[[^\]]+\]$/;
 
 /**
@@ -192,10 +228,19 @@ export function scanClassTokens(
 		// whitespace — the RI-1412 warning included) needs a literal `[` to
 		// have any effect, so the common bracket-free candidate skips straight
 		// to the uppercase test.
+		// Whitespace is tested on the WHOLE token, before the variant strip: a
+		// space inside a variant's own bracket (`group-[&[a b]]:flex`) makes the
+		// class just as unreachable, and stripping the variant first hid it — the
+		// base became `flex`, carried no `[`, and skipped every filter below.
+		if (BRACKET_WHITESPACE_RE.test(unbanged)) {
+			if (warnings && sink.inClassList) warnBracketWhitespace(warnings, cls);
+			continue;
+		}
 		if (!base.includes("[")) {
 			if (HAS_UPPERCASE_RE.test(base)) continue;
 		} else {
 			if (HAS_UPPERCASE_RE.test(base.replace(BRACKET_SPAN_RE, ""))) continue;
+			if (EMPTY_BRACKET_RE.test(base)) continue;
 			if (INDEX_ACCESS_RE.test(base)) continue;
 			// Reject JS array / property access: `obj[key]`, `rest["aria-invalid"]`,
 			// `state.foo["data-state"]`, etc. CSS utility arbitrary values always
@@ -203,15 +248,6 @@ export function scanClassTokens(
 			// must be `-`, and this regex's name part excludes `-`, so anything it
 			// matches is an access expression, never a utility.
 			if (PROPERTY_ACCESS_RE.test(base)) continue;
-			// Ordered last of the four deliberately. All four only `continue`, so
-			// the dropped set is identical whatever the order — but this is the one
-			// rejection worth reporting, and it can only be reported once the JS
-			// access shapes above are out of the way: `styles["my class"]` sits in
-			// a className expression and trips the whitespace test too.
-			if (BRACKET_WHITESPACE_RE.test(base)) {
-				if (warnings && sink.inClassList) warnBracketWhitespace(warnings, cls);
-				continue;
-			}
 		}
 
 		if (!wantsPositions) {

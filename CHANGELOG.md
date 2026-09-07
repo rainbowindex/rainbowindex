@@ -5,6 +5,549 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.7.0] - 2026-09-07
+
+### Added
+
+- **`rainbowindex migrate tailwind`.** Translates a Tailwind v4 CSS entry into
+  directives — `--color-*` to `@color`, `--text-*` plus its `--line-height` to
+  one `@text` entry, `--animate-*` joined to its `@keyframes`, a bare
+  `--shadow`/`--radius`/`--blur` to the scale's `DEFAULT` — adds the Tailwind
+  preset so every familiar class keeps resolving, and carries a `dark` custom
+  variant across as `@color dark { variant: selector(.dark) }`. Then it checks
+  the classes *you wrote* against the migrated theme and reports what stops
+  resolving, grouped by why. Plugins, a v3 JS config, and namespaces with no
+  counterpart are listed in `migration-report.md` with what to do instead —
+  never dropped quietly. **Nothing is overwritten without `--write`.** See
+  [`docs/migrating.md`](docs/migrating.md).
+- **Every directive spelling is valid CSS now.** All four forms that were
+  not have a spelling that is, and both are accepted:
+
+  | Write | Instead of |
+  | --- | --- |
+  | `sans { family: "Inter"; from: google; }` | `sans: "Inter" from google { … }` |
+  | `spin { animation: spin 1s linear; @keyframes spin { … } }` | `spin: spin 1s linear { … }` |
+  | `punchy { ramp: 0.18 330; }` | `punchy: 0.18 330 { … }` |
+  | `brand: initial;` | `!brand;` |
+  | `inline: true;` / `parabolic: false;` | `inline;` / `no-parabolic;` |
+  | `@apply hover:(px-2 py-1);` | `@apply hover:{px-2 py-1};` |
+
+  The old forms keep working and warn `RI-1046` naming the replacement; they go
+  at 1.0. A test asserts the two spellings produce byte-identical generated CSS.
+
+  **The payoff: your stylesheets are no longer hidden from your formatter.** The
+  Vite plugin adds a file to `fmt.ignorePatterns` only when it still uses one of
+  the deprecated forms, so a project written the canonical way has nothing
+  excluded from `vp fmt` / `vp check`. And `@apply hover:(…)` expands under
+  plain PostCSS, where the brace form is a parse error before any plugin runs.
+- **Three new `@animate` diagnostics**, all for mistakes that used to be silent.
+  `RI-1047`: an entry with an `animation:` and no `@keyframes` is read as a
+  custom utility and animates nothing. `RI-1048`: keyframes named after
+  something other than the entry, which the emitter renames anyway. `RI-1049`:
+  a shorthand that never names its own entry, so the class sets no
+  `animation-name` — which the `@animate` documentation's own example did.
+- **`rainbowindex/editor` grew the surface an editor integration needs**:
+  `import-inlining` (directives in an `@import`ed file are read, given a host
+  resolver), `class-sorting`, `stylesheet-rendering` and a serializable
+  snapshot. The [VS Code extension](https://github.com/miloag/extension) —
+  published separately — is the reference consumer; see
+  [`docs/editor.md`](docs/editor.md).
+- **A documented preset protocol for design-system packages**, at
+  [`docs/preset-protocol.md`](docs/preset-protocol.md). A package exports a
+  stylesheet of directives (`exports["./rainbow.css"]`) and declares where its
+  own classes live (`rainbowindex.safelistSources`); a consumer writes one
+  `@import` and gets both. No plugin API, no registry, no `@source` for
+  `node_modules`. Two new example packages prove it, and the consumer fails its
+  own build when either half stops working.
+- **`rainbowindex/recipe`.** `recipe({ base, variants, compoundVariants,
+  defaultVariants })` returns a function from typed variant props to a class
+  string — the `cva`/`tv` shape, merged through `ri()` so conflicts resolve
+  against your compiled theme rather than a Tailwind utility table:
+  `recipe({ base: "p-2", variants: { size: { lg: "p-8" } } })({ size: "lg" })`
+  is `"p-8"`, not `"p-2 p-8"`. An unknown option is a type error, a boolean
+  group takes a boolean, `null` opts out of a default, and the caller's
+  `class`/`className` always merges last. `recipe` joins `cva` and `tv` on the
+  scanner's variant-helper list, so its classes reach a build with no
+  configuration. See [`docs/recipe.md`](docs/recipe.md).
+- **Two theme-aware lint rules, for Oxlint and ESLint.**
+  `no-unknown-class` reports a class in a class position that compiles to
+  nothing, with the reason and — when the name is a near miss — an editor
+  suggestion that rewrites only the failing fragment, so `hovr:flex` becomes
+  `hover:flex` rather than losing its variant. `no-conflicting-classes` reports
+  a class that another class **in the same string** erases; separate arguments
+  to `ri()` never conflict, because that is what the function is for. Both
+  locate your CSS entry on their own and follow it as it changes. Enable them
+  through `rainbowindex/oxlint` or the new `rainbowindex/eslint` flat-config
+  entry — see [`docs/lint.md`](docs/lint.md).
+- **`outermostCandidates` on `rainbowindex/editor`.** One candidate per class
+  the author wrote. The scanner over-collects on purpose, and in JavaScript it
+  emits the fragments around each `:` as well as the joined token, so anything
+  that turns a candidate into an underline needs this filter first — without
+  it, `sm` inside `sm:flex` reads as an unknown class. Feature-detect with the
+  `candidate-spans-deduped` capability.
+- **A stability contract**, at [`docs/stability.md`](docs/stability.md). What is
+  already treated as a contract before 1.0 and what is deliberately not, the
+  two-minor deprecation window, the supported Node versions, and a browser floor
+  that was measured against the minifier rather than assumed — `--minify` lowers
+  `light-dark()`, `oklch()` and nesting, but cannot lower a `color-mix()` over a
+  `var()`, which is what an alpha modifier on a theme colour emits.
+- **`sortClasses` on `rainbowindex/editor`.** Orders a class list the way the
+  generated stylesheet orders its rules, so an editor's "sort classes" command,
+  a formatter plugin and a codemod cannot drift apart: they call the same
+  function. Classes the compiler emits nothing for come first in their original
+  order, duplicates are kept, and sorting twice changes nothing.
+  `EditorSession.sortClasses` is the same call bound to a session. It is **not**
+  for a list that reaches `ri()`, which is right-most-wins over its arguments.
+  Feature-detect with the `class-sorting` capability.
+- **`renderStylesheet` on `rainbowindex/editor`.** The first export that
+  produces CSS rather than answering a question about it: `createCompiler()`
+  plus `assembleSections()`, the same pair the PostCSS plugin and the CLI run.
+  `EditorSession.render(classNames)` is the same call bound to a session's
+  theme. Two steps of a real build are deliberately absent — Google font weights
+  are not narrowed (a network call) and `@apply` is not expanded (PostCSS's
+  job); a test asserts byte-for-byte equality with `compileProject` for
+  everything else. Feature-detect with the `stylesheet-rendering` capability.
+  See [`docs/editor-api.md`](docs/editor-api.md#rendering-a-stylesheet).
+- **`rainbowindex generate-tokens`.** Writes the theme as data for the places a
+  class cannot go — a chart's series colors, a canvas fill, a Figma import.
+  `rainbowindex-tokens.ts` gives `tokens.color.brand[500]` typed `as const`, as
+  `var()` references so they still follow the cascade; `tokens.json` gives the
+  same theme in the [W3C Design Tokens](https://tr.designtokens.org/format/)
+  format with values resolved, which Style Dictionary consumes directly. See
+  [`docs/cli.md`](docs/cli.md#generate-tokens).
+- **Framework examples and guides.** Five buildable apps in
+  [`examples/`](examples) — Vite + React, React Router, SvelteKit, Astro and
+  Next.js — plus [`docs/frameworks.md`](docs/frameworks.md), which is the
+  copy-paste version of each. CI builds all five, because a framework
+  integration breaks in ways a unit suite cannot see.
+- **A benchmark harness and a real Tailwind parity number.** `pnpm bench`
+  compares Rainbow Index, Tailwind v4 and UnoCSS on a generated codebase across
+  cold build, rebuild, scan, output size and peak memory, one process per
+  measurement. `pnpm bench:parity` asks Tailwind for its own complete class list
+  — 23,289 names — and reports which ones Rainbow Index does not implement:
+  currently **98.7%**, the remainder being the deliberately deferred
+  `ring-offset-*` family and `ring-inset`. The published numbers are in
+  [`README.md`](README.md#benchmarks) with the method in
+  [`bench/README.md`](bench/README.md); they say plainly that Rainbow Index has
+  the smallest output of the three and the slowest rebuild.
+- **Bare `transform`, `filter` and `backdrop-filter`.** The chain-enabling
+  spellings a Tailwind v3 codebase is full of. Each emits the composed chain
+  with no contribution of its own; `transform` is the same declaration as
+  `transform-cpu`, as it is upstream.
+- **Fractional `translate` values.** `translate-x-1/3`, `-translate-y-2/3` and
+  the rest of the 26-value fraction table, on `translate-x`, `translate-y` and
+  the shorthand — 150 classes where only `1/2` had worked. Plus `translate-3d`.
+- **`min-w-auto`, `min-h-auto`, `min-inline-auto`, `min-block-auto`.** `auto`
+  stays off the `max-*` roots, where it is not valid CSS.
+- **`basis-px`**, closing the one gap in `basis-*`'s spacing coverage.
+- **`shadow-inner`**, and **`shadow-initial` / `inset-shadow-initial` /
+  `text-shadow-initial`**, which unset a family's colour variable so the shadow
+  value's own colour applies again — for `shadow-red-500 dark:shadow-initial`.
+
+### Changed
+
+- **`[RI-2004]` warns about a real problem instead of a category of setup.** It
+  now fires once per process, only when `ri()` merges a class whose meaning
+  depends on the theme while no theme has been published, and it names the class
+  it had to guess about. Previously it fired on *every* `ri()` call in *any*
+  Node process, throttled to once a minute, whether or not a theme was
+  published — which warned loudest at the setup that was already correct. It
+  also now fires in the browser, where the wrong answer actually ships.
+- `pnpm check` runs `pnpm format:check` first, so the local gate and CI match.
+- `packageManager` is `pnpm@10.34.5`. The `minimumReleaseAge` and `trustPolicy`
+  settings in `pnpm-workspace.yaml` need pnpm >= 10.21 and were silently
+  ignored by the pinned 10.12.1; the 7-day hold on freshly published dependency
+  versions is now actually enforced.
+
+### Fixed
+
+- **The `@animate` documentation showed an animation that cannot run.** Its
+  example wrote `shimmer: 2s linear infinite { … }` — a shorthand with no
+  animation-name, so the emitted class set none and the keyframes never played.
+  `RI-1049` now reports the shape, and the example names the animation.
+- **Emitted `@keyframes` carried the source's own indentation**, so the same
+  animation written two ways produced two different stylesheets. The body is
+  normalised and indented by the emitter.
+- **`rainbowindex/editor` could not be bundled for a browser.** The entry has
+  always documented itself as `node:`-free, and CSS assembly pulled the font
+  barrel, which re-exports the Google client and its on-disk metadata cache —
+  `node:crypto`, `node:fs/promises`, `node:path`. Nothing in a Node test suite
+  could see it. The pure `@font-face` emission is now its own module and the
+  barrel re-exports both halves, so Node consumers are unaffected, and a test
+  bundles the entry with esbuild's browser platform and fails on the first
+  builtin that reaches the graph.
+- **`shadow-{color}` did nothing.** Every shadow family wrote a colour variable
+  that no emitted rule read, so `shadow-red-500`, `inset-shadow-red-500`,
+  `text-shadow-red-500` and `drop-shadow-red-500` had never worked, under any
+  theme — four documented families, silently inert. Each family's value now
+  carries the slot: `shadow-md` emits
+  `0 4px 6px -1px var(--ri-shadow-color, rgb(0 0 0 / 0.1)), …`, with the
+  original colour as the fallback, so an uncoloured shadow renders exactly as
+  before.
+
+  This required inlining the value instead of referencing `var(--shadow-md)`,
+  and that is not a stylistic choice: a `var()` written inside a `:root` custom
+  property is substituted when that property is computed **on `:root`**, where
+  no element has set a colour, so the slot would bake in its own fallback before
+  reaching the element. Tailwind inlines for the same reason. The consequence is
+  that a `--shadow-*` token now reaches `:root` only when your own CSS
+  references it — `.card { box-shadow: var(--shadow-md) }` still keeps it, and
+  so does a `@shadow` alias, but a stylesheet the compiler never sees will no
+  longer find the variable defined.
+- **Fractions outside the enumerated set did not resolve.** `w-7/9`, `h-3/8`,
+  `max-w-13/17`, `translate-x-2/7` — anything beyond the 26 fractions the
+  completion table lists — compiled to nothing, while Tailwind compiles every
+  fraction. All four percentage-valued families (`w-`, `basis-`, `flex-`,
+  `translate-`) now share one grammar: the table for the common values, a
+  `calc()` for the rest. This also settled `basis-1/3`, which emitted
+  `33.3333%` where `w-1/3` emitted `33.333333%`.
+- **`translate-none` and `translate-3d` were inert next to an axis utility.**
+  Both emit the `translate` shorthand and sorted at the same key as
+  `translate-x-*`, so the tie-break put them first and the axis utility won the
+  cascade — a reset that reset nothing, and a `translate-3d` that could not add
+  the Z axis it exists for. They now sort after the axes, as they do upstream.
+- **The editor API could not complete classes it compiles.** The logical sizing
+  spellings (`min-inline-full`, `min-block-0`, `inline-full`, `block-full` and
+  the rest of the block axis) and the shadow resets (`text-shadow-none`,
+  `shadow-initial` and their siblings) resolved but were absent from
+  `enumerate()`, so completions, the strict `ri()` types and the suggestion
+  corpus did not know them. 3,700 → 3,883 classes on the default theme.
+- **`ri()` deleted composable filters.** `ri("blur-sm grayscale")` returned
+  `"grayscale"`, and `ri("blur-sm invert sepia")` returned `"sepia"` — the whole
+  filter family annihilated itself, and the backdrop family with it. Every
+  composable filter emits the shared `filter` shorthand as its second
+  declaration, and that property was expanded to all nine slot variables, so any
+  filter claimed every other filter's slot. The reset spellings (`filter-none`,
+  `filter-[v]`, and the backdrop equivalents) now claim the slots directly,
+  which is what the shadow and ring families already did.
+- **`ri()` deleted a working `ring-2` next to a `ring-offset-*`.**
+  `ri("ring-2 ring-offset-2 ring-offset-white")` returned just
+  `"ring-offset-white"`. `ring-offset-*` and `ring-inset` emit no CSS — that
+  omission is deliberate — but they fell into the `ring` prefix and claimed its
+  `box-shadow`. They now claim their own properties.
+- **The scanner dropped arbitrary values that were a bare integer.**
+  `z-[60]`, `order-[3]`, `flex-[2]`, `col-span-[7]`, `line-clamp-[8]` compiled
+  correctly when passed by hand and vanished when scanned out of markup: the
+  filter that keeps JavaScript subscripts (`items[0]`, `string[]`) out of the
+  candidate set rejected anything ending in `[digits]`. It now keys on the dash
+  before the bracket, which a utility always has and a subscript never does.
+- **`translate-z-*` accepted percentages.** `--ri-translate-z` is registered
+  `<length>`, so `translate-z-full` compiled to a declaration the browser
+  discards. Rejected now, as it is upstream.
+
+- **`&` in a relational variant now means the group, not the utility.**
+  `group-[&.open]:flex` emitted `.group:is(<that very class>.open) <that very
+  class>` — an element required to be its own ancestor, so the rule was valid
+  CSS that could never match. It now emits `.group.open .CLASS`, which is what
+  Tailwind emits. `peer-[…]` and the named forms are fixed with it, and every
+  `&` in the bracket is substituted, not just the first.
+
+  `has-[&…]`, `not-[&…]` and `in-[&…]` are now rejected rather than shipping
+  `:has(&.foo)`: that is not valid in the flat CSS this emits, and an element
+  cannot contain itself. The standalone `[&_p]:` form, where `&` really is the
+  element being styled, is unchanged.
+- **A variant's arbitrary value can contain a nested `]`.** `has-[[data-x]]:`,
+  `peer-[[type=checkbox]]:`, `group-[&[href^="/x"]]:` — the bracket was matched
+  with a pattern that stops at the first `]`, so the colon after it was never
+  found and the whole class was read as a utility name. That is why it reported
+  `unknown-utility` rather than `unknown-variant`.
+
+  The scanner had the same bug one level up, and there it was worse: a torn
+  token's tail is often a valid utility, so `group-[&[href]]:underline` in your
+  markup made the compiler emit a real `.underline` rule for a class nobody
+  wrote. A `]` inside quotes is now content rather than a delimiter, so
+  `data-[x="]"]:` works too.
+
+  While in there: whitespace inside a *variant's* own bracket escaped the
+  `[RI-1412]` check entirely, because the variant was stripped before the test
+  ran. `group-[&[a b]]:flex` now warns and is dropped, as `bg-[a b]` always was.
+- **A bare number is a line height, and an unresolvable modifier is an error.**
+  `leading-6` and `text-sm/6` mean 6 × the spacing base, as they do in Tailwind.
+  They used to fail in two different ways: `leading-6` was rejected outright,
+  while `text-sm/6` quietly fell back to the size's own line height — so a
+  migrating codebase got different typography with nothing to grep for. Watch
+  out if you were relying on the old behaviour by accident: Tailwind's default
+  leadings are spacing multiples, so `text-lg/7` happened to be correct already.
+
+  A stated modifier that resolves to nothing now invalidates the whole class,
+  the rule the fluid path already followed. `text-lg/zzz` emits nothing instead
+  of a half-honoured `text-lg`, and `text-[20px]/7` carries its line height
+  instead of dropping the declaration and inheriting. `px` is still not a
+  multiple — `text-lg/px` is not a line height anyone means — and a
+  `@leading` entry still wins over the multiple.
+- **`group`, `peer`, and their named forms are valid classes.** The variant half
+  landed first, so `group-hover/item:` worked while the `group/item` its parent
+  has to wear read as unknown — flagging correct markup in editors and lint
+  rules. They emit nothing, as upstream does. The check sits after the utility
+  resolvers, so `@utility group { … }` of your own still wins, and only the bare
+  spelling counts: `sm:group` and `group!` are still errors, because
+  `.sm\:group` in the DOM is not `.group` and cannot anchor anything.
+
+  `validate()` now accepts exactly one class the compiler emits no rule for, and
+  the parity suite states that exception rather than leaving it implicit.
+- **`placeholder-{color}`.** Recorded as a deliberate difference on the grounds
+  that `placeholder:text-{color}` is the v4 spelling — which is true of
+  Tailwind's docs site but not of its implementation, where `placeholder` is an
+  ordinary colour utility. It colours `::placeholder` through a nested selector,
+  so it never recolours the value the user typed, and it is merge-scoped, so
+  `text-red-500 placeholder-gray-400` keeps both. The variant spelling still
+  works.
+- **The container ladder reaches every family that should have it.** `--container-*`
+  is Tailwind's inline-axis scale, and here it fed `max-w-*` alone — while
+  `columns-*` kept a second copy of the same table that added `3xs` and `2xs`,
+  so `columns-3xs` resolved and `max-w-3xs` did not. One table now, read by
+  `w-`, `min-w-`, `max-w-`, `basis-`, `columns-`, and the inline-axis logical
+  forms. The block axis is deliberately left out, as upstream leaves it. Editor
+  completions offer the ladder too — those rows enumerated the theme's
+  breakpoint names, a set no sizing table has a key for, so `max-w-md` was
+  resolvable but never suggested.
+- **Breakpoint names work in `min-` and `max-` variants.** `max-sm:hidden` and
+  `min-md:flex` are ordinary Tailwind and resolved to nothing here: the branch
+  took a bracketed length only, seven lines below the one that resolves a
+  breakpoint by name. Container queries gained the same forms — `@max-md:`,
+  `@min-md:`, `@sidebar/max-md:`. The bracket spellings are unchanged, plain
+  `sm:` still emits `min-width`, and a `max-`/`min-` name that is not a
+  breakpoint still falls through to your own `@custom` variant rather than being
+  swallowed. An arbitrary container size stays `[@container(min-width:600px)]`.
+- **Variants compose, and groups can be named.** A variant nested inside
+  another was a second, much smaller grammar: `group-` took a pseudo-class or a
+  bracket selector and nothing else, so `group-hover:` worked and
+  `group-data-[state=open]:` did not — even though `data-[state=open]:` on its
+  own always had. The inner segment now resolves as a variant in its own right,
+  which makes all of these work:
+
+  ```
+  group-data-[state=open]:rotate-180   peer-has-[:checked]:block
+  group-aria-expanded:rotate-180       peer-data-[open]:block
+  has-checked:bg-blue-50               not-data-[open]:block
+  not-supports-[display:grid]:block    in-focus:underline
+  nth-3:underline                      nth-of-type-2:underline
+  ```
+
+  An inner variant that describes the viewport rather than the anchor
+  (`group-sm:`) stays unknown, as does one that rewrites the selector's position
+  (`group-in-[.foo]:`) — neither is a state an ancestor can be in.
+
+  Named groups and peers work too: `group-hover/item:underline` anchors on
+  `.group\/item`, so nested markup can address the group it means. The slash
+  used to defeat the variant-prefix check, which left the whole class read as a
+  utility name. A malformed name is rejected rather than falling back to any
+  `.group`.
+- **`.astro` files are scanned properly.** They were an unknown extension:
+  static classes came through the generic token scan by accident, `class:list`
+  on a long line did not, a helper call in the frontmatter did not, and the dev
+  server never recompiled on save because `.astro` was not a source file — so a
+  new class only appeared after editing the CSS itself. Both halves are read
+  now: the markup for `class="…"` and `class:list={…}`, the frontmatter for
+  `clsx`/`cn`/`ri` calls and `cva`/`tv` recipe configs. `.astro` joins the
+  default `src/**` pattern.
+- **`ri()` knows your theme on the client.** This fixes a shipped correctness
+  bug. `ri()` decides whether `text-lg` is a font size or a color by asking the
+  published theme; a compile publishes one, and a browser bundle never runs a
+  compile. Since 0.6.0 made every text size, weight, font slot, and color name
+  project-defined, that meant a client-side `ri("text-lg text-white")` read
+  `text-lg` as a color, decided the two conflicted, and returned `"text-white"`
+  — silently, because the warning was a dev-only one.
+
+  **With Vite, nothing to do.** This holds for a theme behind an `@import`
+  too — including the Tailwind preset, whose whole theme arrives that way.
+  The plugin serves the theme as a virtual module
+  and prepends it to every module that imports `rainbowindex`. Imports evaluate
+  in order, so the theme is published before your code runs — dev, build, and
+  SSR alike — and editing your CSS entry republishes it over HMR.
+
+  **With any other bundler**, one command and one import:
+
+  ```sh
+  rainbowindex generate-snapshot        # writes rainbowindex-snapshot.ts
+  ```
+
+  ```ts
+  import "./rainbowindex-snapshot";     // app entry, before anything calls ri()
+  ```
+
+  The generated module also exports a `ri` bound to that snapshot, for rendering
+  more than one theme in one process. Its output is deterministic, so re-running
+  it on an unchanged theme produces no diff.
+
+  New exports on all three entries: `serializeSnapshot`, `hydrateSnapshot`, and
+  `publishSnapshot`. A snapshot holds Sets, which `JSON.stringify` silently
+  turns into `{}`, so `serializeSnapshot` is the only safe way to send one
+  across a server/client boundary. `hydrateSnapshot` never throws on a malformed
+  payload — a stale generated module degrades to "this part of the theme is
+  unknown" rather than breaking the bundle at import time. Editor capability:
+  `serializable-snapshot`.
+- **`@import` is read for its directives.** A `@color` block living in
+  `./theme/tokens.css` — or in a stylesheet a package ships — now reaches the
+  theme. Until this release only the Vite path ever saw imported text, because
+  Vite resolves CSS imports before PostCSS plugins run; the CLI, the PostCSS
+  plugin, `compileProject`, and the editor entry all passed `@import` through
+  and never opened the file.
+
+  ```css
+  @import "rainbowindex";
+  @import "./theme/tokens.css";      /* its directives apply */
+  @import "some-preset/theme.css";   /* through the package exports map */
+  ```
+
+  Reading is not emitting, so nothing is duplicated. The PostCSS plugin builds
+  its output from the AST exactly as before and leaves your `@import` at-rules
+  for the browser; the CLI, which runs no PostCSS, writes an inlined file's CSS
+  into the output once, in import order. You no longer need `postcss-import`
+  ahead of the plugin just to make a token file's directives count.
+
+  Left alone: `@import "rainbowindex"` (that is activation — and a second one
+  inside an imported file is dropped rather than activating twice), remote URLs,
+  and site-root paths. A conditional import — one carrying a media query,
+  `layer()`, or `supports()` — is left in place and warns `[RI-1045]`, since
+  directives have no conditional form. A file reached twice by different paths
+  is read once; the chain may nest 8 deep and total 5 MB.
+
+  New codes: `RI-1041` unresolved, `RI-1042` cycle, `RI-1043` too deep,
+  `RI-1044` too large, `RI-1045` conditional.
+
+  `compileProject` takes `cssPath` (which turns inlining on) and
+  `resolveImport`. `createEditorSession` takes `resolveImport` and `cssPath`,
+  and exposes `importedFiles` so a host knows what else to watch — the entry
+  still does no IO of its own, so the resolver is the host's. The new
+  `inlineDirectiveImports` and `createNodeImportResolver` are exported for
+  callers running the step themselves. Editor capability: `import-inlining`.
+- **`rainbowindex/tailwind.css`, an optional Tailwind-default preset.** Since
+  0.6.0 removed every shipped scale, a fresh install renders nothing for
+  `sm:flex`, `text-lg`, `font-bold`, `shadow-md`, `rounded-lg`, `ease-in`, or
+  `animate-spin`. Shipping no opinions is still the default; this makes the
+  opinions one import away.
+
+  ```css
+  @import "rainbowindex";
+  @import "rainbowindex/tailwind.css";
+  ```
+
+  It is Tailwind v4.3.3's default theme written entirely in directives —
+  26 color families, the `sm`–`2xl` breakpoints, `text-xs` through `text-9xl`,
+  and the weight, leading, tracking, radius, shadow, blur, easing, and
+  animation scales — generated by `scripts/generate-tailwind-preset.mjs` from
+  Tailwind's own `theme.css`, so it is readable CSS you can open and copy from
+  rather than a compiled blob. Import it after the package; later blocks win,
+  so any token you declare below it overrides it. Two entries Tailwind
+  implements as utilities rather than tokens, `leading-none` and `container`,
+  are written in by hand. The values are Tailwind's — see `NOTICE.md`.
+
+  Every scale it names, colors included, is pruned to what the build actually
+  uses — see the color-token pruning entry below, which landed after this one
+  and removed the 14 KB of unconditional `:root` output the preset used to add.
+  `docs/utilities.md` lists what the preset cannot paper over, and
+  `__tests__/core/tailwind-preset.test.ts` holds the compatibility table plus
+  the known gaps, asserted red.
+- **Bare `rounded` reads a `DEFAULT` radius.** `@rounded { DEFAULT: 0.25rem; }`
+  makes `rounded` resolve, as do the bare sides and corners `rounded-t`,
+  `rounded-tl`, `rounded-ss`. `@shadow` and `@blur` already used the same key;
+  `@rounded` was the odd one out.
+- `NOTICE.md`, shipped in the package, carrying the full license texts of
+  Tailwind CSS, tailwind-merge, and tw-animate-css. `LICENSE` is now the
+  canonical MIT text, so SPDX detectors and dependency scanners read the
+  package as MIT instead of "Other".
+- `CONTRIBUTING.md` and `SECURITY.md`, plus issue and pull-request templates.
+- Continuous integration on every push and pull request (Node 20.19 and 24),
+  running the same `pnpm check` gate as a release. The release workflow now
+  waits on that gate, so a version bump whose tests fail publishes nothing.
+- Golden output tests (`__tests__/golden/`): whole-stylesheet fixtures that
+  diff every emitted declaration. `pnpm test:golden:update` regenerates them.
+- A docs drift guard (`__tests__/core/docs-sync.test.ts`): adding an editor
+  capability without documenting it now fails the test suite.
+- A quick-start end-to-end test (`__tests__/cli/cli.test.ts`): the documented
+  path, walked as a new user walks it — `rainbowindex init`, one of the two
+  starts, a build — with the package resolved through `node_modules` and its
+  `exports` map rather than a hand-built theme. The unit suite constructs
+  themes in memory, which is how the Tailwind-familiar start reached a release
+  candidate loading no theme at all.
+- **A directive named inside a CSS comment no longer leaks every directive
+  after it into the output.** The strip patterns run forward to the next `{` or
+  `;`, so `/* palette via @color */` matched all the way to the *real*
+  `@color {` opener; skipping that false match resumed the scan past the block
+  it had swallowed, and everything from there on was copied into the emitted
+  stylesheet verbatim, as invalid CSS. Any comment documenting the theme by
+  name was enough. Affected `compileProject` and the CLI; the PostCSS plugin
+  strips on the AST and was never affected.
+- **`dark:` and the color tokens can finally agree.** They were two theme
+  switches that disagreed: tokens flip through `light-dark()` under
+  `html[data-appearance]`, while `dark:` only ever asked the OS — so setting
+  `data-appearance="dark"` recolored the page but left every `dark:` utility
+  inert. `docs/theming.md` carried a CAUTION saying so; it is gone.
+
+  ```css
+  @color dark {
+  	variant: appearance;   /* or: media (default), selector(.dark) */
+  }
+  ```
+
+  `media` is the old behaviour and stays the default, so nothing changes until
+  you ask. `appearance` matches exactly when `light-dark()` flips under the
+  shipped preflight — the explicit attribute, or the OS preference where no
+  attribute overrides it — which takes two rules, and the class emits both.
+  `selector(.dark)` is the strategy a Tailwind project arrives with. `light:`
+  mirrors whichever you choose, and every form is wrapped in `:where()`, so the
+  variant adds no specificity. New code `RI-1111` for an unrecognized value.
+- **Color tokens are pruned to what the build uses.** Explicit and pair `@color`
+  entries were emitted into `:root` unconditionally, so importing
+  `rainbowindex/tailwind.css` added all 286 of its stops — about 14 KB — to a
+  page that used two colors. They are now emitted on demand, like every other
+  scale. On the preset's own test fixture `:root` drops from 14,713 bytes to
+  1,297, and the whole stylesheet from 25,345 to 11,929.
+
+  Demand is followed transitively, because emitting one token can require
+  another: an explicit value may name a second color, an alias emits a `var()`
+  at its source, and both can chain. Four sources that were never scanned at all
+  now count — a `@shadow` token's value, a `@keyframes` body from `@animate`, an
+  `@register` initial value, and the `var(--color-x, fallback)` spelling — each
+  of which could already leave a dangling reference before pruning existed.
+  `paper` and `ink` are always emitted.
+- **A theme stop named by a value now follows `data-theme`.** The `[data-theme]`
+  override blocks and the `:root` palette stops are two halves of one mechanism
+  and were computed from different inputs, so they agreed only by accident.
+  `hairline: theme-282/52` put `--color-theme-282` in `:root` but got no
+  override block, and switching `data-theme` left it behind — silently, since
+  the variable resolved perfectly well, just never changed. Both halves now
+  read the same demand.
+- **A bare color name in a `@color` value is a reference, not literal text.**
+  `soft: surface/50` emitted `color-mix(in oklab, surface 50%, transparent)` —
+  `surface` verbatim, which is not a CSS color — and `duo: surface / raised` and
+  `light-dark(surface, raised)` did the same. All three were invalid at
+  computed-value time and warned about nothing. A bare name now expands to
+  `var(--color-<name>)` everywhere it cannot be the alias spelling: both halves
+  of a pair, inside `light-dark()`, and any side carrying an `/alpha` modifier.
+  `accent: brand` is still an alias, and `transparent`, `currentColor`, and
+  `inherit` are still themselves.
+
+  New code `RI-1109` covers the case a reference cannot fix: a generative
+  palette defines `--color-brand-<stop>` and no bare `--color-brand`, so
+  `duo: surface / brand` now says so instead of emitting something that cannot
+  resolve.
+- **A `@color` alias no longer points at a variable nobody emits.** `@color
+  { brand: 0.18 330; accent: brand; }` emits
+  `--color-accent-500: var(--color-brand-500)`, but nothing marked
+  `--color-brand-500` as used, so it was pruned from `:root` and `text-accent-500`
+  rendered nothing — silently, and only when the same stop was not used directly
+  somewhere else, which is why it looked intermittent. Every stop an alias uses
+  is now emitted on its source. Alias chains (`accent: mid; mid: brand;`) work
+  too: each link emits its own `var()` hop, where before the chain collapsed to a
+  single stop-less `--color-accent: var(--color-mid)` that no utility reads. A
+  circular chain still warns `[RI-1107]` and now emits nothing rather than two
+  variables pointing at each other. An alias to a keyword now inlines the keyword's
+  value instead of referencing a `--color-*` variable that keywords never emit.
+- **Bare `shadow` no longer renders nothing when the theme names a `DEFAULT`.**
+  It compiles to `var(--shadow-DEFAULT)`, but the usage scanner's token-reference
+  pattern was lowercase-only, so the token was pruned from `:root` and the class
+  fell through to the transparent fallback — with no warning, and with
+  `validate()` reporting the class as fine. Defining a `DEFAULT` was worse than
+  omitting one, since `shadow` otherwise falls back to `md`.
+- `docs/editor-api.md` documented fewer editor capabilities than the entry
+  exports. Every capability the entry declares is now listed, and the stale
+  class and template counts are corrected — with a docs-sync test that reads
+  the prose and compares it to the code, so the next gap fails the suite.
+
 ## [0.6.0] - 2026-09-01
 
 ### Added

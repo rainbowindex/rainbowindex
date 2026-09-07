@@ -1,0 +1,4 @@
+{
+	"mode": "postcss",
+	"comment": "Runs through the PostCSS plugin so @apply and @custom expansion in user CSS are covered — compileProject alone never sees them."
+}

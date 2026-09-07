@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, printHelp } from "../cli/args.js";
 import { buildCSS } from "../cli/build.js";
+import { generateSnapshot } from "../cli/generate-snapshot.js";
+import { generateTokens } from "../cli/generate-tokens.js";
 import { generateTypes } from "../cli/generate-types.js";
+import { migrateProject } from "../cli/migrate.js";
 import { preloadFonts } from "../cli/preload-fonts.js";
 import { buildAndWrite, minifyIfRequested, watchMode } from "../cli/watch.js";
 import { scanFiles } from "../cli/scan.js";
@@ -39,12 +42,24 @@ async function main(): Promise<void> {
 		case "generate-types":
 			await generateTypes(opts, cwd);
 			break;
+		case "generate-snapshot":
+			await generateSnapshot(opts, cwd);
+			break;
+		case "generate-tokens":
+			await generateTokens(opts, cwd);
+			break;
 		case "preload-fonts":
 			await preloadFonts(opts, cwd);
 			break;
 		case "scan":
 			await scanFiles(opts, cwd);
 			break;
+		case "migrate": {
+			const result = await migrateProject(opts, cwd);
+			(result.code === 0 ? console.log : console.error)(result.summary);
+			if (result.code !== 0) process.exitCode = result.code;
+			break;
+		}
 		case "build": {
 			if (opts.watch) {
 				await watchMode(opts, cwd);

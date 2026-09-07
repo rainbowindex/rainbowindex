@@ -18,7 +18,7 @@
 
 import type { ResolvedTheme } from "../directives/foundation.js";
 import { codepointCompare } from "../shared.js";
-import { SPECIAL_COLORS } from "../merge/props.js";
+import { SPECIAL_COLORS } from "../merge/value-kinds.js";
 import { parseUtility } from "./parser.js";
 import { ROOT_GROUPS, SPACING_SAMPLES, type ValueSpaceKind, type ValueSpaceSpec } from "./roots.js";
 import { resolveUtilityDeclarations, PREFIX_DISPATCH } from "./index.js";

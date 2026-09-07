@@ -28,7 +28,9 @@
 // Types
 // ---------------------------------------------------------------------------
 
-type ClassInput = string | false | null | undefined | ClassInput[];
+/** Anything `ri()` accepts: class strings, falsy holes, and nested arrays.
+ *  Exported because `rainbowindex/recipe` builds its own inputs from it. */
+export type ClassInput = string | false | null | undefined | ClassInput[];
 
 import { OVERRIDES } from "./props.js";
 import {
@@ -257,6 +259,10 @@ function mergeFrom(
 	inputs: ClassInput[],
 	resolve: (utility: string) => readonly string[] | null,
 	cache: RiCache,
+	/** Whether an unthemed merge is worth reporting — see RI-2004. True only for
+	 *  the default `ri()`, and only while no theme has been published; a
+	 *  `createRi(snapshot)` instance carries its own theme and never warns. */
+	warnUnthemed = false,
 ): string {
 	let fastPath = true;
 	let rawKey = "";
@@ -281,6 +287,9 @@ function mergeFrom(
 			const cached = cache.get(rawKey);
 			if (cached !== undefined) return cached;
 			const classes = flattenInputs(inputs);
+			// A lone class merges to itself and needs no theme, so only a real
+			// merge is worth inspecting.
+			if (warnUnthemed && classes.length > 1) warnUnpublishedTheme(classes, resolve);
 			const output =
 				classes.length === 0
 					? ""
@@ -295,18 +304,8 @@ function mergeFrom(
 	const classes = flattenInputs(inputs);
 	if (classes.length === 0) return "";
 	if (classes.length === 1) return classes[0];
+	if (warnUnthemed) warnUnpublishedTheme(classes, resolve);
 	return mergeClasses(classes, resolve, cache);
-}
-
-/** Detect SSR environment at runtime. Cached after first check.
- *
- *  NOTE: The result is cached permanently after the first check. */
-let _isSSR: boolean | null = null;
-function detectSSR(): boolean {
-	if (_isSSR !== null) return _isSSR;
-	_isSSR =
-		typeof window === "undefined" && typeof process !== "undefined" && !!process.versions?.node;
-	return _isSSR;
 }
 
 /** Shared throttle interval for ri() runtime warnings. Re-emitting periodically
@@ -332,21 +331,68 @@ function throttledWarn<A extends unknown[]>(
 	};
 }
 
-const warnSSRUsage = throttledWarn(() =>
-	!hasFinalizedSnapshot()
-		? // No compilation has ever finalized — module-level state is uninitialized
-			// defaults. In SSR this almost certainly means ri() is being called without
-			// a preceding compile pass, which will produce incorrect merge results
-			// for custom utilities, text sizes, and font families.
-			"[RI-2004] ri() called in an SSR environment before any compilation has finalized. " +
-			"The default ri() export reads module-level state that has not been initialized. " +
-			"Custom utilities, text sizes, and font families will not be recognized. " +
-			"Use createRi(snapshot) for concurrent-safe class merging. See: https://rainbowindex.dev/docs/ssr"
-		: "[RI-2004] The default ri() export uses module-level state and is not safe for concurrent " +
-			"SSR requests. Use createRi(snapshot) for isolation. See: https://rainbowindex.dev/docs/ssr\n" +
-			"This warning repeats every 60 s until resolved. In production SSR, switch to createRi(snapshot) " +
-			"to prevent silent data corruption between concurrent requests.",
-);
+/**
+ * RI-2004 — the default ri() merged a class whose meaning depends on a theme,
+ * with no theme published.
+ *
+ * Since 0.6.0 every text size, weight, font slot, and bare color name is
+ * project-defined, so an unpublished `ri("text-lg text-white")` classifies
+ * `text-lg` as a color and drops it. That is a wrong answer, not a style
+ * preference, so it warns wherever it happens — browser included.
+ *
+ * It warns ONCE per process, and only on a class it could actually get wrong.
+ * The old behavior — warning on every SSR call whether or not a snapshot
+ * existed — punished the correct setup: a single-theme app that publishes a
+ * snapshot at startup is right, and should be silent.
+ */
+let _warnedNoSnapshot = false;
+
+/** Whether a merge is worth inspecting: no theme yet, and not yet warned. */
+function shouldCheckSnapshot(): boolean {
+	return !_warnedNoSnapshot && !hasFinalizedSnapshot();
+}
+
+/**
+ * A class the published theme decides the meaning of. `text-*` and `font-*`
+ * are the dual-mode families — size vs color, family vs weight — and anything
+ * the built-in tables do not claim is either a project color, a custom
+ * utility, or a typo. All three are indistinguishable without a theme.
+ */
+function isThemeDependent(cls: string, resolve: (utility: string) => readonly string[] | null) {
+	const splitIdx = findVariantSplit(cls);
+	let utility = splitIdx === -1 ? cls : cls.slice(splitIdx + 1);
+	if (utility.charCodeAt(utility.length - 1) === 33 /* '!' */) utility = utility.slice(0, -1);
+	if (utility.charCodeAt(0) === 45 /* '-' */) utility = utility.slice(1);
+	return utility.startsWith("text-") || utility.startsWith("font-") || resolve(utility) === null;
+}
+
+function warnUnpublishedTheme(
+	classes: readonly string[],
+	resolve: (utility: string) => readonly string[] | null,
+): void {
+	// Re-checked because `shouldCheckSnapshot()` was read before the merge: a
+	// compile can finalize in between, and on the cached fast path this runs
+	// once per call while the flag flips only once.
+	if (_warnedNoSnapshot || hasFinalizedSnapshot()) return;
+	let offender: string | undefined;
+	for (const cls of classes) {
+		if (isThemeDependent(cls, resolve)) {
+			offender = cls;
+			break;
+		}
+	}
+	if (offender === undefined) return;
+	_warnedNoSnapshot = true;
+	console.warn(
+		`[RI-2004] ri() merged "${offender}" with no theme published, so its meaning was guessed. ` +
+			"Since 0.6.0 text sizes, weights, font slots, and color names are all project-defined, " +
+			"and without them a size can be read as a color and dropped. " +
+			"With Vite this is automatic — check the plugin is installed. " +
+			"Otherwise run `rainbowindex generate-snapshot` and import the generated module once at " +
+			"startup, or pass a snapshot to createRi(snapshot). " +
+			"This warns once per process. See: https://rainbowindex.dev/docs/ssr",
+	);
+}
 const warnFlattenDepth = throttledWarn(
 	() =>
 		`[RI-2011] ri() input nesting exceeds maximum depth of ${MAX_FLATTEN_DEPTH}. Deeply nested inputs are silently dropped. Flatten your class arrays to avoid this limit.`,
@@ -377,10 +423,7 @@ const warnNonStringInput = throttledWarn(
  * ri('text-lg text-red-500')            // → 'text-lg text-red-500' (different properties)
  */
 export function ri(...inputs: ClassInput[]): string {
-	if (detectSSR()) {
-		warnSSRUsage();
-	}
-	return mergeFrom(inputs, resolveProps, defaultRiCache);
+	return mergeFrom(inputs, resolveProps, defaultRiCache, shouldCheckSnapshot());
 }
 
 /**

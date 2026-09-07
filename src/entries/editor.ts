@@ -48,6 +48,21 @@ export const editorCapabilities: readonly string[] = Object.freeze([
 	// `weightIsLoaded` / `describeLoadedWeights` — the RI-1504 coverage check,
 	// so an editor can answer "does any loaded font have this weight?".
 	"font-weight-coverage",
+	// `inlineDirectiveImports`, and `createEditorSession({ resolveImport })` —
+	// directives living in an `@import`ed file are read, given a host resolver.
+	"import-inlining",
+	// `serializeSnapshot` / `hydrateSnapshot` / `publishSnapshot` — a snapshot
+	// that survives JSON, so a theme can be shipped to a client bundle.
+	"serializable-snapshot",
+	// `renderStylesheet`, and `EditorSession.render` — the whole stylesheet,
+	// not just an answer about one class, from a graph with no `node:` in it.
+	"stylesheet-rendering",
+	// `sortClasses` — the emission order of a class list, so an editor command,
+	// a formatter and a codemod cannot disagree about what sorted means.
+	"class-sorting",
+	// `outermostCandidates` — one candidate per class the author wrote, for
+	// anything that maps a candidate back to a place in the source.
+	"candidate-spans-deduped",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -68,6 +83,10 @@ export type {
 	SourceExtractionInput,
 } from "../scanner/class-extraction.js";
 export { isSourceFile } from "../scanner/source-files.js";
+/** The candidates that correspond one-to-one with what was typed. The JS
+ *  lexer also emits the fragments around each `:`, which a build should see
+ *  and an underline should not. */
+export { outermostCandidates } from "../editor/candidates.js";
 
 // ---------------------------------------------------------------------------
 // Project CSS entry detection (host reads the files, these decide)
@@ -82,6 +101,15 @@ export { hasRIActivation, RI_IMPORT_SPECIFIERS } from "../directives/activation.
 
 export { analyzeProjectCSS } from "../project/analyze.js";
 export type { ProjectAnalysis } from "../project/analyze.js";
+/** `@import` inlining. The host supplies the resolver; nothing here reads a
+ *  file, so this stays usable in vscode.dev exactly as it is in Node. */
+export { inlineDirectiveImports } from "../project/imports.js";
+export type {
+	ImportResolution,
+	ImportResolver,
+	InlineImportsOptions,
+	InlineImportsResult,
+} from "../project/imports.js";
 export type { ParsedDirective, ResolvedTheme } from "../directives/foundation.js";
 export { defaultTheme } from "../theme/index.js";
 export { diagnosticFromWarning, severityForCode, warningCode } from "../diagnostics.js";
@@ -133,6 +161,10 @@ export { analyzeMerge } from "../merge/analyze.js";
 export type { MergeAnalysis, MergeDrop } from "../merge/analyze.js";
 export type { CompilationSnapshot } from "../merge/context.js";
 export { createThemeSnapshot } from "../engine/index.js";
+/** Wire form of a snapshot: a Set does not survive JSON.stringify, so a theme
+ *  built here can only reach a client through serialize → hydrate → publish. */
+export { hydrateSnapshot, publishSnapshot, serializeSnapshot } from "../merge/context.js";
+export type { SerializedSnapshot } from "../merge/context.js";
 
 // ---------------------------------------------------------------------------
 // Color swatches + theme token introspection
@@ -147,6 +179,21 @@ export {
 } from "../theme/swatch.js";
 export type { ColorSwatch, SwatchColor, ThemeTokens } from "../theme/swatch.js";
 export type { ColorDefinition } from "../theme/colors.js";
+
+// ---------------------------------------------------------------------------
+// Stylesheet rendering — theme + classes → the CSS a build would emit
+// ---------------------------------------------------------------------------
+
+/** The production compile and assembly, minus font resolution and `@apply`
+ *  expansion — the two steps that need the network and PostCSS. */
+export { renderStylesheet } from "../editor/render.js";
+export type { RenderedStylesheet, RenderStylesheetOptions } from "../editor/render.js";
+/** Directive removal, so a caller can hand `renderStylesheet` the user's own
+ *  CSS the way the pipeline does. */
+export { stripRIDirectives } from "../css/strip.js";
+/** Class-list ordering, matching the order the emitted rules are written in.
+ *  Not for a list that reaches `ri()`, which is right-most-wins. */
+export { sortClasses } from "../editor/sort.js";
 
 // ---------------------------------------------------------------------------
 // Session façade — one object per workspace, caches invalidate on setCss()

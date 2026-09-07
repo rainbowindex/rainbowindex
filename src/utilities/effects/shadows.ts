@@ -7,6 +7,7 @@
 import type { ResolvedTheme } from "../../directives/foundation.js";
 import { isBracketedColor, resolveColor } from "../color.js";
 import { extractArbitrary, INTEGER_RE, multi, single, type UtilityResult } from "../helpers.js";
+import { withShadowColorSlotLayers } from "../../css/shadow-color.js";
 
 // ---------------------------------------------------------------------------
 // Composable box-shadow (shadow · inset-shadow · ring · inset-ring)
@@ -53,20 +54,66 @@ function resolveColorOrArbitrary(
 	return null;
 }
 
-// Shared template for the scale-less shadow families (inset-shadow,
-// text-shadow, drop-shadow): each accepts `none`, a color, or an arbitrary
-// value, and routes all three through the same family-specific `wrap`.
+/** Everything that distinguishes one shadow family from another. */
+export interface ShadowFamily {
+	/** The family's `none` reset. Not a shadow anyone can colour, so it bypasses
+	 *  the slot — `0 0 #0000` would otherwise gain a fallback nothing can use. */
+	readonly none: string;
+	readonly colorVar: string;
+	/**
+	 * Whether `<family>-initial` is a spelling this family has.
+	 *
+	 * It unsets the family's colour var so the shadow value's own baked-in
+	 * colour applies again — used under a variant, as in `shadow-red-500
+	 * dark:shadow-initial`. Tailwind registers it for box, inset and text
+	 * shadows and not for drop-shadow, which shares this resolver.
+	 */
+	readonly initial: boolean;
+	/**
+	 * Layers, not one string: `drop-shadow()` takes exactly one shadow, so a
+	 * two-layer value has to become two space-separated calls rather than one
+	 * call with two arguments. Each family joins them as its property needs.
+	 */
+	readonly wrap: (layers: readonly string[]) => UtilityResult;
+}
+
+// Shared template for every shadow family: each accepts `none`, maybe
+// `initial`, a colour, or an arbitrary value, and routes all of them through
+// the family's own `wrap`.
 export function resolveShadowFamily(
 	name: string,
-	noneValue: string,
-	colorVar: string,
 	theme: ResolvedTheme,
 	dataType: string | null | undefined,
-	wrap: (value: string) => UtilityResult,
+	family: ShadowFamily,
 ): UtilityResult | null {
-	if (name === "none") return wrap(noneValue);
-	return resolveColorOrArbitrary(name, colorVar, theme, dataType, wrap);
+	if (name === "none") return family.wrap([family.none]);
+	if (family.initial && name === "initial") return single(family.colorVar, "initial");
+	return resolveColorOrArbitrary(name, family.colorVar, theme, dataType, (arb) =>
+		family.wrap(withShadowColorSlotLayers(arb, family.colorVar)),
+	);
 }
+
+/** `shadow-*`. Its theme lookup is the one thing the shared template lacks. */
+const BOX_SHADOW: ShadowFamily = {
+	none: "0 0 #0000",
+	colorVar: "--ri-shadow-color",
+	initial: true,
+	wrap: (layers) => composedShadow("--ri-shadow", layers.join(", ")),
+};
+
+const INSET_SHADOW: ShadowFamily = {
+	none: "inset 0 0 #0000",
+	colorVar: "--ri-inset-shadow-color",
+	initial: true,
+	wrap: (layers) => composedShadow("--ri-inset-shadow", layers.join(", ")),
+};
+
+const TEXT_SHADOW: ShadowFamily = {
+	none: "none",
+	colorVar: "--ri-text-shadow-color",
+	initial: true,
+	wrap: (layers) => single("text-shadow", layers.join(", ")),
+};
 
 export function resolveShadow(
 	full: string,
@@ -83,14 +130,19 @@ export function resolveShadow(
 			: full.slice(7);
 	// Theme first: `@shadow { none: … }` replaces the built-in reset instead of
 	// being silently dropped. RI-1124 warns at definition time.
-	if (Object.hasOwn(theme.shadows, name))
-		return composedShadow("--ri-shadow", `var(--shadow-${name})`);
-	if (name === "none") return composedShadow("--ri-shadow", "0 0 #0000");
-	// A color value sets the family's color var; a non-color arbitrary or
-	// custom property sets the composed shadow slot.
-	return resolveColorOrArbitrary(name, "--ri-shadow-color", theme, dataType, (arb) =>
-		composedShadow("--ri-shadow", arb),
-	);
+	//
+	// The token's value is INLINED rather than referenced as `var(--shadow-md)`,
+	// because the colour slot has to sit inside the value and a slot written into
+	// a `:root` token resolves against `:root` — see css/shadow-color.ts. The
+	// cost is that `--shadow-md` is no longer referenced, so token pruning stops
+	// emitting it unless the project's own CSS names it. Tailwind makes exactly
+	// the same trade for exactly the same reason.
+	if (Object.hasOwn(theme.shadows, name)) {
+		return BOX_SHADOW.wrap(withShadowColorSlotLayers(theme.shadows[name], BOX_SHADOW.colorVar));
+	}
+	// `none`, `initial`, a colour, an arbitrary value — all of it is the shared
+	// template, which the theme lookup above is the only thing to precede.
+	return resolveShadowFamily(name, theme, dataType, BOX_SHADOW);
 }
 
 function resolveInsetShadow(
@@ -98,31 +150,101 @@ function resolveInsetShadow(
 	theme: ResolvedTheme,
 	dataType?: string | null,
 ): UtilityResult | null {
-	return resolveShadowFamily(
-		full.slice(13), // "inset-shadow-".length
-		"inset 0 0 #0000",
-		"--ri-inset-shadow-color",
-		theme,
-		dataType,
-		(value) => composedShadow("--ri-inset-shadow", value),
-	);
+	return resolveShadowFamily(full.slice(13) /* "inset-shadow-" */, theme, dataType, INSET_SHADOW);
 }
 
-// ring / inset-ring: width forms build a ring shadow `[inset ]0 0 0 <w>
-// var(--ri-*-ring-color, currentColor)`; color forms set the ring color var.
+// The outer ring carries two pieces of state its `inset-ring` sibling does
+// not. `ring-inset` flips it inward through `--ri-ring-inset`, and
+// `ring-offset-*` widens it through `--ri-ring-offset-width`. Both are read at
+// use time by a rule that may have been emitted before either class was
+// written, so a plain `ring-2` has to leave room for them unconditionally —
+// hence the empty flag fallback (an unset var contributes nothing) and the
+// `0px` width fallback. Tailwind reaches the same defaults through @property
+// registration; the slot vars here are deliberately unregistered (box-shadow
+// is not a registerable syntax), so the fallbacks carry them instead.
+// Trailing space, mirroring the literal `"inset "` the sibling family passes:
+// both stand in the same slot, and an unset flag then leaves a harmless leading
+// space rather than gluing itself to the first offset.
+const RING_INSET_FLAG = "var(--ri-ring-inset, ) ";
+const RING_OFFSET_WIDTH = "var(--ri-ring-offset-width, 0px)";
+
+/** Everything that distinguishes `ring` from `inset-ring`. */
+interface RingFamily {
+	readonly slot: string;
+	readonly colorVar: string;
+	/** What stands where `inset` would: a literal for the always-inset family,
+	 *  the toggling var for the one `ring-inset` can flip. */
+	readonly insetPrefix: string;
+	/** Whether `ring-offset-*` widens this ring. Only the outer one. */
+	readonly offsetAware: boolean;
+}
+
+/** `ring-*`. `ring-inset` flips it inward and `ring-offset-*` widens it, both
+ *  through vars read at use time — hence the fallbacks, not a fixed value. */
+const RING: RingFamily = {
+	slot: "--ri-ring-shadow",
+	colorVar: "--ri-ring-color",
+	insetPrefix: RING_INSET_FLAG,
+	offsetAware: true,
+};
+
+/** `inset-ring-*`: always inset, never offset, so it takes the literal prefix
+ *  and the bare width — matching Tailwind v4.3.3 value-for-value. */
+const INSET_RING: RingFamily = {
+	slot: "--ri-inset-ring-shadow",
+	colorVar: "--ri-inset-ring-color",
+	insetPrefix: "inset ",
+	offsetAware: false,
+};
+
+// Width forms build a ring shadow `<flag>0 0 0 <w> var(--ri-*-ring-color,
+// currentColor)`; color forms set the ring color var.
 function resolveRingFamily(
 	name: string,
-	slot: string,
-	colorVar: string,
-	insetPrefix: string,
+	theme: ResolvedTheme,
+	dataType: string | null | undefined,
+	family: RingFamily,
+): UtilityResult | null {
+	const ring = (width: string) => {
+		const w = family.offsetAware ? `calc(${width} + ${RING_OFFSET_WIDTH})` : width;
+		return composedShadow(
+			family.slot,
+			`${family.insetPrefix}0 0 0 ${w} var(${family.colorVar}, currentColor)`,
+		);
+	};
+	if (name === "") return ring("1px");
+	if (INTEGER_RE.test(name)) return ring(`${name}px`);
+	return resolveColorOrArbitrary(name, family.colorVar, theme, dataType, (arb) => ring(arb));
+}
+
+/**
+ * `ring-offset-*` — the width form writes the offset width and the offset
+ * ring's own shadow layer; the colour form writes only the colour.
+ *
+ * Neither emits `box-shadow`. The layer joins the chain that a `ring-*` (or any
+ * other shadow-family class) already composes, which is exactly what keeps
+ * `ri("ring-2 ring-offset-2")` from deleting the ring: a claim on `box-shadow`
+ * here would dominate the ring that does the visible work. Tailwind emits the
+ * same two declarations and no shorthand, for the same reason.
+ */
+function resolveRingOffset(
+	full: string,
 	theme: ResolvedTheme,
 	dataType?: string | null,
 ): UtilityResult | null {
-	const ring = (width: string) =>
-		composedShadow(slot, `${insetPrefix}0 0 0 ${width} var(${colorVar}, currentColor)`);
-	if (name === "") return ring("1px");
-	if (INTEGER_RE.test(name)) return ring(`${name}px`);
-	return resolveColorOrArbitrary(name, colorVar, theme, dataType, (arb) => ring(arb));
+	const name = full.slice(12); // "ring-offset-".length
+	const offset = (width: string) =>
+		multi(
+			["--ri-ring-offset-width", width],
+			[
+				"--ri-ring-offset-shadow",
+				`${RING_INSET_FLAG}0 0 0 ${RING_OFFSET_WIDTH} var(--ri-ring-offset-color, #fff)`,
+			],
+		);
+	if (INTEGER_RE.test(name)) return offset(`${name}px`);
+	return resolveColorOrArbitrary(name, "--ri-ring-offset-color", theme, dataType, (arb) =>
+		offset(arb),
+	);
 }
 
 export function resolveRing(
@@ -130,14 +252,24 @@ export function resolveRing(
 	theme: ResolvedTheme,
 	dataType?: string | null,
 ): UtilityResult | null {
-	return resolveRingFamily(
-		full === "ring" ? "" : full.slice(5),
-		"--ri-ring-shadow",
-		"--ri-ring-color",
-		"",
-		theme,
-		dataType,
-	);
+	// `ring-offset-*` gets first refusal, but only that. A theme is free to name
+	// a colour `offset-blue`, and then `ring-offset-blue` is a ring colour that
+	// happens to start with the longer prefix — so when the offset family cannot
+	// make sense of the value, the name falls through to the ring family rather
+	// than being rejected. Returning the offset result directly made
+	// `ring-offset-blue` an unknown utility under such a theme, which is worse
+	// than the ambiguity it was meant to settle.
+	const offset = full.startsWith("ring-offset-") ? resolveRingOffset(full, theme, dataType) : null;
+	if (offset) return offset;
+	const ring = resolveRingFamily(full === "ring" ? "" : full.slice(5), theme, dataType, RING);
+	if (ring) return ring;
+	// `ring-inset` is the v3 spelling that survives into v4: it sets the flag the
+	// ring shadow reads and nothing else. It is answered only after the colour
+	// lookup above has declined, so a project that declares `@color { inset: … }`
+	// still gets `ring-inset` as that colour — the order the merge layer's
+	// RING_DUAL_MODE already assumes.
+	if (full === "ring-inset") return single("--ri-ring-inset", "inset");
+	return null;
 }
 
 function resolveInsetRing(
@@ -147,11 +279,9 @@ function resolveInsetRing(
 ): UtilityResult | null {
 	return resolveRingFamily(
 		full === "inset-ring" ? "" : full.slice(11),
-		"--ri-inset-ring-shadow",
-		"--ri-inset-ring-color",
-		"inset ",
 		theme,
 		dataType,
+		INSET_RING,
 	);
 }
 
@@ -175,12 +305,5 @@ export function resolveTextShadow(
 	theme: ResolvedTheme,
 	dataType?: string | null,
 ): UtilityResult | null {
-	return resolveShadowFamily(
-		full.slice(12), // "text-shadow-".length
-		"none",
-		"--ri-text-shadow-color",
-		theme,
-		dataType,
-		(value) => single("text-shadow", value),
-	);
+	return resolveShadowFamily(full.slice(12) /* "text-shadow-" */, theme, dataType, TEXT_SHADOW);
 }

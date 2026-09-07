@@ -8,6 +8,7 @@ import { escapeSelector } from "../css/escape.js";
 import {
 	ANIMATE_VAR_REF_RE,
 	COLOR_STOP_REF_RE,
+	COLOR_VAR_REF_RE,
 	FONT_VAR_REF_RE,
 	SHADOW_VAR_REF_RE,
 	TEXT_VAR_REF_RE,
@@ -29,7 +30,13 @@ import { type ParsedUtility, parseUtility } from "../utilities/parser.js";
 import { pushWarningsDeduped } from "../warnings.js";
 import { buildBreakpointWeights, computeSortKey } from "./ordering.js";
 import { SUPPORT_BLOCKS } from "./support-blocks.js";
-import { applyVariantWrappers, resolveVariant, type VariantWrapper } from "./variants.js";
+import { isMarkerUtility } from "../utilities/markers.js";
+import {
+	type AppliedVariants,
+	applyVariantWrappers,
+	resolveVariant,
+	type VariantWrapper,
+} from "./variants.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +60,13 @@ export interface CompilationResult {
 	properties: string[];
 	/** Map of used color hue → set of used suffixes (for token pruning). */
 	usedColorStops: Map<string, Set<number>>;
+	/**
+	 * Whole `--color-<name>` token names referenced anywhere, generative stops
+	 * included. `usedColorStops` cannot stand in for this: an explicit or pair
+	 * entry is keyed by its undivided name, and a stop-less reference such as
+	 * `var(--color-surface)` has no suffix for that map to record at all.
+	 */
+	usedColorNames: Set<string>;
 	/** Set of used text size names (for token pruning). */
 	usedTextSizes: Set<string>;
 	/** Set of used font slot names (for token pruning). */
@@ -76,8 +90,9 @@ export { resolveVariant } from "./variants.js";
  * instance so the compile hot path never allocates for it.
  */
 export interface ClassResolutionDetail {
-	/** Failure reason — null after a successful resolve. */
-	reason: "unknown-utility" | "unknown-variant" | null;
+	/** Why the class produced no rule — null once a rule was produced.
+	 *  "marker" is not a failure: a marker is valid AND ruleless. */
+	reason: "unknown-utility" | "unknown-variant" | "marker" | null;
 	/** The offending variant when reason is "unknown-variant". */
 	variant: string | null;
 	/** Root declarations (before variant wrapping) on success. */
@@ -122,6 +137,24 @@ export function compileUtility(
 	// standard utilities, and physical property expansion).
 	const utilResult = resolveUtilityDeclarations(parsed, theme, result.warnings);
 	if (!utilResult) {
+		// A marker is a class the markup wears so a relational variant can anchor
+		// on it. It has no declarations, so every resolver has just reported it
+		// unknown — which is why this is answered here rather than before them: a
+		// project's own `@utility group { … }` still wins.
+		//
+		// Answered in compileUtility rather than in the inspector because the
+		// compile loop and validate() both come through this one function. The
+		// alternative is a validator that passes a class the compiler discards.
+		//
+		// Only the bare spelling counts. `.sm\:group` in the DOM is not `.group`,
+		// so a marker under a variant — or carrying `!`, or negated, or given a
+		// value — can never do its job. Comparing `raw` to `utility` rules all of
+		// those out at once, with no flag left to forget.
+		if (detail && parsed.raw === parsed.utility && isMarkerUtility(parsed.utility)) {
+			detail.reason = "marker";
+			detail.declarations = [];
+			return null;
+		}
 		if (detail) detail.reason = "unknown-utility";
 		return null;
 	}
@@ -183,33 +216,36 @@ export function compileUtility(
 		wrappers.push(wrapper);
 	}
 
-	// Apply the wrappers via the shared cascade model (also used by @apply's
-	// AST emitter). Skipped entirely for variant-less classes so the hot path
-	// stays allocation-free.
-	let atRuleOpen = "";
-	let atRuleClose = "";
-	let startingStyleWrap = false;
-	if (wrappers) {
-		const applied = applyVariantWrappers(selector, wrappers);
-		selector = applied.selector;
-		for (const atRule of applied.atRules) {
+	/** One branch's selector + at-rules wrapped around the declarations. */
+	const renderBranch = (branch: AppliedVariants): string => {
+		let atRuleOpen = "";
+		let atRuleClose = "";
+		for (const atRule of branch.atRules) {
 			atRuleOpen += `${atRule} {\n`;
 			atRuleClose = `}\n${atRuleClose}`;
 		}
-		startingStyleWrap = applied.startingStyle;
-	}
+		let out: string;
+		if (branch.startingStyle) {
+			const indentedDecls = declCSS.replace(/\n/g, "\n  ");
+			out = `${branch.selector} {\n  @starting-style {\n  ${indentedDecls}\n  }\n}`;
+		} else {
+			out = `${branch.selector} {\n${declCSS}\n}`;
+		}
+		return atRuleOpen ? `${atRuleOpen}${out}\n${atRuleClose}` : out;
+	};
 
-	// Build final CSS
+	// Apply the wrappers via the shared cascade model (also used by @apply's
+	// AST emitter). Skipped entirely for variant-less classes so the hot path
+	// stays allocation-free. A variant carrying an `alternate` — only dark/light
+	// under the appearance strategy — yields more than one branch, and the class
+	// emits one rule per branch.
 	let css: string;
-	if (startingStyleWrap) {
-		const indentedDecls = declCSS.replace(/\n/g, "\n  ");
-		css = `${selector} {\n  @starting-style {\n  ${indentedDecls}\n  }\n}`;
+	if (wrappers) {
+		const branches = applyVariantWrappers(selector, wrappers);
+		selector = branches[0].selector;
+		css = branches.map(renderBranch).join("\n\n");
 	} else {
-		css = `${selector} {\n${declCSS}\n}`;
-	}
-
-	if (atRuleOpen) {
-		css = `${atRuleOpen}${css}\n${atRuleClose}`;
+		css = renderBranch({ selector, atRules: [], startingStyle: false });
 	}
 
 	// Compute sort key
@@ -225,6 +261,15 @@ export function compileUtility(
 
 // Re-export compileCSSFunctions from dedicated module
 export { compileCSSFunctions, hasCSSFunctions } from "../css/functions.js";
+/** Indent every line of a block body by two spaces, matching the emitter's
+ *  own style. Blank lines stay blank rather than becoming trailing space. */
+function indentBlock(body: string): string {
+	return body
+		.split("\n")
+		.map((line) => (line.trim() === "" ? "" : `  ${line}`))
+		.join("\n");
+}
+
 // The @property/@keyframes data and the substring tests that trigger it live
 // in support-blocks.ts — one table shared by the compile loop and
 // scanCSSForTokenUsage so the two detection sites can't drift.
@@ -239,6 +284,9 @@ export { ANIMATION_KEYFRAMES, ANIMATION_PROPERTIES } from "./support-blocks.js";
  */
 function scanStringForTokenUsage(str: string, result: CompilationResult): void {
 	if (str.includes("var(--color-")) {
+		for (const m of str.matchAll(COLOR_VAR_REF_RE)) {
+			result.usedColorNames.add(m[1]);
+		}
 		for (const m of str.matchAll(COLOR_STOP_REF_RE)) {
 			const hue = m[1];
 			const suffix = m[2] ? Number(m[2]) : undefined;
@@ -334,6 +382,7 @@ export function createEmptyCompilationResult(): CompilationResult {
 		keyframes: [],
 		properties: [],
 		usedColorStops: new Map(),
+		usedColorNames: new Set(),
 		usedTextSizes: new Set(),
 		usedFonts: new Set(),
 		usedShadows: new Set(),
@@ -355,6 +404,7 @@ interface ClassCompileEntry {
 	 *  Kept off `warnings` so one memo entry serves both provenances. */
 	arbitraryWarning: string | null;
 	usedColorStops: ReadonlyMap<string, ReadonlySet<number>>;
+	usedColorNames: ReadonlySet<string>;
 	usedTextSizes: ReadonlySet<string>;
 	usedFonts: ReadonlySet<string>;
 	usedShadows: ReadonlySet<string>;
@@ -421,6 +471,7 @@ function compileClassEntry(
 		warnings: scratch.warnings,
 		arbitraryWarning,
 		usedColorStops: scratch.usedColorStops,
+		usedColorNames: scratch.usedColorNames,
 		usedTextSizes: scratch.usedTextSizes,
 		usedFonts: scratch.usedFonts,
 		usedShadows: scratch.usedShadows,
@@ -455,7 +506,7 @@ function shouldWarnUnresolvedArbitrary(bracketContent: string): boolean {
  * theme-defined classes correctly. Shared by the compile loop and
  * createThemeSnapshot().
  */
-export function registerThemeOnContext(
+function registerThemeOnContext(
 	ctx: ReturnType<typeof createCompilationContext>,
 	theme: ResolvedTheme,
 ): void {
@@ -571,6 +622,7 @@ function compileInternal(
 			}
 			for (const stop of stops) set.add(stop);
 		}
+		for (const v of entry.usedColorNames) result.usedColorNames.add(v);
 		for (const v of entry.usedTextSizes) result.usedTextSizes.add(v);
 		for (const v of entry.usedFonts) result.usedFonts.add(v);
 		for (const v of entry.usedShadows) result.usedShadows.add(v);
@@ -620,7 +672,12 @@ function compileInternal(
 	// stringify-then-reparse round trip.
 	for (const [name, def] of Object.entries(theme.animations)) {
 		if (def.keyframes && animationBases.has(`animate-${name}`)) {
-			result.keyframes.push(`@keyframes ${name} {\n  ${def.keyframes}\n}`);
+			// Indent the body here rather than relying on the source's own
+			// indentation. The directive parser dedents what it stored, so two
+			// spellings of the same animation — the legacy `name: … { … }` and
+			// The canonical nested rule, which sits one level deeper — emit the
+			// same bytes.
+			result.keyframes.push(`@keyframes ${name} {\n${indentBlock(def.keyframes)}\n}`);
 		}
 	}
 
@@ -696,12 +753,12 @@ export function createCompiler(): {
 	createRi: () => (...inputs: (string | false | null | undefined)[]) => string;
 	/** Isolated font output cache for this compiler instance. Pass to
 	 *  `assembleSections()` to avoid sharing module-level font state. */
-	fontOutputCache: Map<string, import("../integrations/font-providers/index.js").FontOutput>;
+	fontOutputCache: Map<string, import("../integrations/font-providers/emit.js").FontOutput>;
 } {
 	let latestSnapshot: import("../merge/context.js").CompilationSnapshot | null = null;
 	const fontOutputCache = new Map<
 		string,
-		import("../integrations/font-providers/index.js").FontOutput
+		import("../integrations/font-providers/emit.js").FontOutput
 	>();
 	// Isolated variant map cache so concurrent compiler instances don't
 	// share cached variant maps keyed on theme object identity.

@@ -2,12 +2,12 @@
 
 You customize Rainbow Index in your CSS input, not in a JavaScript configuration. Directives are at-rules that start with `@`. The engine reads them, merges them onto the default theme, and removes them from the output.
 
-A CSS file activates Rainbow Index when it contains a directive or an import of `"rainbowindex"` or `"rainbowindex/index.css"`. The shipped `rainbowindex/index.css` contains only `@preflight;`.
+A CSS file activates Rainbow Index when it contains a directive or an import of `"rainbowindex"`, `"rainbowindex/index.css"`, or `"rainbowindex/tailwind.css"`. The shipped `rainbowindex/index.css` contains only `@preflight;`. `rainbowindex/tailwind.css` is the optional Tailwind-default preset; importing it alone activates the compiler but skips the preflight, so import both.
 
 Facts that apply to all directives:
 
 - Later directives win over earlier ones. Removals apply before overrides inside one directive.
-- `!key;` inside a scale body removes a token.
+- `key: initial;` inside a scale body removes a token. (`!key;` does the same and is deprecated.)
 - A directive nested inside `@media` or `@supports` still applies globally and warns with `[RI-1036]`.
 - Standard CSS at-rules pass through untouched: `@font-face`, `@keyframes`, `@property`, `@import` of other files, `@media`, `@supports`, `@container`, `@page`, and more.
 - The CSS input limit is 5 MB.
@@ -70,13 +70,19 @@ Value forms:
 
 A generative color gives you class stops: `bg-brand-500`, `text-brand-276`, any integer 1 to 999. An explicit color, a pair, or a keyword has no stops. Reference those bare: `bg-surface`.
 
+A bare name inside a value is a reference to another color, not literal CSS: `soft: surface/50` and `duo: surface / raised` compile to `var(--color-surface)` and friends. A generative palette has no bare form — it defines `--color-brand-<stop>` only — so name a stop there, or `[RI-1109]` will say so.
+
+Every color token is emitted only when something references it: a utility class, your own CSS, another token's value, a `@shadow` value, or a `@keyframes` body. A palette you declare and never use costs nothing. `paper` and `ink` are always emitted.
+
+An alias takes the shape of whatever its chain ends at. `accent: brand` over a generative `brand` gives `accent` the same stops, each emitting `--color-accent-500: var(--color-brand-500)`, and using `text-accent-500` pulls `--color-brand-500` into `:root` with it — the same rule `@shadow` aliases follow. Over an explicit color, a pair, or a keyword, the alias is bare: `--color-accent: var(--color-surface)`. Aliases may chain; a cycle warns with `[RI-1107]` and emits nothing.
+
 **The default palette has one color: `theme`, a neutral gray.** Palette names such as `blue` or `red` do not exist until you declare them. The special names `transparent`, `current`, `inherit`, `black`, `white`, `paper`, and `ink` always work.
 
 Options block on a generative entry:
 
 ```css
 @color {
-	punchy: 0.18 330 { inline; dark: shift chroma +0.02 hue +10; };
+	punchy: 0.18 330 { inline: true; dark: shift chroma +0.02 hue +10; };
 }
 ```
 
@@ -85,8 +91,8 @@ Options block on a generative entry:
 | `dark: mirror` | Mirrored-luminance dark stops. This is the default. |
 | `dark: fixed` | The same value in light and dark. |
 | `dark: shift chroma <n> hue <n>` | Mirror plus per-color deltas. |
-| `inline` | The palette joins `[data-theme="<name>"]` override blocks. |
-| `parabolic` / `no-parabolic` | Chroma bell across the ramp on or off. |
+| `inline: true` | The palette joins `[data-theme="<name>"]` override blocks. |
+| `parabolic: true` / `parabolic: false` | Chroma bell across the ramp on or off. |
 
 Global dark configuration:
 
@@ -99,6 +105,7 @@ Global dark configuration:
 | `mode` | `auto` or `off`. | `auto` |
 | `chroma-boost` | Added to the chroma of every dark stop. `0` keeps the light chroma. | `0` |
 | `hue-shift` | Added to the hue of every dark stop. | `0` |
+| `variant` | How `dark:` and `light:` compile: `media`, `appearance`, or `selector(<sel>)`. See [Choosing a strategy](#choosing-a-strategy). | `media` |
 
 `mode: off` emits the `@color` tokens with their light values only. The built-in `paper` and `ink` tokens keep `light-dark()` and still adapt to dark mode.
 
@@ -106,10 +113,32 @@ If a used stop has less than 60 APCA contrast against both white and black, the 
 
 ## How dark mode works
 
+There are two halves to dark mode — the color tokens and the `dark:` utilities — and one setting decides what both of them ask.
+
 - Every color token is emitted once, in `:root`, as `light-dark(lightValue, darkValue)`. There is no `.dark` class and no duplicated dark block.
 - The preflight sets `html { color-scheme: light dark; }`, so the browser follows the OS. `html[data-appearance="dark"]` and `html[data-appearance="light"]` force one side.
-- The `dark:` variant compiles to `@media (prefers-color-scheme: dark)`. CAUTION: `data-appearance="dark"` flips the `light-dark()` tokens, but it does not activate `dark:` utilities while the OS is in light mode.
+- `@color dark { variant: … }` chooses how `dark:` and `light:` compile. The default is `media`.
 - A color with the `inline` option gets `[data-theme="<name>"]` blocks that remap the `theme` palette. Set `<html data-theme="brand">` to swap palettes.
+
+### Choosing a strategy
+
+```css
+@color dark {
+	variant: appearance;
+}
+```
+
+| `variant` | `dark:` compiles to | Use it when |
+| --- | --- | --- |
+| `media` (default) | `@media (prefers-color-scheme: dark)` | The OS preference is the only switch you want. |
+| `appearance` | `:where(html[data-appearance="dark"]) &`, plus `@media (prefers-color-scheme: dark) { :where(html:not([data-appearance="light"])) & }` | You want `dark:` to track the tokens exactly, including your `data-appearance` toggle. |
+| `selector(<sel>)` | `:where(<sel>, <sel> *) &` | You toggle a class yourself, the way a Tailwind project does. `selector(.dark)` is the usual spelling. |
+
+`appearance` takes two rules because no single one can say "the attribute is set, **or** the OS prefers dark and no attribute overrides it" — the first is a selector, the second a media query. That pair is exactly when `light-dark()` flips under the shipped preflight, which is what makes the two halves agree.
+
+`selector` ignores the OS preference, as the same strategy does in Tailwind: wire your toggle to set the class, and set `data-appearance` alongside it if you also want the tokens to follow.
+
+`light:` mirrors whichever strategy you pick, so the two never both match. Every form is wrapped in `:where()`, so the variant adds no specificity and a later utility still wins.
 
 ## `@text`
 
@@ -132,7 +161,7 @@ The only key is `base`. The default is `0.25rem`. The value must match `<number>
 
 ## Scale directives
 
-`@breakpoint`, `@shadow`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, and `@duration` all share one grammar: `key: value;` entries merge onto what earlier blocks set, and `!key;` removes a token. Every one of them starts empty, so their entries define the whole scale. `@weight` and `@animate` do too.
+`@breakpoint`, `@shadow`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, and `@duration` all share one grammar: `key: value;` entries merge onto what earlier blocks set, and `key: initial;` removes a token. Every one of them starts empty, so their entries define the whole scale. `@weight` and `@animate` do too.
 
 A `@shadow` value that is only another shadow's class name is an alias:
 
@@ -184,6 +213,17 @@ A key without a `--` prefix names a radius. Each one makes the class `rounded-<n
 
 `rounded-roof` sets `border-radius: 24px`. The name also works with the side and corner suffixes: `rounded-t-roof`, `rounded-tl-roof`.
 
+The key `DEFAULT` is what a bare radius class reads: `rounded`, and the bare sides and corners `rounded-t`, `rounded-tl`, `rounded-ss`.
+
+```css
+@rounded {
+	DEFAULT: 0.25rem;
+	roof: 24px;
+}
+```
+
+`@shadow` and `@blur` use the same key for the same purpose. Without a `DEFAULT`, bare `rounded` resolves to nothing and a radius always states its value.
+
 ### Radius math
 
 `@rounded` takes utility blocks, as every named scale does — see [Utility blocks](#utility-blocks):
@@ -205,14 +245,23 @@ Radius tokens are always written to `:root`, used or not. A block body is raw CS
 
 ```css
 @animate {
-	shimmer: 2s linear infinite {
-		from { background-position: 200% 0; }
-		to { background-position: -200% 0; }
+	shimmer {
+		animation: shimmer 2s linear infinite;
+		@keyframes shimmer {
+			from { background-position: 200% 0; }
+			to { background-position: -200% 0; }
+		}
 	}
 }
 ```
 
-The form is `name: <animation-shorthand> { <keyframes> }`. The name becomes `animate-shimmer`, and the keyframes are emitted when the class is used. An entry without a keyframes block is dropped without a warning.
+The form is `name { animation: <shorthand>; @keyframes <name> { … } }`. The entry name becomes `animate-shimmer`, and the keyframes are emitted when the class is used.
+
+The shorthand **must name the animation** — `shimmer 2s linear infinite`, not `2s linear infinite` — or the class sets no `animation-name` and nothing runs (`RI-1049`). The `@keyframes` name must match the entry name, because the emitted keyframes take the entry's (`RI-1048`), and an entry with an `animation:` and no keyframes is read as a [utility block](#utility-blocks) instead and warns `RI-1047`.
+
+> [!NOTE]
+> The older `shimmer: <shorthand> { <keyframes> }` still works and warns
+> `RI-1046`.
 
 No animation ships. `animate-none`, `animate-in`, `animate-out` and the enter/exit effects (`fade-in`, `zoom-in`, `slide-in-from-top`, …) need no keyframes of their own and always work.
 
@@ -393,7 +442,7 @@ Two directives already use braces for something else. A colon before the brace k
 | Text | No tokens. `text-[v]` still works. Named sizes come from `@text`. |
 | Spacing | `base: 0.25rem`. |
 | Breakpoints | No tokens. Responsive and container variants come from `@breakpoint`. |
-| Rounded | No tokens. A radius is a spacing multiple: `rounded-4`. Plus `none` and `full`. Named radii come from `@rounded`. |
+| Rounded | No tokens. A radius is a spacing multiple: `rounded-4`. Plus `none` and `full`. Named radii, and the `DEFAULT` that bare `rounded` reads, come from `@rounded`. |
 | Shadows | No tokens. `shadow-none`, `shadow-{color}`, and `shadow-[v]` still work. Named sizes come from `@shadow`. |
 | Weights | No tokens. `font-500` and `font-[850]` still work. Names come from `@weight`. |
 | Easing | No tokens. `ease-linear` and `ease-[v]` still work. Names come from `@ease`. |

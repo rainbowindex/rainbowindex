@@ -1,0 +1,9 @@
+@import "./tokens.css";
+
+@rounded {
+	roof: 24px;
+}
+
+.panel {
+	border-radius: var(--rounded-roof);
+}

@@ -7,8 +7,11 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
+import type { DarkVariantStrategy } from "../theme/colors.js";
 import { decodeArbitraryValue } from "../utilities/parser.js";
 import { CSS_CUSTOM_IDENT_RE } from "../shared.js";
+import { escapeSelector } from "../css/escape.js";
+import { RELATIONAL_NAME_RE } from "../utilities/markers.js";
 
 /** Maximum length for custom variant selectors to prevent CSS output explosion. */
 const MAX_CUSTOM_VARIANT_SELECTOR_LENGTH = 500;
@@ -30,6 +33,20 @@ export interface VariantWrapper {
 	startingStyle?: boolean;
 	/** Replace `&` in selectorSuffix with the current selector. */
 	replaceAmpersand?: boolean;
+	/**
+	 * This variant's form in the *media* world — see {@link applyVariantWrappers}.
+	 *
+	 * Some conditions cannot be written as one rule. `dark:` under the
+	 * `appearance` strategy applies when `html[data-appearance="dark"]` is set,
+	 * and *separately* when the OS prefers dark and no attribute has overridden
+	 * it — a selector and a media query, which no single selector can join. This
+	 * field holds the second of those; `selectorSuffix`/`atRule` hold the first.
+	 *
+	 * It is NOT an alternative that multiplies out. Every wrapper in a stack is
+	 * in the same world, so a stack emits two branches whether it carries one
+	 * such variant or six.
+	 */
+	alternate?: VariantWrapper;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,27 +247,124 @@ function sanitizeVariantBracket(inner: string): string | null {
 const SAFE_AT_RULE_RE = /^@(?:media|supports|container|layer)\b/;
 
 /**
+ * Split `hover/item` into the state (`hover`) and the anchor (`.group\/item`).
+ *
+ * Named groups exist so nested markup can address the group it means:
+ * `group-hover/item:` matches an ancestor carrying `group/item`, not just any
+ * `.group`. The slash is found from the right and only outside brackets, so an
+ * arbitrary value containing one (`group-[&[href^="/"]]`) is left intact.
+ *
+ * `anchor: null` means the text after the slash is not a usable name, which is
+ * an error rather than a reason to fall through — silently ignoring the name
+ * would style every group on the page.
+ */
+function splitRelationalName(
+	rest: string,
+	kind: "group" | "peer",
+): { state: string; anchor: string | null } {
+	let depth = 0;
+	for (let i = rest.length - 1; i >= 0; i--) {
+		const ch = rest[i];
+		if (ch === "]" || ch === ")") depth++;
+		else if (ch === "[" || ch === "(") depth--;
+		else if (ch === "/" && depth === 0) {
+			const name = rest.slice(i + 1);
+			if (!RELATIONAL_NAME_RE.test(name)) return { state: rest, anchor: null };
+			return { state: rest.slice(0, i), anchor: `.${escapeSelector(`${kind}/${name}`)}` };
+		}
+	}
+	return { state: rest, anchor: `.${kind}` };
+}
+
+/**
+ * The length a breakpoint name stands for, or null when the name is not one.
+ *
+ * Also the injection guard: the value is interpolated into an at-rule
+ * unescaped, so a breakpoint whose value is not a plain CSS length resolves to
+ * nothing at all rather than to a query it could break out of.
+ */
+function breakpointValue(name: string, theme: ResolvedTheme): string | null {
+	if (!Object.hasOwn(theme.breakpoints, name)) return null;
+	const value = theme.breakpoints[name];
+	return SAFE_CSS_LENGTH_RE.test(value) ? value : null;
+}
+
+/** The width a `min-`/`max-` prefix bounds: a bracketed length, or a breakpoint name. */
+function widthBound(rest: string, theme: ResolvedTheme): string | null {
+	if (rest.startsWith("[") && rest.endsWith("]")) {
+		const v = rest.slice(1, -1);
+		return SAFE_CSS_LENGTH_RE.test(v) ? v : null;
+	}
+	return breakpointValue(rest, theme);
+}
+
+/**
+ * How deep a variant may nest inside another. Every prefix consumes at least
+ * one character, so recursion terminates on its own; this only bounds the
+ * pathological `not-not-not-…` case before it costs anything.
+ */
+const MAX_VARIANT_NESTING = 6;
+
+/**
+ * A variant's selector, if it has one and nothing else.
+ *
+ * `group-<inner>` means "an ancestor `.group` is in state `<inner>`", which is
+ * only meaningful when `<inner>` is a state the anchor can be in — a
+ * pseudo-class, an attribute, a `:has()`. A variant that resolves to an at-rule
+ * describes the viewport or the OS, not the anchor, and one that rewrites `&`
+ * describes a position in the tree; neither can be pinned to an ancestor, so
+ * both decline here and the caller reports the variant unknown.
+ */
+function plainSelectorOf(w: VariantWrapper | null): string | null {
+	if (!w?.selectorSuffix) return null;
+	if (w.replaceAmpersand || w.atRule || w.startingStyle || w.alternate) return null;
+	return w.selectorSuffix;
+}
+
+/**
  * group-/peer-style relational variants: `{anchor}{pseudo}{combinator}` or the
  * bracket form `{anchor}:is(sel){combinator}`. A failed bracket sanitization
  * returns null (terminate — never fall through to other interpretations);
  * `undefined` means no match and the caller keeps resolving.
+ *
+ * Anything else is resolved as a variant in its own right, which is what makes
+ * `group-data-[state=open]:` and `peer-has-[:checked]:` work: the inner segment
+ * is not a second grammar to maintain, it is the same one.
  */
 function resolveRelationalVariant(
 	inner: string,
 	anchor: string,
 	combinator: string,
+	resolveInner: (v: string) => VariantWrapper | null,
 ): VariantWrapper | null | undefined {
 	if (inner.startsWith("[") && inner.endsWith("]")) {
 		const sel = sanitizeVariantBracket(inner.slice(1, -1));
-		return sel
-			? { selectorSuffix: `${anchor}:is(${sel})${combinator}`, replaceAmpersand: true }
-			: null;
+		if (!sel) return null;
+		// `&` inside a relational bracket is the ANCHOR — the `.group` or `.peer`
+		// element the selector describes — not the element being styled.
+		// Substituting it here rather than leaving it to `applyVariantWrappers`,
+		// which replaces `&` with the accumulated base selector: that turned
+		// `group-[&.foo]:flex` into `.group:is(.group-\[…\]\:flex.foo) …`, a
+		// selector matching an element that is its own ancestor. The trailing
+		// combinator keeps its own `&`, which is the one that should become the
+		// base.
+		if (sel.includes("&")) {
+			return {
+				selectorSuffix: `${sel.replaceAll("&", anchor)}${combinator}`,
+				replaceAmpersand: true,
+			};
+		}
+		return { selectorSuffix: `${anchor}:is(${sel})${combinator}`, replaceAmpersand: true };
 	}
 	if (Object.hasOwn(PSEUDO_CLASSES, inner)) {
 		return {
 			selectorSuffix: `${anchor}${PSEUDO_CLASSES[inner].suffix}${combinator}`,
 			replaceAmpersand: true,
 		};
+	}
+	const nested = plainSelectorOf(resolveInner(inner));
+	if (nested !== null) {
+		return { selectorSuffix: `${anchor}${nested}${combinator}`, replaceAmpersand: true };
 	}
 	return undefined;
 }
@@ -399,6 +513,52 @@ export function listVariants(theme: ResolvedTheme): VariantInfo[] {
 	return out;
 }
 
+/**
+ * Build the wrapper for `dark:` / `light:` from the theme's chosen strategy.
+ *
+ * The whole point is that this agrees with when the *tokens* flip. Tokens use
+ * `light-dark()`, which follows `color-scheme`, which the shipped preflight
+ * drives from `html[data-appearance]` layered over the OS preference — so the
+ * `appearance` strategy reproduces exactly that, in two branches:
+ *
+ *   :where(html[data-appearance="dark"]) &
+ *   @media (prefers-color-scheme: dark) { :where(html:not([data-appearance="light"])) & }
+ *
+ * The first is the explicit choice; the second is the OS preference where the
+ * page has not overridden it. `light:` is the mirror image.
+ *
+ * `:where()` keeps the added specificity at zero, so `dark:bg-white` still loses
+ * to a later `bg-black` exactly as the media-query form does.
+ */
+function appearanceVariant(
+	variant: "dark" | "light",
+	strategy: DarkVariantStrategy,
+): VariantWrapper {
+	const media = MEDIA_VARIANTS[variant].wrapper;
+	if (strategy.kind === "media") return media;
+	if (strategy.kind === "selector") {
+		// One branch: a selector strategy ignores the OS preference, as it does
+		// in the Tailwind projects it exists for. The other appearance is the
+		// negation, so `light:` under `selector(.dark)` means "not .dark".
+		const sel = strategy.selector;
+		return Object.freeze(
+			variant === "dark"
+				? { selectorSuffix: `:where(${sel}, ${sel} *) &`, replaceAmpersand: true }
+				: { selectorSuffix: `:where(:not(${sel}, ${sel} *)) &`, replaceAmpersand: true },
+		);
+	}
+	const overridden = variant === "dark" ? "light" : "dark";
+	return Object.freeze({
+		selectorSuffix: `:where(html[data-appearance="${variant}"]) &`,
+		replaceAmpersand: true,
+		alternate: Object.freeze({
+			selectorSuffix: `:where(html:not([data-appearance="${overridden}"])) &`,
+			replaceAmpersand: true,
+			atRule: media.atRule,
+		}),
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -428,48 +588,63 @@ function resolveVariantUncached(
 	variant: string,
 	theme: ResolvedTheme,
 	customVariantMap?: ReadonlyMap<string, { name: string; selector: string }>,
+	depth = 0,
 ): VariantWrapper | null {
+	/** Resolve a variant nested inside this one, e.g. the `data-[…]` of `group-data-[…]`. */
+	const inner = (v: string): VariantWrapper | null =>
+		depth >= MAX_VARIANT_NESTING
+			? null
+			: resolveVariantUncached(v, theme, customVariantMap, depth + 1);
 	// Arbitrary variants: [&_p], [@media(width>=123px)]
 	if (variant.startsWith("[") && variant.endsWith("]")) {
 		return resolveArbitraryVariant(variant);
 	}
 
 	// Responsive breakpoints: sm, md, lg, xl
-	if (Object.hasOwn(theme.breakpoints, variant)) {
-		const bp = theme.breakpoints[variant];
-		if (!SAFE_CSS_LENGTH_RE.test(bp)) return null;
-		return { atRule: `@media (min-width: ${bp})` };
+	{
+		const bp = breakpointValue(variant, theme);
+		if (bp !== null) return { atRule: `@media (min-width: ${bp})` };
 	}
 
-	// Arbitrary width ranges: min-[600px], max-[40rem]
-	if (variant.startsWith("min-[") && variant.endsWith("]")) {
-		const v = variant.slice(5, -1);
-		return SAFE_CSS_LENGTH_RE.test(v) ? { atRule: `@media (width >= ${v})` } : null;
+	// Width ranges: min-[600px], max-[40rem], and the named forms min-md, max-sm.
+	//
+	// A name that is not a breakpoint FALLS THROUGH rather than returning null:
+	// `@custom max-touch { … }` is a legal custom variant, and claiming the whole
+	// `max-` prefix here would swallow it.
+	if (variant.startsWith("min-")) {
+		const v = widthBound(variant.slice(4), theme);
+		if (v !== null) return { atRule: `@media (width >= ${v})` };
 	}
-	if (variant.startsWith("max-[") && variant.endsWith("]")) {
-		const v = variant.slice(5, -1);
-		return SAFE_CSS_LENGTH_RE.test(v) ? { atRule: `@media (width < ${v})` } : null;
+	if (variant.startsWith("max-")) {
+		const v = widthBound(variant.slice(4), theme);
+		if (v !== null) return { atRule: `@media (width < ${v})` };
 	}
 
-	// Container query variants: @sm, @md, etc.
+	// Container queries: @sm, @max-md, @sidebar/sm, @sidebar/max-md.
+	//
+	// Sizes here are breakpoint names only, never brackets: an arbitrary
+	// container size is spelled `[@container(min-width:600px)]`, which
+	// docs/class-syntax.md states, and accepting `@[600px]:` would contradict it
+	// silently.
 	if (variant.startsWith("@")) {
 		const rest = variant.slice(1);
-		// Named container: @sidebar/sm — validate name to prevent at-rule injection
 		const slashIdx = rest.indexOf("/");
-		if (slashIdx !== -1) {
-			const containerName = rest.slice(0, slashIdx);
-			const bp = rest.slice(slashIdx + 1);
-			if (Object.hasOwn(theme.breakpoints, bp) && CSS_CUSTOM_IDENT_RE.test(containerName)) {
-				const bpVal = theme.breakpoints[bp];
-				if (!SAFE_CSS_LENGTH_RE.test(bpVal)) return null;
-				return { atRule: `@container ${containerName} (min-width: ${bpVal})` };
+		// A container name lands in the at-rule unescaped, so it is an ident or
+		// this is not a container query at all.
+		const named = slashIdx !== -1 && CSS_CUSTOM_IDENT_RE.test(rest.slice(0, slashIdx));
+		if (slashIdx === -1 || named) {
+			const scope = named ? `${rest.slice(0, slashIdx)} ` : "";
+			const size = slashIdx === -1 ? rest : rest.slice(slashIdx + 1);
+			const bp = breakpointValue(size, theme);
+			if (bp !== null) return { atRule: `@container ${scope}(min-width: ${bp})` };
+			if (size.startsWith("min-")) {
+				const v = breakpointValue(size.slice(4), theme);
+				if (v !== null) return { atRule: `@container ${scope}(width >= ${v})` };
 			}
-		}
-		// Unnamed container
-		if (Object.hasOwn(theme.breakpoints, rest)) {
-			const bpVal = theme.breakpoints[rest];
-			if (!SAFE_CSS_LENGTH_RE.test(bpVal)) return null;
-			return { atRule: `@container (min-width: ${bpVal})` };
+			if (size.startsWith("max-")) {
+				const v = breakpointValue(size.slice(4), theme);
+				if (v !== null) return { atRule: `@container ${scope}(width < ${v})` };
+			}
 		}
 	}
 
@@ -479,24 +654,45 @@ function resolveVariantUncached(
 
 	// group-{pseudo}/group-[sel]: style descendant when ancestor .group matches.
 	if (variant.startsWith("group-")) {
-		const r = resolveRelationalVariant(variant.slice(6), ".group", " &");
+		const { state, anchor } = splitRelationalName(variant.slice(6), "group");
+		if (anchor === null) return null;
+		const r = resolveRelationalVariant(state, anchor, " &", inner);
 		if (r !== undefined) return r;
 	}
 
 	// peer-{pseudo}/peer-[sel]: style a following sibling when a preceding .peer matches.
 	if (variant.startsWith("peer-")) {
-		const r = resolveRelationalVariant(variant.slice(5), ".peer", " ~ &");
+		const { state, anchor } = splitRelationalName(variant.slice(5), "peer");
+		if (anchor === null) return null;
+		const r = resolveRelationalVariant(state, anchor, " ~ &", inner);
 		if (r !== undefined) return r;
 	}
 
-	// in-[sel]: style when nested inside an element matching the selector.
+	// in-[sel] / in-{variant}: style when nested inside a matching ancestor.
 	if (variant.startsWith("in-[") && variant.endsWith("]")) {
 		const sel = sanitizeVariantBracket(variant.slice(4, -1));
-		return sel ? { selectorSuffix: `:where(${sel}) &`, replaceAmpersand: true } : null;
+		// `&` names nothing here that the rest of the bracket does not already
+		// say — the ancestor IS what the selector describes — and emitting it
+		// produced `:where(<this class>.foo)`, matching an element inside itself.
+		return sel && !sel.includes("&")
+			? { selectorSuffix: `:where(${sel}) &`, replaceAmpersand: true }
+			: null;
+	}
+	if (variant.startsWith("in-")) {
+		const nested = plainSelectorOf(inner(variant.slice(3)));
+		if (nested !== null) {
+			return { selectorSuffix: `:where(*${nested}) &`, replaceAmpersand: true };
+		}
 	}
 
 	if (Object.hasOwn(PSEUDO_ELEMENT_WRAPPERS, variant)) {
 		return PSEUDO_ELEMENT_WRAPPERS[variant];
+	}
+
+	// `dark:` and `light:` before the static table: which condition they mean is
+	// the theme's decision, not a constant.
+	if (variant === "dark" || variant === "light") {
+		return appearanceVariant(variant, theme.darkConfig.variant);
 	}
 
 	// Media query variants and starting style — O(1) lookup
@@ -519,6 +715,15 @@ function resolveVariantUncached(
 			const arg = variant.slice(prefix.length, -1).trim();
 			return /^(odd|even|[-+\dn\s]+)$/i.test(arg) ? { selectorSuffix: `:${fn}(${arg})` } : null;
 		}
+		// The bare shorthand for a literal position: `nth-3`, `nth-of-type-2`.
+		// Digits only — anything else is an An+B expression and belongs in
+		// brackets, where it can be validated rather than guessed at.
+		// `prefix` ends with the `[`; dropping it leaves the trailing dash.
+		const bare = prefix.slice(0, -1);
+		if (variant.startsWith(bare)) {
+			const arg = variant.slice(bare.length);
+			if (/^\d+$/.test(arg)) return { selectorSuffix: `:${fn}(${arg})` };
+		}
 	}
 
 	// data-[attr=val] / data-{attr} (boolean)
@@ -535,21 +740,44 @@ function resolveVariantUncached(
 
 	// has-[selector]
 	if (variant.startsWith("has-[") && variant.endsWith("]")) {
-		const inner = sanitizeVariantBracket(variant.slice(5, -1));
-		if (inner) return { selectorSuffix: `:has(${inner})` };
+		const sel = sanitizeVariantBracket(variant.slice(5, -1));
+		// A bare `&` inside `:has()` is not valid in the flat CSS this emits, and
+		// an element cannot contain itself, so there is nothing to translate it
+		// to. Rejecting is louder than shipping `:has(&.foo)`.
+		if (sel && !sel.includes("&")) return { selectorSuffix: `:has(${sel})` };
+	}
+	if (variant.startsWith("has-")) {
+		const nested = plainSelectorOf(inner(variant.slice(4)));
+		if (nested !== null) return { selectorSuffix: `:has(${nested})` };
 	}
 
 	// not-{pseudo} or not-[selector] — unknown names fall through to the custom
 	// variant map and then null (RI-1004) rather than emitting an invalid
 	// pseudo-class like :not(:hoover), which would kill the whole rule.
 	if (variant.startsWith("not-")) {
-		const inner = variant.slice(4);
-		if (inner.startsWith("[") && inner.endsWith("]")) {
-			const sel = sanitizeVariantBracket(inner.slice(1, -1));
-			if (sel) return { selectorSuffix: `:not(${sel})` };
+		const rest = variant.slice(4);
+		if (rest.startsWith("[") && rest.endsWith("]")) {
+			const sel = sanitizeVariantBracket(rest.slice(1, -1));
+			// Same as `has-[…]`: `:not(&.foo)` is not valid flat CSS.
+			if (sel && !sel.includes("&")) return { selectorSuffix: `:not(${sel})` };
 		}
-		if (Object.hasOwn(PSEUDO_CLASSES, inner)) {
-			return { selectorSuffix: `:not(${PSEUDO_CLASSES[inner].suffix})` };
+		if (Object.hasOwn(PSEUDO_CLASSES, rest)) {
+			return { selectorSuffix: `:not(${PSEUDO_CLASSES[rest].suffix})` };
+		}
+		const nestedWrapper = inner(rest);
+		const nested = plainSelectorOf(nestedWrapper);
+		if (nested !== null) return { selectorSuffix: `:not(${nested})` };
+		// `@media`/`@supports` carry their own negation, which is the only way to
+		// say "not this condition" — a selector cannot.
+		const atRule = nestedWrapper?.atRule;
+		if (atRule && !nestedWrapper.selectorSuffix && !nestedWrapper.alternate) {
+			const spaceIdx = atRule.indexOf(" ");
+			if (spaceIdx !== -1) {
+				const name = atRule.slice(0, spaceIdx);
+				if (name === "@media" || name === "@supports") {
+					return { atRule: `${name} not ${atRule.slice(spaceIdx + 1)}` };
+				}
+			}
 		}
 	}
 
@@ -618,6 +846,29 @@ export interface AppliedVariants {
 }
 
 /**
+ * The world in which a variant's `alternate` form applies — the OS preference
+ * where no attribute overrode it. World 0 is the document's own attribute.
+ */
+const MEDIA_WORLD = 1;
+
+/** Fold one wrapper onto one partially-applied branch, returning a new branch. */
+function applyOneWrapper(applied: AppliedVariants, w: VariantWrapper): AppliedVariants {
+	let selector = applied.selector;
+	if (w.selectorSuffix) {
+		const branches = splitSelectorList(selector);
+		const suffix = w.selectorSuffix;
+		selector = w.replaceAmpersand
+			? branches.map((b) => suffix.replace(/&/g, b)).join(", ")
+			: branches.map((b) => b + suffix).join(", ");
+	}
+	return {
+		selector,
+		atRules: w.atRule ? [...applied.atRules, w.atRule] : applied.atRules,
+		startingStyle: applied.startingStyle || w.startingStyle === true,
+	};
+}
+
+/**
  * Fold a stack of variant wrappers over a base selector — the cascade
  * semantics (suffix application order, `&` replacement, at-rule nesting
  * order, starting-style) shared by the engine's string emitter
@@ -627,30 +878,35 @@ export interface AppliedVariants {
  * wrapper produced a comma-bearing selector (e.g. a custom variant like
  * `(&:hover, &:focus)`), a later suffix lands on every branch rather than
  * only the last one.
+ *
+ * ## Worlds
+ *
+ * A wrapper carrying an {@link VariantWrapper.alternate} has two forms because
+ * the condition it describes is settled in two different places: by an
+ * attribute in the document, or by the OS preference where no attribute
+ * overrode it. Those are the two *worlds*, and a stack is evaluated once in
+ * each — never per wrapper.
+ *
+ * That distinction is the whole point. Folding per wrapper cross-products, so
+ * `dark:dark:` would emit four rules instead of two; the two extra ask for an
+ * `html` nested inside an `html` and match nothing, and the cost is 2^n in the
+ * number of such variants a stack contains. Worlds are a property of the page,
+ * not of the variant, so every wrapper in one stack reads the same one.
  */
 export function applyVariantWrappers(
 	baseSelector: string,
 	wrappers: readonly VariantWrapper[],
-): AppliedVariants {
-	let selector = baseSelector;
-	const atRules: string[] = [];
-	let startingStyle = false;
-
-	for (const w of wrappers) {
-		if (w.selectorSuffix) {
-			const branches = splitSelectorList(selector);
-			const suffix = w.selectorSuffix;
-			selector = w.replaceAmpersand
-				? branches.map((b) => suffix.replace(/&/g, b)).join(", ")
-				: branches.map((b) => b + suffix).join(", ");
+): AppliedVariants[] {
+	// The second world exists only if something in the stack distinguishes it,
+	// which is the overwhelmingly common case of one branch.
+	const worlds = wrappers.some((w) => w.alternate) ? 2 : 1;
+	const out: AppliedVariants[] = [];
+	for (let world = 0; world < worlds; world++) {
+		let branch: AppliedVariants = { selector: baseSelector, atRules: [], startingStyle: false };
+		for (const w of wrappers) {
+			branch = applyOneWrapper(branch, world === MEDIA_WORLD ? (w.alternate ?? w) : w);
 		}
-		if (w.atRule) {
-			atRules.push(w.atRule);
-		}
-		if (w.startingStyle) {
-			startingStyle = true;
-		}
+		out.push(branch);
 	}
-
-	return { selector, atRules, startingStyle };
+	return out;
 }

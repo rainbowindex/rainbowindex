@@ -12,25 +12,49 @@ import {
 	single,
 	type UtilityResult,
 } from "../helpers.js";
-import { resolveShadowFamily } from "./shadows.js";
+import { resolveShadowFamily, type ShadowFamily } from "./shadows.js";
+
+/**
+ * `drop-shadow-*`. No `initial`: Tailwind does not register one here, and the
+ * filter chain has no colour var to unset that the shadow families do.
+ */
+const DROP_SHADOW: ShadowFamily = {
+	none: "0 0 #0000",
+	colorVar: "--ri-drop-shadow-color",
+	initial: false,
+	// One `drop-shadow()` per layer, space-joined: the function takes a single
+	// shadow, so a two-layer value written as `drop-shadow(a, b)` is invalid and
+	// drops silently.
+	wrap: (layers) =>
+		multi(
+			["--ri-drop-shadow", layers.map((l) => `drop-shadow(${l})`).join(" ")],
+			["filter", FILTER_COMPOSED],
+		),
+};
 
 // ---------------------------------------------------------------------------
 // Composable filter / backdrop-filter via CSS variables
 // ---------------------------------------------------------------------------
 
-const FILTER_COMPOSED =
-	"var(--ri-blur, ) var(--ri-brightness, ) var(--ri-contrast, ) var(--ri-grayscale, ) var(--ri-hue-rotate, ) var(--ri-invert, ) var(--ri-saturate, ) var(--ri-sepia, ) var(--ri-drop-shadow, )";
-
-const BACKDROP_FILTER_COMPOSED =
-	"var(--ri-backdrop-blur, ) var(--ri-backdrop-brightness, ) var(--ri-backdrop-contrast, ) var(--ri-backdrop-grayscale, ) var(--ri-backdrop-hue-rotate, ) var(--ri-backdrop-invert, ) var(--ri-backdrop-saturate, ) var(--ri-backdrop-sepia, ) var(--ri-backdrop-opacity, )";
+// The slot names and their order live in utilities/property-maps.ts, which the
+// merge tables read too — one list, so a slot added here cannot go unclaimed.
+import { BACKDROP_FILTER_COMPOSED, FILTER_COMPOSED } from "../property-maps.js";
 
 export const FILTER_STATICS: Readonly<Record<string, UtilityResult>> = {
 	// Filter — grayscale/invert/sepia (bare + numeric) are handled dynamically via
-	// FILTER_TABLE (bare100); only the literal `filter-none` reset is static here.
+	// FILTER_TABLE (bare100). Bare `filter` enables the chain and contributes
+	// nothing of its own, which is what makes a v3-era `filter blur-sm` string
+	// work; `filter-none` is the reset.
+	filter: single("filter", FILTER_COMPOSED),
 	"filter-none": single("filter", "none"),
 
-	// Backdrop filter
-	"backdrop-blur-none": single("backdrop-filter", "none"),
+	// Backdrop filter. `backdrop-blur-none` is NOT here: it clears the blur slot
+	// and re-emits the chain, exactly as `blur-none` does, so it composes with
+	// the other backdrop functions instead of erasing them. It used to be
+	// `backdrop-filter: none`, which is the v3 reading — v4.3.3 emits
+	// `--tw-backdrop-blur: ;` followed by the chain, and `backdrop-filter-none`
+	// is the spelling that really does reset everything.
+	"backdrop-filter": single("backdrop-filter", BACKDROP_FILTER_COMPOSED),
 };
 deepFreezeUtilityMap(FILTER_STATICS);
 
@@ -116,8 +140,9 @@ function resolveBlurValue(
 
 export function resolveBlur(full: string, theme: ResolvedTheme): UtilityResult | null {
 	const name = full === "blur" ? "DEFAULT" : full.slice(5);
-	// blur-none composes via the slot var; backdrop-blur-none stays the
-	// backdrop-filter:none static in FILTER_STATICS (deliberate asymmetry).
+	// `blur-none` composes via the slot var rather than resetting the whole
+	// `filter` property, so it clears the blur and leaves a sibling `grayscale`
+	// alone. `backdrop-blur-none` does the same — see resolveBackdropFilter.
 	// A theme entry named `none` replaces the reset rather than losing to it
 	// — every named scale resolves theme-first, and RI-1124 warns at definition.
 	if (name === "none" && !Object.hasOwn(theme.blur, name))
@@ -136,14 +161,7 @@ export function resolveFilter(
 		if (r !== undefined) return r;
 	}
 	if (full.startsWith("drop-shadow-")) {
-		return resolveShadowFamily(
-			full.slice(12), // "drop-shadow-".length
-			"0 0 #0000",
-			"--ri-drop-shadow-color",
-			theme,
-			dataType,
-			(value) => multi(["--ri-drop-shadow", `drop-shadow(${value})`], ["filter", FILTER_COMPOSED]),
-		);
+		return resolveShadowFamily(full.slice(12) /* "drop-shadow-" */, theme, dataType, DROP_SHADOW);
 	}
 	return null;
 }
@@ -176,11 +194,19 @@ export function resolveBackdropFilter(
 		if (arb !== null) return single("backdrop-filter", arb);
 		return null;
 	}
-	// backdrop-blur uses theme.blur for named values ("backdrop-blur-none" is
-	// the backdrop-filter:none static in FILTER_STATICS, resolved before this).
+	// backdrop-blur uses theme.blur for named values, `none` included: it clears
+	// the slot and re-emits the chain, the same shape `resolveBlur` uses, so a
+	// sibling `backdrop-invert` survives it. `backdrop-filter-none` is the
+	// spelling that resets the whole property.
 	if (full.startsWith("backdrop-blur-")) {
 		const name = full.slice(14);
 		if (name === "") return null;
+		if (name === "none" && !Object.hasOwn(theme.blur, name)) {
+			return multi(
+				["--ri-backdrop-blur", "blur(0)"],
+				["backdrop-filter", BACKDROP_FILTER_COMPOSED],
+			);
+		}
 		const blur = resolveBlurValue(
 			name,
 			theme,

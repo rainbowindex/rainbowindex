@@ -1,26 +1,46 @@
 <p align="center">
   <a href="https://rainbowindex.dev" target="_blank">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rainbowindex/rainbowindex/HEAD/.github/logo-dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/rainbowindex/rainbowindex/HEAD/.github/logo-light.svg">
-      <img alt="Rainbow Index" src="https://raw.githubusercontent.com/rainbowindex/rainbowindex/HEAD/.github/logo-light.svg" width="144" height="41" style="max-width: 100%;">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rainbowindex/rainbowindex/HEAD/.github/assets/logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/rainbowindex/rainbowindex/HEAD/.github/assets/logo-light.svg">
+      <img alt="Rainbow Index" src="https://raw.githubusercontent.com/rainbowindex/rainbowindex/HEAD/.github/assets/logo-light.svg" width="161" height="41" style="max-width: 100%;">
     </picture>
   </a>
 </p>
 
-**Rainbow Index** is a CSS-first system for building and maintaining consistent user interfaces.
+<p align="center">
+  <a href="https://github.com/rainbowindex/rainbowindex/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rainbowindex/rainbowindex/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://www.npmjs.com/package/rainbowindex"><img alt="npm" src="https://img.shields.io/npm/v/rainbowindex.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/npm/l/rainbowindex.svg"></a>
+</p>
 
-The project began as a fork of [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss), then diverged with clear intent: to treat CSS as the primary source of truth for styling decisions and to provide tooling that translates design system definitions into predictable, inspectable output. Styling behavior is explicit and traceable, allowing developers to understand not only what is happening, but why.
+**Rainbow Index** compiles a design system out of CSS. Your tokens live in CSS
+directives rather than a JavaScript config, and the compiler turns them into
+utilities, a typed contract for your editor, and diagnostics when something is
+wrong.
 
-We built the system around composable primitives rather than finished components. Instead of prescribing layout patterns or UI components, it focuses on utilities, directives, and tokens that can be combined without accumulating configuration debt.
+- **The theme is CSS.** `@color { brand: 0.18 330; }` declares a generative
+  OKLCH palette; `@text`, `@breakpoint`, `@shadow` and the rest work the same
+  way. No config file to keep in sync.
+- **Nothing ships until you name it.** `text-lg` and `bg-blue-500` do not exist
+  until a directive defines them, so the output is your system rather than a
+  filtered copy of someone else's. One import brings Tailwind v4's scales.
+- **It tells you when you are wrong.** Numbered diagnostics for a color that
+  fails contrast, a class that can never match, a token that resolves to
+  nothing.
+- **Your editor knows your theme.** `rainbowindex/editor` enumerates ~3,900
+  completions from your own CSS, and says what a class compiles to and why a
+  merge dropped one.
 
-Rainbow Index challenges several assumptions common in modern styling workflows. Configuration does not default to JavaScript. Flexibility is not achieved through layered indirection. Utility-based systems are not assumed to be verbose, opaque, or fragile.
+It compiles [100% of Tailwind v4's class surface](#tailwind-class-coverage), so
+moving over is mostly copy-paste — and
+`rainbowindex migrate tailwind` translates the theme for you, then tells you
+which of your classes stop resolving ([docs/migrating.md](docs/migrating.md)). [Why Rainbow Index?](docs/why.md) compares it
+against Tailwind, UnoCSS, Panda and StyleX — losses included.
 
-The product is not a visual design tool, a component library, or a framework abstraction layer. It assumes familiarity with core CSS concepts and expects users to engage with the underlying model.
-
-When tradeoffs arise, we consistently prioritize composability, user control, predictable performance, explicit behavior, and correctness over convenience or familiarity.
-
-Full consumer documentation lives in [docs/](docs/README.md).
+The documentation is in [docs/](docs/README.md).
+[docs/frameworks.md](docs/frameworks.md) has copy-paste setup for Vite, React
+Router, SvelteKit, Astro and Next.js.
 
 ## Install
 
@@ -30,27 +50,9 @@ pnpm add rainbowindex
 
 Requires Node `>=20.19`. The package is **ESM-only** — there is no CommonJS build, so `require("rainbowindex")` is only supported on runtimes that can `require()` ES modules (Node 20.19+); use `import` otherwise (e.g. an ESM `postcss.config.js`/`.mjs`). `postcss` is a required peer dependency, `vite` an optional one; `lightningcss`, `chokidar`, and `tinyglobby` are bundled as direct deps.
 
-### From GitHub Packages
-
-Every release is also published to [GitHub Packages](https://github.com/rainbowindex/rainbowindex/pkgs/npm/rainbowindex) as `@rainbowindex/rainbowindex` — the same build under an owner-scoped name, which that registry requires. Point the scope at the registry in your project's `.npmrc`:
-
-```ini
-@rainbowindex:registry=https://npm.pkg.github.com
-```
-
-GitHub Packages authenticates every read, including public ones, so put a [personal access token (classic)](https://github.com/settings/tokens) with the `read:packages` scope in your `~/.npmrc`:
-
-```ini
-//npm.pkg.github.com/:_authToken=YOUR_TOKEN
-```
-
-Then install under the alias `rainbowindex`, so every import, `@import`, and CLI invocation in the docs below works unchanged:
-
-```sh
-pnpm add rainbowindex@npm:@rainbowindex/rainbowindex
-```
-
-Without the alias — `pnpm add @rainbowindex/rainbowindex` — the package resolves under its scoped name, and specifiers become `@rainbowindex/rainbowindex`, `@rainbowindex/rainbowindex/vite`, and so on.
+Every release is also published to GitHub Packages under an owner-scoped name.
+That registry authenticates every read, so it needs two lines of `.npmrc` — see
+[Install](docs/getting-started.md#from-github-packages).
 
 ## Quick start (Vite)
 
@@ -66,6 +68,25 @@ export default defineConfig({
 });
 ```
 
+Then pick a starting theme.
+
+**Tailwind-familiar.** One extra import brings Tailwind v4's default scales — 26 color families, the `sm` through `2xl` breakpoints, `text-xs` through `text-9xl`, and the weight, leading, tracking, radius, shadow, blur, easing, and animation names.
+
+```css
+/* src/styles.css */
+@import "rainbowindex";
+@import "rainbowindex/tailwind.css";
+```
+
+```tsx
+// src/App.tsx
+export default function App() {
+	return <div className="sm:flex gap-4 px-6 py-3 text-lg font-bold rounded-lg shadow-md bg-blue-600 text-white">Hello</div>;
+}
+```
+
+**From scratch.** Name the tokens your design system has, and nothing else.
+
 ```css
 /* src/styles.css */
 @import "rainbowindex";
@@ -73,16 +94,25 @@ export default defineConfig({
 @color {
 	brand: 0.18 330;
 }
+
+@text { body: 1rem, 1.5; }
+@breakpoint { sm: 40rem; }
 ```
 
 ```tsx
 // src/App.tsx
 export default function App() {
-	return <div className="flex gap-4 px-6 py-3 bg-brand-500 text-white">Hello</div>;
+	return <div className="sm:flex gap-4 px-6 py-3 text-body bg-brand-500 text-white">Hello</div>;
 }
 ```
 
-The default palette ships only the neutral `theme` color (plus `black`, `white`, `paper`, `ink`, `transparent`, `current`, `inherit`) — declare your palette with `@color`.
+### What does not ship by default
+
+The package ships two scales: the neutral `theme` color and the `0.25rem` spacing base. Breakpoints, text sizes, weights, leading, tracking, radii, shadows, blur, easing, animations, and fluid ranges all start empty, so `sm:flex`, `text-lg`, `font-bold`, `shadow-md`, and `rounded-lg` render nothing until a directive names them. The fixed color names `black`, `white`, `paper`, `ink`, `transparent`, `current`, and `inherit` always work; `blue-500` does not exist until you declare it.
+
+The forms that compute rather than look up need no theme at all: `p-4`, `rounded-4`, `font-600`, `z-10`, `text-[18px]`, `blur-none`.
+
+`rainbowindex/tailwind.css` is the escape hatch, not the default. It is a plain directive file — read it, copy the blocks you want, or import it whole. Import it after the package, and override any token by declaring it again below. Importing it costs only what you use: every token is pruned to what the build actually references, so a page that names four colors emits four.
 
 To scaffold a fresh app instead, use the CLI:
 
@@ -94,13 +124,14 @@ pnpm dlx rainbowindex init
 
 ## CLI
 
-The `rainbowindex` binary exposes six subcommands. The default is `build`.
+The `rainbowindex` binary exposes seven subcommands. The default is `build`.
 
 ```
 rainbowindex <glob> [options]        Generate CSS from source files
 rainbowindex init                    Wire Rainbow Index into the current Vite app
 rainbowindex create <dir>            Scaffold a Vite app with Rainbow Index ready
 rainbowindex generate-types          Generate TypeScript types for ri() autocomplete
+rainbowindex generate-snapshot       Generate the theme snapshot that makes client ri() theme-aware
 rainbowindex preload-fonts           Print <link rel="preload"> tags for local faces marked preload
 rainbowindex scan <glob>             Print the class names the scanner extracts from files
 ```
@@ -152,27 +183,76 @@ Auto-detects your CSS entry, injects a PostCSS config if none exists, supports H
 
 ## Vite+
 
-[Vite+](https://viteplus.dev) works out of the box. Directive syntax is not valid CSS, so Oxfmt — the formatter behind `vp fmt` and `vp check` — cannot parse a stylesheet that holds directives, and the whole check fails before it lints or type checks. The Vite plugin prevents that: it adds every activated stylesheet to `fmt.ignorePatterns`, and leaves the rest of the project formatted. Without the Vite plugin, add the pattern yourself.
+[Vite+](https://viteplus.dev) works out of the box. Four deprecated directive spellings are not valid CSS, so Oxfmt — the formatter behind `vp fmt` and `vp check` — cannot parse a stylesheet that still uses them. The Vite plugin adds only those files to `fmt.ignorePatterns`; a stylesheet written the canonical way is hidden from nothing.
 
-One more integration is opt-in:
+See [docs/vite-plus.md](docs/vite-plus.md).
+
+## Component variants
+
+`recipe()` is a typed variant layer whose output is ordinary class names — the
+`cva`/`tv` shape, merged through `ri()` so conflicts resolve against your
+compiled theme instead of a Tailwind utility table.
 
 ```ts
-// vite.config.ts — lint rule: merge classes with ri(), not clsx/tailwind-merge
+import { recipe } from "rainbowindex/recipe";
+
+const button = recipe({
+	base: "inline-flex items-center rounded-card font-medium",
+	variants: {
+		tone: { solid: "bg-brand-600 text-white", quiet: "text-brand-700" },
+		size: { sm: "h-8 px-3 text-sm", md: "h-10 px-4" },
+	},
+	defaultVariants: { tone: "solid", size: "md" },
+});
+
+button({ size: "sm" });   // → "inline-flex … bg-brand-600 text-white h-8 px-3 text-sm"
+button({ size: "xl" });   // ✗ Type error: "xl" is not a size
+```
+
+The classes live in the config, where the scanner already reads them. See
+[docs/recipe.md](docs/recipe.md).
+
+## Editor support
+
+**Rainbow Index for VS Code**, on the Marketplace and thin over
+`rainbowindex/editor`: completions from *your* theme (a `@color` you added five
+seconds ago completes), hover showing the generated rule and the colour's light
+and dark hex, diagnostics on a class that compiles to nothing, colour chips you
+can drag, an element tree and a theme explorer, go-to-definition, rename, and a
+sort command that matches the order the stylesheet emits. It loads the copy of
+the package your workspace installed, so upgrading the package upgrades what
+your editor knows. Source at https://github.com/miloag/extension — see [docs/editor.md](docs/editor.md).
+
+## Lint rules
+
+Three opt-in rules, for Oxlint and ESLint. Two of them read your compiled theme,
+so they can tell you a class is wrong rather than merely unfamiliar:
+`no-unknown-class` reports a class that compiles to nothing (with the typo
+suggestion as an editor fix), and `no-conflicting-classes` reports a class that
+another class in the same string erases. `prefer-ri` reports an import of
+`clsx`, `classnames` or `tailwind-merge`.
+
+```ts
+// vite.config.ts
 export default defineConfig({
 	lint: {
 		jsPlugins: [{ name: "rainbowindex", specifier: "rainbowindex/oxlint" }],
-		rules: { "rainbowindex/prefer-ri": "error" },
+		rules: {
+			"rainbowindex/no-unknown-class": "error",
+			"rainbowindex/no-conflicting-classes": "warn",
+			"rainbowindex/prefer-ri": "error",
+		},
 	},
 });
 ```
 
-See [docs/vite-plus.md](docs/vite-plus.md).
+See [docs/lint.md](docs/lint.md) for the ESLint flat-config form and the options.
 
 ## Class syntax
 
 ### Utilities
 
-Roughly the same surface area as Tailwind: spacing, sizing, typography, color, layout, borders, effects, animations, and SVG. Use `rainbowindex generate-types` for autocomplete in your editor.
+The same utility families as Tailwind — spacing, sizing, typography, color, layout, borders, effects, animations, and SVG — but not the same named tokens. `text-lg` and `shadow-md` resolve only once a directive names them, or once you import the preset (see [What does not ship by default](#what-does-not-ship-by-default)). The numeric, keyword, and arbitrary forms need no theme: `p-4`, `rounded-4`, `font-600`, `text-[18px]`, `blur-none`. Use `rainbowindex generate-types` for autocomplete in your editor.
 
 ### Variants
 
@@ -247,7 +327,7 @@ Customization happens in your CSS input, not a JS config. The engine recognizes:
 | `@slot` | Slot marker inside `@custom` block form. |
 | `@source` | Declare additional source globs from CSS. Supports `not "..."` and `inline("...")`. |
 | `@preflight` | Toggle preflight base styles. |
-| `@breakpoint`, `@shadow`, `@weight`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, `@duration` | Key-value token scales; `!key;` removes a token. |
+| `@breakpoint`, `@shadow`, `@weight`, `@ease`, `@blur`, `@z`, `@leading`, `@tracking`, `@opacity`, `@duration` | Key-value token scales; `key: initial;` removes a token. |
 | `@register` | Emit CSS `@property` registrations. |
 | `@layer` | Place the generated output in cascade layers (intercepted, own grammar). |
 | `@media`, `@import`, other standard at-rules | Standard CSS — passed through untouched. |
@@ -287,6 +367,8 @@ Example:
 
 The package ships two defaults: the `colors` palette and the `spacing` base. Every other scale — `text`, `leading`, `tracking`, `shadows`, `radii`, `breakpoints`, `weights`, `easing`, `blur`, `animations`, `fluid`, `z`, `opacity`, `duration` — starts empty, and its directive defines the named tokens. Numeric and keyword class forms are computed, so they work with no theme at all.
 
+That is the default because a token you did not define is a token nobody has to reason about. When you want Tailwind's names instead, `@import "rainbowindex/tailwind.css";` after the package import supplies them, written in the same directives documented above — so you can open the file and copy the blocks you want rather than importing all of it.
+
 ## `ri()` — runtime class merger
 
 `ri()` merges class strings with right-most-wins conflict resolution. It replaces both `clsx` (for conditional composition) and `tailwind-merge` (for conflict resolution).
@@ -309,20 +391,34 @@ Conflict resolution understands shorthands: `p-4` claims all four padding sides,
 
 ### `ri()` vs `createRi()` — which one do I use?
 
-| Situation | Use |
-| --- | --- |
-| Browser bundle / client components | **`ri()`** |
-| Vite build / PostCSS one-shot | **`ri()`** |
-| Single Node compile that exits | **`ri()`** |
-| Concurrent SSR (one server, many requests) | **`createRi(snapshot)`** |
-| Multi-tenant compile (different themes in the same process) | **`createRi(snapshot)`** |
-| Edge / serverless functions sharing module state across invocations | **`createRi(snapshot)`** |
+| Situation | Use | What you have to do |
+| --- | --- | --- |
+| Vite — client, SSR, build | **`ri()`** | Nothing. |
+| Any other bundler (Next.js, Webpack, Rspack, esbuild) | **`ri()`** | `rainbowindex generate-snapshot`, then import it once. |
+| Single Node compile that exits | **`ri()`** | Nothing. |
+| Many themes in one process (multi-tenant, per-request themes) | **`createRi(snapshot)`** | One merger per theme. |
 
-`ri()` reads module-level state published by the most recent compile. That's
-fast and ergonomic in any environment where there is exactly one compile
-per process. If two requests can be merging classes against two different
-themes in the same Node process, that shared state will leak — use
-`createRi(snapshot)` to bind each request to its own frozen snapshot.
+`ri()` answers by asking the *published theme* what properties a class sets.
+Since 0.6.0 every text size, weight, font slot, and color name is
+project-defined, so a client with no theme published reads `text-lg` as a color
+and returns just `text-white` for `ri("text-lg text-white")`.
+
+A compile publishes a theme. A browser bundle never compiles — so the Vite
+plugin publishes one for it automatically, and every other bundler gets the
+same result from a generated module:
+
+```sh
+rainbowindex generate-snapshot   # writes rainbowindex-snapshot.ts
+```
+
+```ts
+// app entry, before anything that calls ri()
+import "./rainbowindex-snapshot";
+```
+
+If two requests can be merging classes against two different themes in the same
+process, bind each to its own frozen snapshot with `createRi(snapshot)` — the
+generated module exports one.
 
 ```ts
 // Anywhere ri() is single-compile-safe (browser, Vite, PostCSS):
@@ -347,9 +443,10 @@ function render(req, res) {
 }
 ```
 
-In any Node/SSR process, the default `ri()` emits a throttled `[RI-2004]`
-warning (at most once per 60 s) to flag its shared module state. Switching to
-`createRi(snapshot)` silences it.
+The default `ri()` warns `[RI-2004]` once per process when it merges a
+theme-dependent class with no theme published, naming the class it had to guess
+about. Publishing any theme silences it — a single-theme app that publishes at
+startup is correct, and is not warned at.
 
 ## Editor tooling API
 
@@ -368,7 +465,7 @@ const session = createEditorSession({ css: themeCss });
 session.diagnostics;                    // positioned problems in the CSS input
 session.inspector.validate("felx");     // { ok: false, reason: "unknown-utility", suggestion: "flex" }
 session.inspector.explain("sm:px-4");   // parsed structure + generated CSS + sort key
-session.enumerate();                    // ~3,400 probe-verified completions + templates
+session.enumerate();                    // ~3,900 probe-verified completions + templates
 session.analyzeMerge(["px-2", "px-4"]); // which classes ri() drops, and who overrode them
 session.swatch("brand", 500);           // light/dark oklch + hex for completions
 session.extractCandidates(source, path); // class tokens with exact source spans
@@ -414,3 +511,60 @@ Warnings carry `RI-NNNN` codes. Ranges:
 See [docs/diagnostics.md](docs/diagnostics.md) for the full code → cause → fix table.
 
 Warnings are deduplicated and capped at 200 per compile, with 20 slots reserved for high-severity errors.
+
+## Benchmarks
+
+Measured 2026-09-06 on an Apple M4 (10 cores), Node 24.20.0, against a generated
+10,000-file codebase (12.75 MB of source, 13,507 distinct classes) with
+rainbowindex loading its Tailwind preset so all three engines compile the same
+strings.
+
+| Engine | Cold build | Rebuild (unchanged) | Rebuild (1 file) | Scan only | Output | Peak RSS |
+| --- | --- | --- | --- | --- | --- | --- |
+| rainbowindex 0.6.0 | 845 ms | 583 ms | 585 ms | 539 ms | **977 KB** | **354 MB** |
+| Tailwind CSS 4.3.3 | **330 ms** | **40 ms** | **90 ms** | **39 ms** | 1.01 MB | 391 MB |
+| UnoCSS 66.8.1 | 1.29 s | 503 ms | 502 ms | 440 ms | 1.00 MB | 427 MB |
+
+Read that honestly: **Rainbow Index produces the smallest stylesheet of the
+three and is the slowest to rebuild.** Almost all of the gap is the scanner —
+`539 ms` of a `585 ms` rebuild — because Tailwind's is compiled Rust
+(`@tailwindcss/oxide`) and this one is JavaScript. On a cold build, where the
+scan is a smaller share of the work, the gap to Tailwind closes to about 2.6×.
+
+Against UnoCSS it is three scenarios each: Rainbow Index wins cold build, output
+size and peak memory; UnoCSS wins both rebuilds and the scan.
+
+### Tailwind class coverage
+
+```bash
+pnpm bench:parity
+```
+
+This asks Tailwind v4 for its own complete class list — the 23,289 names its
+IntelliSense uses — renders every one, and reports which Rainbow Index does not
+implement.
+
+**100.00%.** Every one of the 23,289 renders. The last 297 outstanding were
+`ring-offset-*` (296) and `ring-inset`; both are implemented, and the sweep is
+what says so — it is recomputed on demand rather than quoted from a table
+someone maintains by hand. What still differs is how a handful of them compile,
+not whether they do: see
+[differences from Tailwind](docs/utilities.md#differences-from-tailwind).
+
+The harness, the method, and where the comparison stops being fair are all in
+[bench/README.md](bench/README.md); full results, including the 1,000-file tree,
+are in [bench/results/](bench/results/). Reproduce with:
+
+```bash
+pnpm bench --sizes=1k,10k
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the test layout, how to add a utility, and how `RI-NNNN` codes are allocated. Security reports go through [SECURITY.md](SECURITY.md).
+
+[docs/stability.md](docs/stability.md) says what is already treated as a contract before 1.0, what warning a change gives you, and which runtimes are supported.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Rainbow Index began as a fork of Tailwind CSS v4 and carries work derived from tailwind-merge and tw-animate-css; their notices are in [NOTICE.md](NOTICE.md).

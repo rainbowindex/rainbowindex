@@ -1,0 +1,13 @@
+@import "rainbowindex";
+
+@color {
+	brand: 0.18 330;
+}
+
+@color dark {
+	variant: selector(.dark);
+}
+
+@breakpoint {
+	sm: 40rem;
+}

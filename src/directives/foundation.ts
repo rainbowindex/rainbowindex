@@ -1,5 +1,5 @@
 import type { DarkModeConfig } from "../theme/colors.js";
-import type { FontSlot } from "../integrations/font-providers/index.js";
+import type { FontSlot } from "../integrations/font-providers/model.js";
 import type {
 	AnimationDefinition,
 	ColorDefinition,
@@ -168,7 +168,81 @@ export type WritableTheme = { -readonly [K in keyof ResolvedTheme]: DeepMutable<
 
 /** PostCSS-safe removal entry key — the Vite transform rewrites `!name;` to
  *  `--ri-rm: name;`. Shared by every body parser that supports removals. */
-export const REMOVAL_KEY = "--ri-rm";
+const REMOVAL_KEY = "--ri-rm";
+
+/**
+ * The one warning every legacy directive spelling reports.
+ *
+ * One code rather than four, because a project silences a class of thing and
+ * not four unrelated ones — and because the message, not the number, is what
+ * says which form and what to write instead. Every legacy form keeps working
+ * for two minors; see `docs/stability.md`.
+ */
+export function legacySyntaxWarning(
+	legacy: string,
+	canonical: string,
+	directiveName?: string,
+): string {
+	const where = directiveName ? ` in @${directiveName}` : "";
+	return `[RI-1046] \`${legacy}\`${where} is a deprecated spelling — write \`${canonical}\` instead. The old form is not valid CSS, so a formatter cannot read the file; it still works, and will be removed at 1.0.`;
+}
+
+/**
+ * Does this block body hold a top-level `@keyframes`?
+ *
+ * The one thing that tells an `@animate` entry from a utility block, and the
+ * reason it can: the two are the same shape. `shimmer { … }` inside `@animate`
+ * is either an animation written in the canonical form, or a custom
+ * utility named `animate-shimmer` — a named scale accepts both — and only the
+ * animation carries keyframes. An animation entry without them has always been
+ * dropped, so the content that distinguishes the two is the content that makes
+ * them different.
+ *
+ * Depth-aware and quote-aware, because a `@keyframes` mentioned inside a
+ * nested block or a string is not this block's own.
+ */
+export function hasTopLevelKeyframes(body: string): boolean {
+	let depth = 0;
+	for (let i = 0; i < body.length; i++) {
+		const ch = body[i];
+		if (ch === '"' || ch === "'") {
+			const quote = ch;
+			i++;
+			while (i < body.length && body[i] !== quote) {
+				if (body[i] === "\\") i++;
+				i++;
+			}
+			continue;
+		}
+		if (ch === "{") depth++;
+		else if (ch === "}") depth = Math.max(0, depth - 1);
+		else if (ch === "@" && depth === 0 && body.startsWith("@keyframes", i)) {
+			// A full at-rule name, not a prefix of a longer one.
+			const after = body[i + "@keyframes".length];
+			if (after === undefined || !/[\w-]/.test(after)) return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * The canonical removal spelling: `name: initial`.
+ *
+ * `initial` is the CSS-wide keyword for "unset this", and it is the only
+ * candidate that survives every parser in the compatibility matrix while still
+ * reading correctly to someone who has never seen a directive. `none` parses
+ * too and is unavailable: it is a legitimate *value* in several scales, where
+ * `@shadow { card: none; }` means a shadow of `none` rather than the removal
+ * of `card`.
+ *
+ * This does repurpose a value that used to be legal — `card: initial` compiled
+ * before this — but a custom property set to `initial` is guaranteed-invalid at
+ * computed-value time, so every use of such a token was already broken. See
+ * `__tests__/core/syntax-compat.test.ts`.
+ */
+function isRemovalValue(value: string): boolean {
+	return value === "initial";
+}
 
 /** Valid directive entry keys and @utility names. Digit-leading keys (`2xl`)
  *  and `--`-prefixed keys (`--corner-scale`, `--my-var`) are intentionally allowed;
@@ -225,8 +299,14 @@ export interface ScannedEntry {
 	value: string;
 	/** Inner content of the entry's trailing `{ … }` block, trimmed. */
 	block?: string;
-	/** Set for removal entries — `!name` or `--ri-rm: name`. */
+	/** Set for removal entries — `name: initial`, `!name`, or `--ri-rm: name`. */
 	removal?: true;
+	/**
+	 * Set when the removal was written in the deprecated `!name` form: it is
+	 * the one spelling of the three that no CSS parser accepts. Callers warn
+	 * on it; nothing else behaves differently.
+	 */
+	legacyRemoval?: true;
 	/** Set for colon-less fragments so callers can warn (@color) or skip them. */
 	fragment?: true;
 	/** Set when the entry's `{` block never closes; scanning stops after it. */
@@ -263,12 +343,14 @@ export function* scanEntries(
 		while (i < src.length && /[\s;]/.test(src[i])) i++;
 		if (i >= src.length) return;
 
-		// Removal shorthand: !name
+		// Removal, legacy spelling: !name
 		if (src[i] === "!") {
 			let end = i + 1;
 			while (end < src.length && /[\w-]/.test(src[end])) end++;
 			const name = src.slice(i + 1, end);
-			if (name) yield { key: name, value: "", removal: true, start: i, end };
+			if (name) {
+				yield { key: name, value: "", removal: true, legacyRemoval: true, start: i, end };
+			}
 			i = end;
 			continue;
 		}
@@ -342,6 +424,10 @@ export function* scanEntries(
 				if (value) yield { key: value, value: "", removal: true, start: entryStart, end: i };
 				continue;
 			}
+			if (isRemovalValue(value)) {
+				yield { key, value: "", removal: true, start: entryStart, end: i };
+				continue;
+			}
 			yield { key, value, block, start: entryStart, end: i };
 			continue;
 		}
@@ -353,6 +439,10 @@ export function* scanEntries(
 		}
 		if (key === REMOVAL_KEY) {
 			if (value) yield { key: value, value: "", removal: true, start: entryStart, end: i };
+			continue;
+		}
+		if (isRemovalValue(value)) {
+			yield { key, value: "", removal: true, start: entryStart, end: i };
 			continue;
 		}
 		yield { key, value, start: entryStart, end: i };
@@ -392,9 +482,11 @@ export function parseKeyValueBody(
 		const line = raw.trim();
 		if (!line) return;
 
-		// Removal: !key
+		// Removal, legacy spelling: !key
 		if (line.startsWith("!")) {
-			removals.push(line.slice(1).trim());
+			const name = line.slice(1).trim();
+			removals.push(name);
+			warnings?.push(legacySyntaxWarning(`!${name};`, `${name}: initial;`, directiveName));
 			return;
 		}
 
@@ -406,6 +498,10 @@ export function parseKeyValueBody(
 		const value = line.slice(colonIdx + 1).trim();
 		if (key === REMOVAL_KEY && value) {
 			removals.push(value);
+			return;
+		}
+		if (key && isRemovalValue(value)) {
+			removals.push(key);
 			return;
 		}
 		if (key && !IDENT_KEY_RE.test(key)) {

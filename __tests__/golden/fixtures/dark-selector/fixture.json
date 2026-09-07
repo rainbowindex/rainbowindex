@@ -1,0 +1,4 @@
+{
+	"mode": "project",
+	"note": "`@color dark { variant: selector(.dark) }` — the strategy a Tailwind project arrives with. One rule, no media query: the OS preference is ignored, exactly as it is there. `light:` is the negation, so the two never both match."
+}

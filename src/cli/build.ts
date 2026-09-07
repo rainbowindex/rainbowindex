@@ -11,7 +11,7 @@ export interface BuildResult {
 }
 
 export async function buildCSS(opts: CLIOptions, cwd: string): Promise<BuildResult> {
-	const { css: cssSource, cssFile } = await loadProjectCSS(opts, cwd);
+	const { css: cssSource, cssFile, warnings: importWarnings } = await loadProjectCSS(opts, cwd);
 
 	const { compiled } = await compileScannedProject({
 		css: cssSource,
@@ -22,11 +22,14 @@ export async function buildCSS(opts: CLIOptions, cwd: string): Promise<BuildResu
 			console.error(`[RI-1404] CLI glob pattern rejected: ${err}`);
 			return undefined;
 		},
+		// loadProjectCSS already inlined them; a second pass would find nothing
+		// and would re-emit the same unresolved-import warnings.
+		resolveImport: null,
 	});
 
 	// @apply is expanded only by the PostCSS plugin; the CLI runs no PostCSS, so
 	// flag it rather than silently dropping the intent.
-	const buildWarnings: string[] = [];
+	const buildWarnings: string[] = [...importWarnings];
 	if (hasApplyLikeDirective(cssSource)) {
 		buildWarnings.push(
 			'[RI-1009] @apply is only supported via the PostCSS plugin. To expand @apply: (1) add `postcss.config.js` with `import rainbowindex from "rainbowindex"; export default { plugins: [rainbowindex()] };`, or (2) use the Vite plugin (`import rainbowindex from "rainbowindex/vite"`), which wires PostCSS automatically. The CLI does not run PostCSS so it cannot expand @apply.',

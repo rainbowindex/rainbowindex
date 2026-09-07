@@ -6,7 +6,16 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!dist", "!coverage", "!node_modules", "!.github"]
+		"includes": [
+			"**",
+			"!dist",
+			"!coverage",
+			"!node_modules",
+			"!.github",
+			"!__tests__/golden/fixtures",
+			"!src/presets",
+			"!examples/**/*.css"
+		]
 	},
 	"formatter": {
 		"enabled": true,
@@ -54,6 +63,16 @@
 				"rules": {
 					"suspicious": {
 						"noTemplateCurlyInString": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["examples/**/*.astro", "examples/**/*.svelte"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedVariables": "off"
 					}
 				}
 			}

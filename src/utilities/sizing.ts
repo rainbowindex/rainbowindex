@@ -3,7 +3,14 @@
  */
 
 import type { ResolvedTheme } from "../directives/foundation.js";
-import { type UtilityResult, single, multi, spacingLookup, extractArbitrary } from "./helpers.js";
+import {
+	type UtilityResult,
+	fractionValue,
+	single,
+	multi,
+	spacingLookup,
+	extractArbitrary,
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Named size values
@@ -43,35 +50,6 @@ const VIEWPORT_SIZES: Readonly<Record<string, string>> = Object.freeze({
 
 // Intentionally includes redundant fractions (e.g. 2/4 = 1/2 = 50%) for
 // Tailwind compatibility — users expect w-2/4 to work alongside w-1/2.
-const FRACTIONAL: Readonly<Record<string, string>> = Object.freeze({
-	"1/2": "50%",
-	"1/3": "33.333333%",
-	"2/3": "66.666667%",
-	"1/4": "25%",
-	"2/4": "50%",
-	"3/4": "75%",
-	"1/5": "20%",
-	"2/5": "40%",
-	"3/5": "60%",
-	"4/5": "80%",
-	"1/6": "16.666667%",
-	"2/6": "33.333333%",
-	"3/6": "50%",
-	"4/6": "66.666667%",
-	"5/6": "83.333333%",
-	"1/12": "8.333333%",
-	"2/12": "16.666667%",
-	"3/12": "25%",
-	"4/12": "33.333333%",
-	"5/12": "41.666667%",
-	"6/12": "50%",
-	"7/12": "58.333333%",
-	"8/12": "66.666667%",
-	"9/12": "75%",
-	"10/12": "83.333333%",
-	"11/12": "91.666667%",
-});
-
 function resolveSizeValue(
 	val: string,
 	named: Record<string, string>,
@@ -83,7 +61,8 @@ function resolveSizeValue(
 	// Named
 	if (Object.hasOwn(named, val)) return named[val];
 	// Fractional
-	if (Object.hasOwn(FRACTIONAL, val)) return FRACTIONAL[val];
+	const fraction = fractionValue(val);
+	if (fraction !== null) return fraction;
 	// Spacing scale
 	return spacingLookup(val, negative);
 }
@@ -92,9 +71,18 @@ function resolveSizeValue(
 // Max-width named values
 // ---------------------------------------------------------------------------
 
-/** Named container-width rem ladder (xs–7xl). Single source shared with the
- *  columns-* scale in utilities/layout.ts, which adds the 3xs/2xs steps. */
+/**
+ * The named container-width rem ladder, 3xs–7xl.
+ *
+ * One table, read by every family upstream feeds from `--container-*`: `w-`,
+ * `min-w-`, `max-w-`, `basis-`, and `columns-`. It used to start at `xs`, with
+ * `columns-*` keeping its own copy that added the two sub-`xs` steps — so
+ * `columns-3xs` resolved and `max-w-3xs` did not, for no reason a reader could
+ * find.
+ */
 export const CONTAINER_WIDTHS: Readonly<Record<string, string>> = Object.freeze({
+	"3xs": "16rem",
+	"2xs": "18rem",
 	xs: "20rem",
 	sm: "24rem",
 	md: "28rem",
@@ -125,7 +113,11 @@ const MAX_W_NAMED: Readonly<Record<string, string>> = Object.freeze({
 // ---------------------------------------------------------------------------
 
 const MIN_W_NAMED: Readonly<Record<string, string>> = Object.freeze({
+	// `auto` is a min-* value only: `max-width: auto` is not valid CSS, and
+	// Tailwind registers no `max-w-auto` either.
+	auto: "auto",
 	"0": "0px",
+	...CONTAINER_WIDTHS,
 	full: "100%",
 	min: "min-content",
 	max: "max-content",
@@ -135,6 +127,7 @@ const MIN_W_NAMED: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const MIN_H_NAMED: Readonly<Record<string, string>> = Object.freeze({
+	auto: "auto",
 	"0": "0px",
 	full: "100%",
 	min: "min-content",
@@ -156,6 +149,25 @@ const MAX_H_NAMED: Readonly<Record<string, string>> = Object.freeze({
 	...VIEWPORT_SIZES,
 });
 
+/**
+ * Every named value any sizing family accepts, in one list.
+ *
+ * The enumerator drops a candidate that does not resolve, so a root can be
+ * offered the whole union and let its own table decide — which is what keeps
+ * completions in step with the resolvers. Listing them per root by hand is what
+ * left `min-inline-full`, `min-block-0`, `inline-full` and `block-full`
+ * resolvable but unlistable while `min-w-full` was fine.
+ */
+export const SIZING_KEYWORDS: readonly string[] = Object.freeze([
+	...new Set([
+		...Object.keys(NAMED_SIZES),
+		...Object.keys(MIN_W_NAMED),
+		...Object.keys(MAX_W_NAMED),
+		...Object.keys(MIN_H_NAMED),
+		...Object.keys(MAX_H_NAMED),
+	]),
+]);
+
 /** Prefix → [prefix string, CSS property, named value table]. Logical min/max
  * families mirror their physical counterparts (min-inline ↔ min-w, etc.). */
 const CONSTRAINED_SIZE_TABLE: Array<[string, string, Record<string, string>]> = [
@@ -175,7 +187,8 @@ function resolveConstrainedSize(
 	property: string,
 ): UtilityResult | null {
 	if (Object.hasOwn(named, val)) return single(property, named[val]);
-	if (Object.hasOwn(FRACTIONAL, val)) return single(property, FRACTIONAL[val]);
+	const fraction = fractionValue(val);
+	if (fraction !== null) return single(property, fraction);
 	const arb = extractArbitrary(val);
 	if (arb !== null) return single(property, arb);
 	const spacingVal = spacingLookup(val, false);
@@ -212,6 +225,11 @@ export function sizingGenerator(
 		const val = full.slice(2);
 		const resolved = resolveSizeValue(val, NAMED_SIZES, negative);
 		if (resolved) return single("width", resolved);
+		// The container ladder is read here rather than added to NAMED_SIZES
+		// because that table also feeds `size-` and `h-`, and upstream gives
+		// `--container-*` to the inline axis only. `inline-` gets it below, since
+		// it is documented as taking the values of `w-`.
+		if (Object.hasOwn(CONTAINER_WIDTHS, val)) return single("width", CONTAINER_WIDTHS[val]);
 	}
 
 	// h-{n}: height
@@ -229,6 +247,9 @@ export function sizingGenerator(
 		const val = full.slice(7);
 		const resolved = resolveSizeValue(val, NAMED_SIZES, negative);
 		if (resolved) return single("inline-size", resolved);
+		if (Object.hasOwn(CONTAINER_WIDTHS, val)) {
+			return single("inline-size", CONTAINER_WIDTHS[val]);
+		}
 	}
 
 	// block-{n}: block-size (logical height). Mirrors h-* — HEIGHT_NAMED (screen → 100vh).

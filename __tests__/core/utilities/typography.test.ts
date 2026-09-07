@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
 import { checkAppliedFontWeights, resolveUtility } from "../../../src/utilities/index.js";
 import { createFontFace, createFontSlot } from "../../../src/integrations/font-providers/model.js";
+import { resolveDirectives } from "../../../src/directives/index.js";
 import { scalesTheme } from "../../helpers/fixture-scales.js";
 import { typographyTheme } from "../../helpers/fixture-typography.js";
 
@@ -606,5 +607,64 @@ describe("per-family weight check", () => {
 
 	it("ignores weights outside the CSS range", () => {
 		expect(check("font-mono", "font-0", "font-1500")).toEqual([]);
+	});
+});
+
+/**
+ * A bare number in a line-height position is a spacing multiple, as it is
+ * everywhere else on the scale. It used to resolve to nothing, and the two
+ * spellings failed differently: `leading-6` was rejected outright, while
+ * `text-sm/6` quietly fell back to the size's own leading — so a Tailwind
+ * codebase got different typography with no diagnostic anywhere.
+ */
+describe("numeric line heights", () => {
+	const theme = resolveDirectives([{ type: "text", body: "sm: 0.875rem, 1.25rem;" }]);
+	const decl = (cls: string) => resolveUtility(cls, null, false, theme)?.declarations ?? null;
+
+	it("reads a bare number as a spacing multiple, in both spellings", () => {
+		expect(decl("leading-6")).toEqual([
+			{ property: "line-height", value: "calc(6 * var(--spacing))" },
+		]);
+		expect(decl("text-sm/6")).toEqual([
+			{ property: "font-size", value: "var(--text-sm)" },
+			{ property: "line-height", value: "calc(6 * var(--spacing))" },
+		]);
+	});
+
+	it("carries the multiple onto an arbitrary size", () => {
+		expect(decl("text-[20px]/7")).toEqual([
+			{ property: "font-size", value: "20px" },
+			{ property: "line-height", value: "calc(7 * var(--spacing))" },
+		]);
+	});
+
+	it("lets a theme entry win over the multiple", () => {
+		const themed = resolveDirectives([
+			{ type: "text", body: "sm: 0.875rem, 1.25rem;" },
+			{ type: "leading", body: "7: 99rem;" },
+		]);
+		expect(resolveUtility("text-sm/7", null, false, themed)?.declarations[1]).toEqual({
+			property: "line-height",
+			value: "99rem",
+		});
+	});
+
+	it("does not read `px` as a multiple", () => {
+		// spacingLookup maps `px` to 1px, which is a length nobody means as a
+		// line height — hence the DECIMAL_RE gate in front of it.
+		expect(decl("leading-px")).toEqual([{ property: "line-height", value: "1px" }]);
+		expect(resolveUtility("text-sm/px", null, false, theme)).toBeNull();
+	});
+
+	it("invalidates the class when a stated modifier resolves to nothing", () => {
+		// Both paths: the named size used to fall back to its own leading, the
+		// arbitrary one used to drop the declaration and inherit.
+		expect(resolveUtility("text-sm/zzz", null, false, theme)).toBeNull();
+		expect(resolveUtility("text-[20px]/zzz", null, false, theme)).toBeNull();
+		// No modifier at all is still fine.
+		expect(decl("text-sm")).toEqual([
+			{ property: "font-size", value: "var(--text-sm)" },
+			{ property: "line-height", value: "var(--text-sm-leading)" },
+		]);
 	});
 });

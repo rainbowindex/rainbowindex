@@ -88,12 +88,16 @@ describe("reordering the filters changed no extracted value", () => {
 	// All four candidate filters only skip, so their order cannot move a value.
 	// This pins the whole rejected set, not just the whitespace case.
 	test("every rejected shape is still rejected, every kept shape still kept", () => {
-		const content = `<div className="p-[20px] FooBar content-[hello world] data-[12] obj[key] rest['aria invalid'] -mt-4 w-1/2 [color:red]" />`;
+		const content = `<div className="p-[20px] FooBar content-[hello world] data-[12] z-[60] obj[key] items[0] list[] rest['aria invalid'] -mt-4 w-1/2 [color:red]" />`;
 		const classes = extractClassesFromSource({ path: "/tmp/src/a.tsx", content });
-		for (const kept of ["p-[20px]", "-mt-4", "w-1/2", "[color:red]"]) {
+		// `data-[12]` and `z-[60]` are here on purpose: the index-access filter
+		// used to reject every token ending in `[digits]`, which took real
+		// utilities with it. It now keys on the dash before the bracket, the
+		// same discriminator the property-access filter uses.
+		for (const kept of ["p-[20px]", "-mt-4", "w-1/2", "[color:red]", "data-[12]", "z-[60]"]) {
 			expect(classes).toContain(kept);
 		}
-		for (const dropped of ["FooBar", "content-[hello world]", "data-[12]", "obj[key]"]) {
+		for (const dropped of ["FooBar", "content-[hello world]", "obj[key]", "items[0]", "list[]"]) {
 			expect(classes).not.toContain(dropped);
 		}
 	});

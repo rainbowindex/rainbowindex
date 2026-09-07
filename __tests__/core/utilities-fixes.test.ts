@@ -92,14 +92,16 @@ describe("alpha modifier sanitization (color.ts alphaToPercent)", () => {
 });
 
 describe("line-height modifier sanitization (typography.ts)", () => {
-	it("a modifier with injection characters is rejected, not stripped", () => {
+	it("a modifier with injection characters invalidates the class", () => {
 		// Rejection (vs stripping) matters: the stripped remainder would carry a
 		// top-level colon into the emitted line-height declaration.
-		const r = resolve("text-lg/[1.5;color:red]");
-		expect(r!.declarations).toEqual([
-			{ property: "font-size", value: "var(--text-lg)" },
-			{ property: "line-height", value: "var(--text-lg-leading)" },
-		]);
+		//
+		// This used to fall back to the size's own leading, so the class still
+		// emitted — a half-honoured `text-lg` where the author wrote something
+		// else. The whole class is now invalid, which is both safer and what an
+		// editor should show: any stated modifier that resolves to nothing takes
+		// the class with it, the rule the fluid path already followed.
+		expect(resolve("text-lg/[1.5;color:red]")).toBeNull();
 	});
 
 	it("text-lg/[1.5] keeps working", () => {

@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a capability Rainbow Index does not have.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Rainbow Index prioritizes composability, user control, predictable
+        performance, explicit behavior, and correctness over convenience or
+        familiarity. A proposal that trades one of those away needs to say what
+        it buys.
+
+        It is not a component library and ships no default scales — "Tailwind
+        has it" is not on its own a reason for it to exist here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does it break down today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: >
+        What should exist? If it is CSS-facing, write the directive or class as
+        you would want to author it.
+      render: css
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: >
+        The workaround, and what it costs. `@utility`, `@apply`, and arbitrary
+        values cover a lot — say why they do not cover this.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other shapes this could take, and why you prefer yours.

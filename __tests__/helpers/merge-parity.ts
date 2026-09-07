@@ -1,4 +1,5 @@
-import { BUILTIN_STATIC_PROPS, PREFIX_PROPS } from "../../src/merge/props.js";
+import { PREFIX_PROPS } from "../../src/merge/prefix-props.js";
+import { BUILTIN_STATIC_PROPS } from "../../src/merge/static-props.js";
 
 export function assertStaticUtilityParity(staticUtilities: ReadonlySet<string>): {
 	missingInParser: string[];

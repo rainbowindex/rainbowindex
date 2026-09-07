@@ -1,0 +1,4 @@
+{
+	"mode": "project",
+	"note": "The Tailwind-default preset, compiled end to end. Two thirds of expected.css is the :root token dump — every explicit @color stop the preset names is emitted whether or not a class uses it, unlike a generated ramp, which is pruned. That dump is the point: an upstream oklch value that changes shows up there and nowhere else. The signal in the utility section is one or two classes per directive kind, including the DEFAULT radius (C2b) and all three shadow families (C2c). The tail is the preset's own comments, which are ordinary CSS and pass through like any imported file's."
+}

@@ -1,0 +1,14 @@
+{
+	"name": "@rainbowindex-example/design-system-consumer",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "An app that consumes @rainbowindex-example/design-system, proving the preset protocol end to end.",
+	"scripts": {
+		"build": "rainbowindex build \"src/**/*.js\" --css src/index.css --output dist/app.css && node ./verify.mjs"
+	},
+	"dependencies": {
+		"@rainbowindex-example/design-system": "workspace:*",
+		"rainbowindex": "workspace:*"
+	}
+}

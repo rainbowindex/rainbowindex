@@ -1,6 +1,6 @@
-# Supply-chain hardening. Requires pnpm >= 10.21 (minimumReleaseAge landed in
-# 10.16, trustPolicy in 10.21 — see packageManager in package.json); older
-# pnpm silently ignores these keys.
+# Supply-chain hardening. These keys need pnpm >= 10.21 (minimumReleaseAge
+# landed in 10.16, trustPolicy in 10.21) and are silently ignored by anything
+# older, so packageManager in package.json must stay at or above that floor.
 #
 # Hold back freshly published dependency versions for 7 days so malware that
 # gets caught and unpublished within hours never reaches an install.
@@ -8,3 +8,12 @@ minimumReleaseAge: 10080
 # Refuse updates whose trust signals (provenance, signatures) are weaker than
 # the version already in the lockfile.
 trustPolicy: no-downgrade
+
+# The benchmark harness (V1) is a workspace package so it can depend on the
+# engine under test as `workspace:*` and on the engines it compares against at
+# pinned versions. It is `private` and outside the root `files` list, so it
+# never reaches the published tarball.
+packages:
+  - "."
+  - "bench"
+  - "examples/*"

@@ -98,7 +98,7 @@ const GOOGLE_DEFAULT_WEIGHT = "100 900";
 const GOOGLE_DEFAULT_STYLE = "normal italic";
 
 /** Map a face's provider string to the slot-level kind discriminant. */
-export function kindFromProvider(provider: string): FontProviderKind {
+function kindFromProvider(provider: string): FontProviderKind {
 	if (provider === "google") return "google";
 	if (provider === "system") return "system";
 	if (provider === "") return "manual";

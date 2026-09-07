@@ -1,0 +1,28 @@
+/*
+ * The tokens this package defines, as a stylesheet a consumer imports.
+ *
+ * There is no `@import "rainbowindex"` here on purpose: activation is the
+ * consuming project's business, and a nested one would activate twice. This
+ * file is directives only, which is what makes it composable — a consumer can
+ * import it before or after their own tokens and the last definition wins.
+ */
+
+@color {
+	/* A light/dark pair, so a consumer inherits the dark form for free. */
+	surface: oklch(0.98 0.005 265) / oklch(0.19 0.01 265);
+	/* One hue and chroma; the ramp is generated. The first choice here was an
+	   indigo (0.15 265), and the built-in APCA check rejected its 500 stop:
+	   |Lc| 58 against both paper and ink, so it can fill a shape but never
+	   carry text. This warm red clears the bar at every stop a consumer uses.
+	   See RI-1106 in docs/diagnostics.md. */
+	accent: 0.16 20;
+}
+
+@rounded {
+	control: 0.625rem;
+}
+
+@utility ds-focus-ring {
+	outline: 2px solid var(--color-accent-500);
+	outline-offset: 2px;
+}

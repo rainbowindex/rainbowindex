@@ -1,0 +1,9 @@
+@import "rainbowindex";
+/* Tailwind v4's scales, so the familiar class names resolve. Drop this line and
+   only what you declare below exists. */
+@import "rainbowindex/tailwind.css";
+
+/* One hue and one chroma; the whole ramp is generated, light and dark. */
+@color {
+	brand: 0.18 330;
+}

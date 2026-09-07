@@ -175,8 +175,14 @@ describe("createClassInspector — explain", () => {
 });
 
 describe("validate ⟺ compile parity", () => {
-	// The inspector's contract: validate(cls).ok exactly when the compiler
-	// emits a rule for cls. Checked against both themes over a mixed corpus.
+	// The inspector's contract: validate(cls).ok exactly when the compiler emits
+	// a rule for cls — with one deliberate exception. A marker class (`group`,
+	// `peer/item`) is valid and emits nothing, because it is worn by the markup
+	// so a `group-*` variant has an anchor, exactly as upstream treats it. The
+	// exception is listed here rather than left implicit: a validator that
+	// silently accepts classes the compiler discards is the failure this suite
+	// exists to catch.
+	const markers = new Set(["group", "peer", "group/item", "peer/sidebar"]);
 	const corpus = [
 		"flex",
 		"px-4",
@@ -198,6 +204,18 @@ describe("validate ⟺ compile parity", () => {
 		"group-hover:underline",
 		"nth-[2n+1]:flex",
 		"supports-[display:grid]:grid",
+		// Markers, and the spellings that must NOT be one: a marker under a
+		// variant or carrying `!` cannot anchor anything, because `.sm\:group` in
+		// the DOM is not `.group`.
+		"group",
+		"peer",
+		"group/item",
+		"peer/sidebar",
+		"hover:group",
+		"sm:group",
+		"group!",
+		"group/a/b",
+		"grouper",
 	];
 
 	test.each([
@@ -208,7 +226,7 @@ describe("validate ⟺ compile parity", () => {
 		const compiler = createCompiler();
 		for (const cls of corpus) {
 			const compiled = compiler.compile([cls], theme).rules.length > 0;
-			expect(inspector.validate(cls).ok, `parity for "${cls}"`).toBe(compiled);
+			expect(inspector.validate(cls).ok, `parity for "${cls}"`).toBe(compiled || markers.has(cls));
 		}
 	});
 });
@@ -279,5 +297,46 @@ describe("analyzeProjectCSS", () => {
 		expect(theme.colors.brand).toBeDefined();
 		expect(directives.some((d) => d.type === "color")).toBe(true);
 		expect(warnings.some((w) => w.includes("[RI-1011]"))).toBe(true);
+	});
+});
+
+/**
+ * Markers are the one class the inspector calls valid with no rule behind it.
+ * The variant half landed first (`group-hover/item:` works), which left the
+ * markup a named group needs on its parent reading as unknown — so an editor
+ * or lint rule flagged correct Tailwind.
+ */
+describe("marker classes", () => {
+	const inspector = createClassInspector(baseTheme);
+
+	test.each(["group", "peer", "group/item", "peer/sidebar"])("%s is valid", (cls) => {
+		expect(inspector.validate(cls)).toEqual({ ok: true });
+	});
+
+	test("explains as a marker: no declarations, no CSS, an anchor selector", () => {
+		const e = inspector.explain("group/item");
+		expect(e?.marker).toBe(true);
+		expect(e?.declarations).toEqual([]);
+		expect(e?.css).toBe("");
+		// What a `group-*/item:` variant will look for on this element.
+		expect(e?.selector).toBe(".group\\/item");
+	});
+
+	test.each(["hover:group", "sm:group", "group!", "-group", "group/", "group/a/b", "grouper"])(
+		"%s is not a marker",
+		(cls) => {
+			expect(inspector.validate(cls).ok).toBe(false);
+		},
+	);
+
+	test("a project's own @utility wins over the marker", () => {
+		// The marker is answered after the resolvers, not before, so defining
+		// `group` yourself still gets you a real rule.
+		const theme = analyzeProjectCSS(
+			'@import "rainbowindex";\n@utility group { display: contents; }',
+		).theme;
+		const e = createClassInspector(theme).explain("group");
+		expect(e?.marker).toBeUndefined();
+		expect(e?.declarations).toEqual([{ property: "display", value: "contents" }]);
 	});
 });

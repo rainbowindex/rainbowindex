@@ -1,0 +1,10 @@
+@import "rainbowindex";
+/* The design system's tokens, by package specifier. The analyzer resolves it
+   through the package's `exports` map and reads its directives — @color,
+   @rounded and @utility all apply as if they were written here. */
+@import "@rainbowindex-example/design-system/rainbow.css";
+
+/* A consumer's own tokens sit beside the package's. */
+@color {
+	brand: 0.18 330;
+}

@@ -27,7 +27,11 @@ import { CandidateCollector, type CandidateSink, type ClassCandidate, SetSink } 
 
 export { CLASS_HELPER_NAMES, extractClasses, VARIANT_HELPER_NAMES } from "./collectors.js";
 export type { CandidateOrigin, ClassCandidate } from "./sinks.js";
-export { expandApplyGroups, expandVariantGroups } from "./variant-groups.js";
+export {
+	expandApplyBodyGroups,
+	expandGroupsInStylesheet,
+	expandVariantGroups,
+} from "./variant-groups.js";
 
 export interface SourceExtractionInput {
 	path?: string;
@@ -146,6 +150,72 @@ function extractSvelte(
 	);
 }
 
+/**
+ * End of an `.astro` frontmatter block, or 0 when there is none.
+ *
+ * The fences are `---` on their own lines at the very top of the file. Anything
+ * else — a `---` inside markup, an `<hr>`-ish separator in prose — is body, so
+ * the opening fence has to be the first thing in the file and the closing one
+ * has to start its own line.
+ */
+function astroFrontmatterEnd(content: string): number {
+	if (!content.startsWith("---")) return 0;
+	const afterOpen = content.indexOf("\n");
+	if (afterOpen === -1) return 0;
+	for (let i = afterOpen; i !== -1; i = content.indexOf("\n", i + 1)) {
+		if (!content.startsWith("---", i + 1)) continue;
+		// The closing fence is alone on its line; `----` or `--- x` is not one.
+		// `i + 4` is past the newline and the three dashes.
+		const lineEnd = content.indexOf("\n", i + 1);
+		const rest = lineEnd === -1 ? content.slice(i + 4) : content.slice(i + 4, lineEnd);
+		if (rest.trim() === "") return i + 4;
+	}
+	return 0;
+}
+
+/**
+ * `.astro` — HTML-shaped markup over a JavaScript frontmatter block.
+ *
+ * The markup half is `extractHTML` plus Astro's own `class:list={…}` directive,
+ * which takes the same array/object expressions a `clsx()` call does. The
+ * frontmatter half is ordinary JS/TS, so it gets the helper and recipe passes
+ * without the JSX attribute passes — `class=` in there would be a string the
+ * markup scan already read.
+ */
+function extractAstro(
+	sink: CandidateSink,
+	context: SourceExtractionInput,
+	warnings?: string[],
+): void {
+	const content = context.content;
+
+	sink.setOrigin?.("plain");
+	scanClassTokens(sink, content, 0, warnings);
+
+	sink.setOrigin?.("attribute");
+	// Unconditional for the same reason as extractHTML: a quoted class list on
+	// an over-long line survives only through this pass.
+	collectAssignedValues(sink, content, /(?<![:\w-])class\s*=/g, NOOP_VISITOR, 0, warnings);
+	// Astro's own directive, and it needs its own pass for the same reason: on a
+	// short line the token scan reads its quoted entries anyway, but on a long
+	// one this is the only thing that sees them.
+	collectAssignedValues(sink, content, /\bclass:list\s*=/g, collectClassishExpression, 0, warnings);
+
+	const scriptEnd = astroFrontmatterEnd(content);
+	if (scriptEnd > 0) {
+		const script = content.slice(0, scriptEnd);
+		sink.setOrigin?.("helper");
+		collectCallArguments(sink, script, CLASS_HELPERS_CALL_RE, undefined, 0, warnings);
+		const variantMetadata = collectVariantHelperArguments(sink, script, 0, warnings);
+		collectClassMapArguments(sink, script, 0, warnings);
+		sink.setHelper?.(null);
+		pruneVariantMetadata(sink, variantMetadata, script);
+	}
+	// The frontmatter is real JavaScript, so the whole-file token scan above
+	// picked up its keywords and identifiers along with everything else.
+	pruneTokens(sink, NON_CLASS_IDENTIFIERS);
+}
+
 const EXTRACTORS: readonly Extractor[] = [
 	{
 		test: (context) => !!context.path && context.path.endsWith(".vue"),
@@ -154,6 +224,10 @@ const EXTRACTORS: readonly Extractor[] = [
 	{
 		test: (context) => !!context.path && context.path.endsWith(".svelte"),
 		extract: extractSvelte,
+	},
+	{
+		test: (context) => !!context.path && context.path.endsWith(".astro"),
+		extract: extractAstro,
 	},
 	{
 		test: (context) => !!context.path && context.path.endsWith(".html"),

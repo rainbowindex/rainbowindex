@@ -5,8 +5,10 @@ import {
 	registerCustomTextSizes,
 	registerCustomUtility,
 } from "../../src/merge/context.js";
-import { ri } from "../../src/merge/index.js";
+import { createThemeSnapshot } from "../../src/engine/index.js";
+import { createRi, ri } from "../../src/merge/index.js";
 import { BUILTIN_STATIC_KEYS } from "../../src/merge/props.js";
+import { analyzeProjectCSS } from "../../src/project/analyze.js";
 import {
 	MULTI_SEGMENT_PREFIXES,
 	PARSER_ONLY_STATICS,
@@ -200,6 +202,15 @@ describe("ri() basic conflicts", () => {
 		expect(ri("divide-x-4 divide-x-reverse")).toBe("divide-x-4 divide-x-reverse");
 		// divide widths are scoped (~divide:) so they don't merge with element border widths
 		expect(ri("divide-x-4 border-2")).toBe("divide-x-4 border-2");
+	});
+
+	test("placeholder colors are scoped, so they never fight text colors", () => {
+		// Both emit `color`, but one lands inside `&::placeholder`. Unscoped, the
+		// merger would see one property claimed twice and drop a class the author
+		// meant to keep.
+		expect(ri("text-red-500 placeholder-gray-400")).toBe("text-red-500 placeholder-gray-400");
+		expect(ri("placeholder-gray-400 placeholder-blue-500")).toBe("placeholder-blue-500");
+		expect(ri("placeholder-gray-400 text-red-500")).toBe("placeholder-gray-400 text-red-500");
 	});
 
 	test("border-bs/be width-vs-color dual-mode; divide style dedupes incl. hidden", () => {
@@ -785,6 +796,136 @@ describe("ri() real-world scenarios", () => {
 		expect(ri("blur-md filter-[blur(1px)]")).toBe("filter-[blur(1px)]");
 		// grayscale (filter) and backdrop-grayscale (backdrop-filter) are independent
 		expect(ri("grayscale-50 backdrop-grayscale-50")).toBe("grayscale-50 backdrop-grayscale-50");
+	});
+
+	test("the ring-offset family never deletes a ring that works", () => {
+		// These claims were written while the family was still deferred, against
+		// the slots it would use once it landed. It has landed, and they hold
+		// unchanged — which is the point of pinning them in advance.
+		//
+		// The failure they guard: `ring-offset-*` and `ring-inset` fell into the
+		// `ring` prefix and claimed its `box-shadow`, so
+		// `ri("ring-2 ring-offset-2 ring-offset-white")` returned just
+		// `"ring-offset-white"`. Found by the Tailwind class-surface parity sweep.
+		expect(ri("ring-2 ring-offset-2 ring-offset-white")).toBe(
+			"ring-2 ring-offset-2 ring-offset-white",
+		);
+		expect(ri("ring-offset-2 ring-2")).toBe("ring-offset-2 ring-2");
+		expect(ri("ring-2 ring-inset")).toBe("ring-2 ring-inset");
+		expect(ri("ring-blue-500 ring-offset-red-500")).toBe("ring-blue-500 ring-offset-red-500");
+		expect(ri("inset-ring-2 ring-offset-2")).toBe("inset-ring-2 ring-offset-2");
+
+		// They still merge properly among themselves: width vs width, color vs
+		// color, and the inset flag with itself.
+		expect(ri("ring-offset-2 ring-offset-4")).toBe("ring-offset-4");
+		expect(ri("ring-offset-white ring-offset-black")).toBe("ring-offset-black");
+		expect(ri("ring-inset ring-inset")).toBe("ring-inset");
+		// A ring-offset width and its color are independent of each other.
+		expect(ri("ring-offset-2 ring-offset-white")).toBe("ring-offset-2 ring-offset-white");
+
+		// And the ring family itself is unchanged.
+		expect(ri("ring-2 ring-4")).toBe("ring-4");
+		expect(ri("ring-blue-500 ring-red-500")).toBe("ring-red-500");
+		expect(ri("ring-2 ring-blue-500")).toBe("ring-2 ring-blue-500");
+	});
+
+	test("ring-offset-* claims no box-shadow, so a project's own shadow utility survives it", () => {
+		// The built-in families all claim `box-shadow` *plus* a slot var, so an
+		// over-broad `box-shadow` claim on ring-offset is invisible among them —
+		// neither set ends up a superset of the other, and every assertion above
+		// still passes. A project `@utility` that emits only `box-shadow` is the
+		// input that tells them apart: give ring-offset the shorthand and it
+		// dominates that utility outright, deleting a shadow the user wrote.
+		//
+		// This is the same failure the ring-offset row was added to fix, one
+		// level out — found by mutating the row and watching every existing test
+		// stay green.
+		const theme = analyzeProjectCSS("@utility lifted { box-shadow: 0 2px 6px #0003; }").theme;
+		const projectRi = createRi(createThemeSnapshot(theme));
+		expect(projectRi("lifted ring-offset-2")).toBe("lifted ring-offset-2");
+		expect(projectRi("lifted ring-offset-white")).toBe("lifted ring-offset-white");
+		// The control: a family that really does emit the shorthand still wins,
+		// so this is not just asserting that nothing ever merges.
+		expect(projectRi("lifted shadow-none")).toBe("shadow-none");
+	});
+
+	test("*-initial merges as a color, not as a shadow value", () => {
+		// It sets only the family's color var, so it overrides a color and
+		// leaves the shadow itself alone. Read as the default branch instead, it
+		// claimed the whole box-shadow — dominating an unrelated `shadow-md`
+		// while failing to dominate the `shadow-red-500` it actually overrides.
+		expect(ri("shadow-red-500 shadow-initial")).toBe("shadow-initial");
+		expect(ri("shadow-initial shadow-blue-500")).toBe("shadow-blue-500");
+		expect(ri("shadow-md shadow-initial")).toBe("shadow-md shadow-initial");
+		expect(ri("text-shadow-red-500 text-shadow-initial")).toBe("text-shadow-initial");
+		expect(ri("inset-shadow-red-500 inset-shadow-initial")).toBe("inset-shadow-initial");
+		// The three families stay independent of one another.
+		expect(ri("shadow-initial inset-shadow-initial text-shadow-initial")).toBe(
+			"shadow-initial inset-shadow-initial text-shadow-initial",
+		);
+	});
+
+	test("filter functions compose with each other, the way transform axes do", () => {
+		// Regression, found by the Tailwind class-surface parity sweep. Every
+		// composable filter emits the shared `filter` shorthand as its second
+		// declaration, and DIRECT_OVERRIDES expanded that property to all nine
+		// slot vars — so any filter claimed every other filter's slot and the
+		// family annihilated itself: `ri("blur-sm grayscale")` was `"grayscale"`.
+		expect(ri("blur-sm grayscale")).toBe("blur-sm grayscale");
+		expect(ri("blur-sm brightness-50 contrast-125")).toBe("blur-sm brightness-50 contrast-125");
+		expect(ri("grayscale invert sepia")).toBe("grayscale invert sepia");
+		expect(ri("backdrop-blur-sm backdrop-invert")).toBe("backdrop-blur-sm backdrop-invert");
+		// The two chains stay independent of each other.
+		expect(ri("blur-sm backdrop-blur-lg")).toBe("blur-sm backdrop-blur-lg");
+		// Same slot still dedupes — composition must not become "keep everything".
+		expect(ri("blur-sm blur-md")).toBe("blur-md");
+		expect(ri("backdrop-invert backdrop-invert-0")).toBe("backdrop-invert-0");
+	});
+
+	test("the filter resets still dominate every function to their left", () => {
+		// The slot claims moved from the property to the spellings that really
+		// do replace the chain, so these must be unchanged.
+		expect(ri("blur-sm grayscale filter-none")).toBe("filter-none");
+		expect(ri("blur-md filter-[blur(1px)]")).toBe("filter-[blur(1px)]");
+		expect(ri("backdrop-blur-sm backdrop-invert backdrop-filter-none")).toBe(
+			"backdrop-filter-none",
+		);
+		// `backdrop-blur-none` is a blur-slot reset, not a chain reset, so it
+		// merges with its own family and leaves the others alone.
+		expect(ri("backdrop-blur-sm backdrop-blur-none")).toBe("backdrop-blur-none");
+		expect(ri("backdrop-blur-none backdrop-blur-lg")).toBe("backdrop-blur-lg");
+		expect(ri("backdrop-invert backdrop-blur-none")).toBe("backdrop-invert backdrop-blur-none");
+		expect(ri("backdrop-opacity-50 backdrop-blur-none")).toBe(
+			"backdrop-opacity-50 backdrop-blur-none",
+		);
+		// Its filter-side twin has always behaved this way.
+		expect(ri("invert blur-none")).toBe("invert blur-none");
+		expect(ri("blur-none blur-lg")).toBe("blur-lg");
+		// A reset on one chain leaves the other alone.
+		expect(ri("blur-sm backdrop-filter-none")).toBe("blur-sm backdrop-filter-none");
+		// Order matters, as always: a function after a reset survives it.
+		expect(ri("filter-none blur-sm")).toBe("filter-none blur-sm");
+	});
+
+	test("bare `filter` and `backdrop-filter` enable the chain without resetting it", () => {
+		// The v3 migration spelling. What matters is that it never DELETES a
+		// filter function: `filter` claims the shorthand alone, so every
+		// function keeps its own slot and survives.
+		expect(ri("filter blur-sm grayscale")).toBe("blur-sm grayscale");
+		expect(ri("blur-sm filter")).toBe("blur-sm filter");
+		expect(ri("backdrop-filter backdrop-blur-sm")).toBe("backdrop-blur-sm");
+
+		// The bare class itself IS dropped when a filter to its right already
+		// emits the identical `filter: var(--ri-blur, ) …` declaration — it is a
+		// redundant class, not a lost one, and the rendered CSS is unchanged.
+		// It survives whenever nothing else claims the shorthand in its scope,
+		// which includes the case it exists for: functions behind a variant.
+		expect(ri("filter")).toBe("filter");
+		expect(ri("filter hover:blur-sm")).toBe("filter hover:blur-sm");
+
+		// And a reset still beats it.
+		expect(ri("filter filter")).toBe("filter");
+		expect(ri("filter filter-none")).toBe("filter-none");
 	});
 
 	test("transform axes compose; bare rotate independent; transform/zoom", () => {

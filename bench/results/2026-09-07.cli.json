@@ -1,0 +1,31 @@
+{
+	"date": "2026-09-07",
+	"runs": 5,
+	"method": "spawn",
+	"rows": [
+		{
+			"size": "1k",
+			"engine": "rainbowindex",
+			"label": "rainbowindex",
+			"ms": 197.34529199999997,
+			"method": "spawn-min",
+			"outputBytes": 410758
+		},
+		{
+			"size": "1k",
+			"engine": "tailwind",
+			"label": "Tailwind CSS",
+			"ms": 159.42879200000016,
+			"method": "spawn-min",
+			"outputBytes": 434152
+		},
+		{
+			"size": "1k",
+			"engine": "unocss",
+			"label": "UnoCSS",
+			"ms": 437.9141249999998,
+			"method": "spawn-min",
+			"outputBytes": 387774
+		}
+	]
+}

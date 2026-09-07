@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
-	expandApplyGroups,
+	expandGroupsInStylesheet,
 	expandVariantGroups,
 	extractClasses,
+	extractClassesFromSource,
 } from "../../src/scanner/class-extraction.js";
 import { MAX_LINE_LENGTH } from "../../src/scanner/collectors.js";
 import {
@@ -150,53 +151,53 @@ describe("expandVariantGroups", () => {
 // @apply group expansion
 // ---------------------------------------------------------------------------
 
-describe("expandApplyGroups", () => {
+describe("expandGroupsInStylesheet", () => {
 	test("expands a group inside @apply", () => {
 		const css = `[data-slot="content-wrapper"] {\n\t@apply hover:{flex-1 z-10 p-4};\n}`;
-		expect(expandApplyGroups(css)).toBe(
+		expect(expandGroupsInStylesheet(css)).toBe(
 			`[data-slot="content-wrapper"] {\n\t@apply hover:flex-1 hover:z-10 hover:p-4;\n}`,
 		);
 	});
 
 	test("expands a group inside @a alias", () => {
 		const css = `.foo { @a hover:{px-2 leading-none}; }`;
-		expect(expandApplyGroups(css)).toBe(`.foo { @a hover:px-2 hover:leading-none; }`);
+		expect(expandGroupsInStylesheet(css)).toBe(`.foo { @a hover:px-2 hover:leading-none; }`);
 	});
 
 	test("expands multiple groups across multiple rules", () => {
 		const css = `.a { @apply focus:{outline-2 outline-blue-500}; }\n.b { @a disabled:{opacity-50 cursor-not-allowed}; }`;
-		expect(expandApplyGroups(css)).toBe(
+		expect(expandGroupsInStylesheet(css)).toBe(
 			`.a { @apply focus:outline-2 focus:outline-blue-500; }\n.b { @a disabled:opacity-50 disabled:cursor-not-allowed; }`,
 		);
 	});
 
 	test("expands chained variants", () => {
 		const css = `.foo { @apply sm:hover:{bg-gray-700 text-white}; }`;
-		expect(expandApplyGroups(css)).toBe(
+		expect(expandGroupsInStylesheet(css)).toBe(
 			`.foo { @apply sm:hover:bg-gray-700 sm:hover:text-white; }`,
 		);
 	});
 
 	test("leaves @apply without group syntax untouched", () => {
 		const css = `.foo { @apply flex items-center p-4; }`;
-		expect(expandApplyGroups(css)).toBe(css);
+		expect(expandGroupsInStylesheet(css)).toBe(css);
 	});
 
 	test("leaves CSS without @apply untouched", () => {
 		const css = `.foo { color: red; padding: 4px; }\n.bar:hover { background: blue; }`;
-		expect(expandApplyGroups(css)).toBe(css);
+		expect(expandGroupsInStylesheet(css)).toBe(css);
 	});
 
 	test("does not touch braces in regular CSS rules", () => {
 		const css = `.foo:hover { color: red; } .bar { @apply hover:{flex-1}; } .baz { color: blue; }`;
-		expect(expandApplyGroups(css)).toBe(
+		expect(expandGroupsInStylesheet(css)).toBe(
 			`.foo:hover { color: red; } .bar { @apply hover:flex-1; } .baz { color: blue; }`,
 		);
 	});
 
 	test("returns input verbatim when no @ or { present", () => {
-		expect(expandApplyGroups(".foo { color: red; }")).toBe(".foo { color: red; }");
-		expect(expandApplyGroups("/* nothing here */")).toBe("/* nothing here */");
+		expect(expandGroupsInStylesheet(".foo { color: red; }")).toBe(".foo { color: red; }");
+		expect(expandGroupsInStylesheet("/* nothing here */")).toBe("/* nothing here */");
 	});
 });
 
@@ -329,6 +330,68 @@ describe("extractClasses", () => {
 		expect(classes).not.toContain("lessons[activeIndex - 1]");
 	});
 
+	test("keeps arbitrary values that are a bare integer", () => {
+		// Regression: the index-access filter rejected anything ending in
+		// `[digits]`, which is JS subscripting AND a whole family of real
+		// utilities. `z-[60]` compiled when handed to the compiler directly and
+		// disappeared when scanned out of markup — a class that works in
+		// `safelist()` and not in a class attribute.
+		const classes = extractClasses(
+			`<div class="z-[60] order-[3] flex-[2] col-span-[7] line-clamp-[8]">`,
+		);
+		expect([...classes]).toEqual(
+			expect.arrayContaining(["z-[60]", "order-[3]", "flex-[2]", "col-span-[7]", "line-clamp-[8]"]),
+		);
+	});
+
+	test("drops a bare bracket holding nothing but a number", () => {
+		// A bracket-only class is a real shape — `[color:red]` sets a property
+		// directly — so these cannot be waved through on the grounds that
+		// nothing bracket-only is a class. What rejects them is the tokenizer,
+		// not a candidate filter: CLASS_RE's arbitrary-property branch demands a
+		// letter or `-` after the bracket and a `:` inside. Pinned here because
+		// the index-access filter leans on that guarantee instead of repeating
+		// it, and would need an `^` branch back if it ever stopped holding.
+		const classes = extractClasses('<div class="[0] [12] [] [color:red]">');
+
+		expect(classes).toContain("[color:red]");
+		expect(classes).not.toContain("[0]");
+		expect(classes).not.toContain("[12]");
+		expect(classes).not.toContain("[]");
+	});
+
+	test("still rejects subscripts and TypeScript array types next to the fixed filter", () => {
+		const classes = extractClasses(`
+			const a = items[0];
+			const b = rows[12];
+			let c: string[] = [];
+			let d: Props[] = [];
+		`);
+		expect(classes).not.toContain("items[0]");
+		expect(classes).not.toContain("rows[12]");
+		expect(classes).not.toContain("string[]");
+		expect(classes).not.toContain("Props[]");
+	});
+
+	test("keeps a numeric modifier, and drops an empty bracket", () => {
+		// `text-lg/[6]` is a real class — the bracket is a line-height modifier,
+		// not a subscript — and the old digits-only filter dropped it too, since
+		// the character before `[` is `/` rather than a letter.
+		const kept = extractClasses('<div class="text-lg/[6] bg-red-500/[50] border-red-500/[10]">');
+		expect(kept).toContain("text-lg/[6]");
+		expect(kept).toContain("bg-red-500/[50]");
+		expect(kept).toContain("border-red-500/[10]");
+
+		// An empty bracket is a typo, and it used to be caught only as a side
+		// effect of the digits pattern (`\d*` matches nothing). Left in, it
+		// reaches the compiler and emits `padding: ;`.
+		const dropped = extractClasses('<div class="p-[] gap-[] m-[] p-4">');
+		expect(dropped).toContain("p-4");
+		expect(dropped).not.toContain("p-[]");
+		expect(dropped).not.toContain("gap-[]");
+		expect(dropped).not.toContain("m-[]");
+	});
+
 	test("does not treat JS property access with dashed string keys as classes", () => {
 		// Regression: rest["aria-invalid"] etc. used to slip through the
 		// JS-property-access filter because the value's dash satisfied the
@@ -366,13 +429,28 @@ describe("extractClasses", () => {
 		expect(classes).not.toContain("sm:MixedCase");
 	});
 
-	test("drops arbitrary values containing whitespace and bare numeric brackets", () => {
-		const source = '<div class="content-[hello world] data-[12] p-[20px]">';
+	test("drops arbitrary values containing whitespace", () => {
+		const source = '<div class="content-[hello world] p-[20px]">';
 		const classes = extractClasses(source);
 
 		expect(classes).toContain("p-[20px]");
 		expect(classes).not.toContain("content-[hello world]");
-		expect(classes).not.toContain("data-[12]");
+	});
+
+	test("lets a dashed bracket through even when its value is a bare number", () => {
+		// This test used to assert `data-[12]` was dropped, as a side effect of
+		// an index-access filter that rejected everything ending in `[digits]`.
+		// That filter also rejected `z-[60]` and `order-[3]`, which are real
+		// utilities, and `data-[12]` is not valid JavaScript in the first place
+		// — nothing in a source file produces it by accident. The filter now
+		// keys on the dash the way PROPERTY_ACCESS_RE already did, so a token
+		// like this reaches the compiler and is rejected there as an unknown
+		// utility, which is where unknown utilities belong.
+		const classes = extractClasses('<div class="data-[12] z-[60] p-[20px]">');
+
+		expect(classes).toContain("z-[60]");
+		expect(classes).toContain("p-[20px]");
+		expect(classes).toContain("data-[12]");
 	});
 
 	test("skips oversized lines during multiline filtering", () => {
@@ -730,5 +808,158 @@ describe("scanSourceFilesAsync — unreadable files", () => {
 			chmodSync(unreadableFile, 0o644);
 			cleanup();
 		}
+	});
+});
+
+/**
+ * `.astro` is HTML-shaped markup over a JavaScript frontmatter block, so it
+ * needs both halves. Before this it fell to the generic token scan: static
+ * classes came through by accident, while `class:list={…}` and any helper call
+ * in the frontmatter did not, and the dev server never recompiled on save
+ * because `.astro` was not a source file.
+ */
+describe("Astro extraction", () => {
+	const astro = (content: string): string[] => [
+		...extractClassesFromSource({ path: "/app/src/Page.astro", content }),
+	];
+
+	test("reads static class, class:list, and frontmatter helpers", () => {
+		const classes = astro(`---
+import Card from "./Card.astro";
+const extra = clsx("text-lg", cond && "font-bold");
+---
+<div class="flex gap-4" class:list={["shadow-md", extra, { underline: on }]}>
+	<span class="tracking-widest">Hi</span>
+</div>`);
+		for (const c of [
+			"flex",
+			"gap-4",
+			"shadow-md",
+			"underline",
+			"text-lg",
+			"font-bold",
+			"tracking-widest",
+		]) {
+			expect(classes).toContain(c);
+		}
+	});
+
+	test("reads a recipe config in the frontmatter", () => {
+		const classes = astro(`---
+const styles = cva("rounded", { variants: { size: { sm: "p-2", lg: "p-8" } } });
+---
+<div class={styles({ size: "sm" })}>x</div>`);
+		expect(classes).toEqual(expect.arrayContaining(["rounded", "p-2", "p-8"]));
+	});
+
+	test("does not mistake a --- inside markup for frontmatter", () => {
+		// Only a fence at the very top opens one; a separator in the body is body.
+		const classes = astro(`<div class="flex">---</div>
+<p class="p-4">after</p>`);
+		expect(classes).toEqual(expect.arrayContaining(["flex", "p-4"]));
+	});
+
+	test("reads class:list on a line the whole-file scan drops", () => {
+		// The token scan skips lines over MAX_LINE_LENGTH, which is exactly why
+		// the attribute passes run unconditionally rather than as a nicety: on a
+		// long line they are the only thing that sees the class list. Generated
+		// markup hits this routinely.
+		const filler = "x".repeat(MAX_LINE_LENGTH);
+		const classes = astro(
+			`<div data-x="${filler}" class:list={["shadow-md"]} class="gap-4">y</div>`,
+		);
+		expect(classes).toContain("shadow-md");
+		expect(classes).toContain("gap-4");
+	});
+
+	test("treats frontmatter noise exactly as a .tsx file's imports are treated", () => {
+		// The scanner over-collects by design — a candidate that is not a utility
+		// compiles to nothing — so the bar is parity with the JS extractor, not an
+		// empty result. Anything astro-specific beyond that would be a real leak.
+		const source = `import Card from "./Card";
+export const prerender = true;`;
+		const tsx = [
+			...extractClassesFromSource({
+				path: "/app/src/Page.tsx",
+				content: `${source}\n<div className="flex">x</div>`,
+			}),
+		];
+		const classes = astro(`---\n${source}\n---\n<div class="flex">x</div>`);
+		expect(classes).toContain("flex");
+		// `---` is the fence itself; everything else must already appear for .tsx.
+		expect(classes.filter((c) => c !== "---").sort()).toEqual(tsx.sort());
+	});
+});
+
+/**
+ * The scanner had the same flat-bracket bug as the parser, one level up: a
+ * token with a nested bracket tore in half. The tail was often a valid utility,
+ * so the compiler emitted a real rule for a class nobody wrote — the quietest
+ * possible failure, since the CSS looks fine and simply is not yours.
+ */
+/**
+ * The named-group variant landed in the parser but not here, so it worked in
+ * `validate()` and `@apply` and not from a source file — the half that actually
+ * matters. Worse, the torn tail was a valid utility, so `.underline` got a rule
+ * nobody wrote, exactly as the nested-bracket bug below did.
+ */
+describe("named groups survive tokenization", () => {
+	const scan = (content: string): string[] => [
+		...extractClassesFromSource({ path: "/app/index.html", content }),
+	];
+
+	test("keeps a named group as one token", () => {
+		const classes = scan(
+			`<div class="group/item"><span class="group-hover/item:underline">x</span></div>`,
+		);
+		expect(classes).toContain("group-hover/item:underline");
+		expect(classes).toContain("group/item");
+		expect(classes).not.toContain("underline");
+	});
+
+	test("keeps a named peer and a named container as one token", () => {
+		expect(scan(`<div class="peer-checked/sidebar:block">x</div>`)).toContain(
+			"peer-checked/sidebar:block",
+		);
+		expect(scan(`<div class="@sidebar/sm:flex">x</div>`)).toContain("@sidebar/sm:flex");
+	});
+
+	test("leaves a utility's own value modifier alone", () => {
+		// `text-lg/7` and `bg-red-500/50` carry a slash too, in the value rather
+		// than the variant, and were never affected.
+		const classes = scan(`<span class="text-lg/7 bg-red-500/50">x</span>`);
+		expect(classes).toEqual(expect.arrayContaining(["text-lg/7", "bg-red-500/50"]));
+	});
+});
+
+describe("nested brackets survive tokenization", () => {
+	const scan = (content: string): string[] => [
+		...extractClassesFromSource({ path: "/app/index.html", content }),
+	];
+
+	test("keeps a nested-bracket variant as one token", () => {
+		expect(scan(`<div class="group-[&[href]]:underline">x</div>`)).toContain(
+			"group-[&[href]]:underline",
+		);
+		expect(scan(`<div class="has-[[data-x]]:flex">x</div>`)).toContain("has-[[data-x]]:flex");
+	});
+
+	test("no longer invents a class from the torn tail", () => {
+		// This is the bug that mattered: `.underline` got a real rule.
+		expect(scan(`<div class="group-[&[href]]:underline">x</div>`)).not.toContain("underline");
+	});
+
+	test("warns on whitespace inside a variant's own bracket", () => {
+		// Stripping the variant before the whitespace test hid this: the base
+		// became `flex`, carried no bracket, and skipped every filter.
+		const warnings: string[] = [];
+		const classes = [
+			...extractClassesFromSource(
+				{ path: "/app/index.html", content: `<div class="group-[&[a b]]:flex">x</div>` },
+				warnings,
+			),
+		];
+		expect(warnings.some((w) => w.includes("RI-1412"))).toBe(true);
+		expect(classes).not.toContain("flex");
 	});
 });

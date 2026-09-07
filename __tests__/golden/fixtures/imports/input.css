@@ -1,0 +1,9 @@
+@import "rainbowindex";
+@import "./imports/tokens.css";
+@import "./imports/components.css";
+@import url("https://example.com/vendor.css");
+@import "./imports/tokens.css" screen;
+
+.entry-rule {
+	color: var(--color-brand-500);
+}

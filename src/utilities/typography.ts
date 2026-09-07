@@ -11,13 +11,14 @@ import {
 	describeSlotWeights,
 	weightIsLoaded,
 } from "../integrations/font-providers/model.js";
-import { isFontFamilyValue } from "../merge/props.js";
+import { isFontFamilyValue } from "../merge/value-kinds.js";
 import { devWarn } from "../runtime.js";
 import { isBracketedColor } from "./color.js";
 import {
 	type UtilityResult,
 	single,
 	multi,
+	DECIMAL_RE,
 	spacingLookup,
 	extractArbitrary,
 	deepFreezeUtilityMap,
@@ -193,9 +194,25 @@ function splitLineHeightModifier(s: string): { base: string; modifier: string | 
 	return { base: s, modifier: null };
 }
 
+/**
+ * A bare number is a spacing multiple, as it is everywhere else on the scale:
+ * `leading-6` and `text-sm/6` both mean 6 × the spacing base, which is what
+ * Tailwind means by them too.
+ *
+ * Gated on DECIMAL_RE rather than handed straight to `spacingLookup`, because
+ * that helper also maps `px` — and `text-lg/px` is not a line height anyone
+ * means.
+ */
+function numericLeading(value: string): string | null {
+	return DECIMAL_RE.test(value) ? spacingLookup(value) : null;
+}
+
 /** Resolve a text line-height modifier (text-lg/{mod}). Mirrors leading-* so text-lg/7 ≡ leading-7. */
 function resolveLineHeightModifier(mod: string, theme: ResolvedTheme): string | null {
+	// Theme first: `@leading { 7: 1.75rem; }` must still beat the multiple.
 	if (Object.hasOwn(theme.leading, mod)) return theme.leading[mod];
+	const numeric = numericLeading(mod);
+	if (numeric !== null) return numeric;
 	if (mod.startsWith("(") && mod.endsWith(")")) {
 		const inner = mod.slice(1, -1);
 		return /^--[a-zA-Z_][\w-]*$/.test(inner) ? `var(${inner})` : null;
@@ -346,7 +363,13 @@ export function typographyGenerator(
 	if (full.startsWith("text-")) {
 		const { base: sizeName, modifier } = splitLineHeightModifier(full.slice(5));
 		const lh = modifier !== null ? resolveLineHeightModifier(modifier, theme) : null;
+		// A modifier the author wrote and that resolves to nothing invalidates the
+		// whole class — the same rule the fluid path states above. Falling back to
+		// the size's own leading made `text-lg/zzz` indistinguishable from
+		// `text-lg`, so a typo silently shipped different typography.
+		const modifierFailed = modifier !== null && lh === null;
 		if (Object.hasOwn(theme.text, sizeName)) {
+			if (modifierFailed) return null;
 			return multi(
 				["font-size", `var(--text-${sizeName})`],
 				["line-height", lh ?? `var(--text-${sizeName}-leading)`],
@@ -356,6 +379,10 @@ export function typographyGenerator(
 		if (!isBracketedColor(sizeName)) {
 			const arbText = extractArbitrary(sizeName);
 			if (arbText) {
+				// Dropping the declaration here was the other half of the same bug:
+				// `text-[20px]/7` emitted a font-size alone and inherited its
+				// line-height.
+				if (modifierFailed) return null;
 				return lh !== null
 					? multi(["font-size", arbText], ["line-height", lh])
 					: single("font-size", arbText);
@@ -420,6 +447,8 @@ export function typographyGenerator(
 		if (Object.hasOwn(theme.leading, name)) {
 			return single("line-height", theme.leading[name]);
 		}
+		const numeric = numericLeading(name);
+		if (numeric !== null) return single("line-height", numeric);
 		const arbLeading = extractArbitrary(name);
 		if (arbLeading) return single("line-height", arbLeading);
 		if (name === "px") return single("line-height", "1px");

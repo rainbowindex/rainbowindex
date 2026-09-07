@@ -17,6 +17,8 @@ export default defineConfig([
 			editor: "src/entries/editor.ts",
 			vite: "src/integrations/vite.ts",
 			oxlint: "src/integrations/oxlint.ts",
+			eslint: "src/integrations/lint/index.ts",
+			recipe: "src/entries/recipe.ts",
 		},
 		format: ["esm"],
 		outExtension: () => ({ js: ".mjs", dts: ".d.ts" }),
@@ -36,6 +38,9 @@ export default defineConfig([
 		},
 		onSuccess: async () => {
 			copyFileSync(resolve("src/index.css"), resolve("dist/index.css"));
+			// The optional Tailwind-default preset. Plain CSS, so it is copied
+			// rather than bundled; `__tests__/package.test.ts` checks it shipped.
+			copyFileSync(resolve("src/presets/tailwind.css"), resolve("dist/tailwind.css"));
 		},
 	},
 ]);

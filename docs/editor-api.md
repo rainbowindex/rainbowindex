@@ -4,13 +4,15 @@
 
 The host reads the files. The entry supplies the semantics.
 
+The [VS Code extension](editor.md) is the reference consumer: everything it answers comes from this entry, and nothing it answers is decided by it.
+
 ## Version handshake
 
 ```ts
 import { version, EDITOR_API_VERSION, editorCapabilities } from "rainbowindex/editor";
 ```
 
-Feature-detect with `editorCapabilities`, not with the version. Integrations load whatever version the workspace installed. The capability list: `class-candidates`, `candidate-call-ids`, `candidate-origin-provenance`, `css-entry-detection`, `theme-analysis`, `class-inspection`, `variant-list`, `class-enumeration`, `merge-analysis`, `structured-diagnostics`, `color-swatches`, `editor-session`.
+Feature-detect with `editorCapabilities`, not with the version. Integrations load whatever version the workspace installed. The capability list: `class-candidates`, `candidate-call-ids`, `candidate-origin-provenance`, `css-entry-detection`, `theme-analysis`, `class-inspection`, `variant-list`, `class-enumeration`, `merge-analysis`, `structured-diagnostics`, `color-swatches`, `editor-session`, `diagnostic-suppression`, `named-radii-and-fluid-ranges`, `font-weight-coverage`, `import-inlining`, `serializable-snapshot`, `stylesheet-rendering`, `class-sorting`, `candidate-spans-deduped`.
 
 ## The session
 
@@ -30,10 +32,157 @@ session.swatch("brand", 500);            // light and dark oklch + hex
 session.extractCandidates(source, path); // class tokens with exact source spans
 session.tokens();                        // the theme's token inventory
 session.snapshot();                      // a CompilationSnapshot for createRi()
+session.render(["flex", "px-4"]);        // the stylesheet a build would emit
+session.sortClasses(["pt-8", "p-4"]);    // ["p-4", "pt-8"] — the order the CSS uses
 session.setCss(nextCss);                 // theme changed → all caches invalidate together
 ```
 
 All theme-derived values cache together and invalidate together on `setCss()`. `setCss()` with identical text is a no-op.
+
+### Reading imported files
+
+The entry does no IO, so a session ignores `@import` unless you hand it a
+resolver. Give it one and directives in imported files reach the theme:
+
+```ts
+const session = createEditorSession({
+	css: themeCss,
+	cssPath: "/app/src/index.css",
+	resolveImport: (specifier, from) => {
+		const path = resolveInYourHost(specifier, from);
+		const doc = openDocuments.get(path);
+		return doc ? { path, content: doc.text } : null;
+	},
+});
+
+session.importedFiles; // ["/app/src/tokens.css"] — watch these too
+```
+
+The resolver is synchronous: the host already holds its open documents, and a
+promise here would make every theme read async. Return `null` for anything you
+cannot find — the session turns that into an `RI-1041` diagnostic rather than
+throwing. Serve unsaved buffers from it and the theme tracks what the user is
+typing, in a file they have not written yet.
+
+`importedFiles` is what a session-invalidation watcher needs: editing an
+imported token file must trigger `setCss()` on the entry, and without this list
+a host has no way to know which files those are. Feature-detect with the
+`import-inlining` capability.
+
+## Rendering a stylesheet
+
+`renderStylesheet` is the only export that produces CSS rather than answering a
+question about it. It is the production compile and assembly — the same
+`createCompiler()` and `assembleSections()` the PostCSS plugin and the CLI run:
+
+```ts
+import { analyzeProjectCSS, renderStylesheet, stripRIDirectives } from "rainbowindex/editor";
+
+const { theme } = analyzeProjectCSS(themeCss);
+const { css, sections, warnings } = renderStylesheet(theme, ["flex", "bg-brand-500"], {
+	userCSS: stripRIDirectives(themeCss),
+});
+```
+
+`sections` is the generated output in canonical order; `css` is that plus
+`userCSS`, joined the way a build emits it. `userCSS` is optional and does two
+things: `var(--color-brand-500)` written by hand counts as demand, so the token
+survives pruning, and `--spacing(4)`-style CSS functions are compiled.
+`authoredClassNames` narrows the warnings that only make sense for a class a
+person typed (`RI-1002`), exactly as the build does for scanned files.
+
+`session.render(classNames)` is the same call bound to the session's theme,
+defaulting `userCSS` to the session's own entry with the directives stripped
+and the `@import`s already inlined. Pass `userCSS: ""` for the generated output
+alone.
+
+Two steps of a real build are missing, both deliberately:
+
+| Missing | Why | What you see |
+| --- | --- | --- |
+| Font resolution | Narrowing a Google family's weights is a network call, and this entry does no IO | The slot still emits its `@import` and its `--font-*` variable; only weights the provider would have trimmed remain |
+| `@apply` expansion | The rewrite edits the user's own rules and belongs to PostCSS; pulling it in would double the entry's weight | An `@apply` in `userCSS` passes through verbatim |
+
+Everything else — token pruning, `@property` registration, preflight,
+`[data-theme]` overrides, rule ordering — is the production path, and a test
+asserts byte-for-byte equality with `compileProject` for input that touches
+neither exception.
+
+Nothing here reaches `node:`: a test bundles the whole entry with
+`platform: "browser"` and fails on the first builtin that turns up in the
+graph, so a playground or a `vscode.dev` host can render without a server.
+Feature-detect with the `stylesheet-rendering` capability.
+
+## One candidate per class
+
+`extractCandidates` (and the standalone `extractClassCandidates`) is a lexer,
+not a parser. In JavaScript a colon is also a ternary and an object key, so it
+emits both the joined token and the fragments around each colon:
+
+```ts
+extractClassCandidates({ content: `<div className="sm:hover:flex" />`, path: "a.tsx" });
+// sm, sm:hover:flex, hover   ← three candidates, one class
+extractClassCandidates({ content: `<div class="sm:hover:flex">`, path: "a.html" });
+// sm:hover:flex              ← markup has no such ambiguity
+```
+
+That over-collection is free for a build — an invented class compiles to no
+rule — and wrong for anything that maps a candidate back to a **place in the
+source**. An editor that validated all three would underline `sm` inside
+`sm:flex` as an unknown class.
+
+`outermostCandidates` is the filter:
+
+```ts
+import { extractClassCandidates, outermostCandidates } from "rainbowindex/editor";
+
+const candidates = outermostCandidates(extractClassCandidates({ content, path }));
+```
+
+It drops every candidate whose span lies inside another's — including inside a
+variant group's `groupPrefix` span, which is what covers the stray `hover` in
+`hover:{px-2 py-1}` — keeps the first of two candidates over an identical
+span, and returns source order. Origins are untouched, so filter to
+`attribute` / `helper` / `safelist` as well when prose and bare identifiers are
+not wanted. Run it for underlines, quick fixes and hovers; skip it when you are
+feeding a compiler, which wants everything.
+
+Feature-detect with the `candidate-spans-deduped` capability.
+
+## Sorting a class list
+
+```ts
+import { sortClasses } from "rainbowindex/editor";
+
+sortClasses(theme, ["pt-8", "my-component", "p-4", "hover:underline"]);
+// ["my-component", "p-4", "pt-8", "hover:underline"]
+```
+
+The order is the order the generated stylesheet writes the rules in: the same
+`sortKey` `explain()` reports, then the same codepoint tie-break on the escaped
+selector that `compile()` applies. So a sorted attribute reads the way the
+cascade resolves — including which of two conflicting classes actually wins.
+
+- Classes the compiler emits no rule for come **first**, in the order they were
+  written. A CSS-module name, a component class, or a typo has no position in
+  the cascade, and inventing one would lose the only ordering it has.
+- Duplicates are kept. A formatter that silently drops a class is worse than one
+  that leaves it where it was.
+- Equal keys keep their input order, so sorting twice changes nothing.
+- A variant group (`hover:{underline font-bold}`) is one token, and one token is
+  all a sort can move. Run `expandVariantGroups` first to order the members.
+
+> [!CAUTION]
+> Do not sort a list that reaches `ri()`. `ri()` is right-most-wins over its
+> arguments, so reordering changes which class survives. This is for a static
+> class attribute, where the attribute's order carries no meaning and the CSS
+> decides.
+
+`session.sortClasses(classes)` is the same function bound to a session's theme
+and its cached inspector — the form a per-keystroke editor command wants. The
+standalone `sortClasses(theme, classes)` memoizes one inspector per theme
+object, so it is equally cheap when called repeatedly with the same theme.
+Feature-detect with the `class-sorting` capability.
 
 ## Guarantees
 
@@ -75,7 +224,7 @@ inspector.explain("px-4");
 const { classes, templates } = session.enumerate();
 ```
 
-`classes` holds every finite, concrete class for the theme, sorted by name. The default theme yields 3,537 classes. The count grows with the theme. `templates` holds the 88 families with infinite values, such as the spacing scale — offer those as snippets, for example `p-4`.
+`classes` holds every finite, concrete class for the theme, sorted by name. The default theme yields 3,919 classes. The count grows with the theme. `templates` holds the 95 families with infinite values, such as the spacing scale — offer those as snippets, for example `p-4`.
 
 ## Merge analysis
 
@@ -149,12 +298,14 @@ Everything the session wraps is also exported directly:
 | Export | Purpose |
 | --- | --- |
 | `analyzeProjectCSS(css)` | Directives, theme, warnings, and positioned diagnostics. |
+| `inlineDirectiveImports(css, opts)` | Replace `@import` with the text it names, using your resolver. |
 | `createClassInspector(theme)` | The validator and explainer. |
 | `listVariants(theme)` | All variants with kind and wrapper. |
 | `enumerateClassNames(theme)` | The completion universe. |
 | `UTILITY_VALUE_SPACES` | Root → the value kinds that root accepts. |
 | `analyzeMerge(classes, snapshot?)` | Merge analysis. |
 | `createThemeSnapshot(theme)` | A snapshot for `createRi()`. |
+| `serializeSnapshot`, `hydrateSnapshot`, `publishSnapshot` | Ship a snapshot to a client as JSON, and install it as the default `ri()`'s theme. |
 | `resolveColorSwatch(theme, name, stop?)` | One swatch. |
 | `listThemeTokens(theme)` | The token inventory. |
 | `extractClassCandidates(input, warnings?)` | Spanned candidates. |

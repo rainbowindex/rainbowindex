@@ -9,13 +9,13 @@ import { topLevelIndexOf } from "../directives/foundation.js";
 // (merge/props.ts) so the properties this generator emits and the properties
 // ri() claims for conflict resolution can never drift apart.
 import {
-	PADDING_MAP,
-	MARGIN_MAP,
 	GAP_MAP,
 	INSET_MAP,
+	MARGIN_MAP,
+	PADDING_MAP,
 	SCROLL_MARGIN_MAP,
 	SCROLL_PADDING_MAP,
-} from "../merge/props.js";
+} from "./property-maps.js";
 import { fluidBoundExprs, fluidInterpolation, fluidRange } from "../css/fluid.js";
 import { devWarn } from "../runtime.js";
 import { type UtilityResult, single, multi, spacingLookup, extractArbitrary } from "./helpers.js";

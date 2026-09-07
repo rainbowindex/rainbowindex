@@ -1,0 +1,4 @@
+{
+	"mode": "project",
+	"note": "`@color dark { variant: appearance }` — `dark:` matches exactly when light-dark() flips under the shipped preflight, which takes two rules: the explicit html[data-appearance] and, separately, the OS preference where no attribute overrides it. Read the pair together; a change that drops one silently halves the strategy. The preflight's own html[data-appearance] blocks are the other half of the same switch."
+}

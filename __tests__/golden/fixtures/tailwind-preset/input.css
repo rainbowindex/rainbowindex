@@ -1,0 +1,16 @@
+/*
+ * The path is relative on purpose. The bare specifier a real project writes,
+ * `@import "rainbowindex/tailwind.css"`, resolves through the package exports
+ * map to `dist/tailwind.css` — a build artifact `pnpm test` never produces, so
+ * a clean checkout would compile this fixture with an unresolved import and
+ * commit a silently wrong expected.css. The bare specifier is covered in
+ * `__tests__/package.test.ts`, which runs after a build.
+ *
+ * One consequence, so nobody reads this expected.css as what a real project
+ * gets: comments are stripped from PACKAGE imports and kept in the project's
+ * own files, so the preset's section headings below are here precisely because
+ * this import is relative. Through the bare specifier they are gone, and
+ * package.test.ts is what asserts it.
+ */
+@import "rainbowindex";
+@import "../../../../src/presets/tailwind.css";

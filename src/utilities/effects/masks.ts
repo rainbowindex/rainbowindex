@@ -15,7 +15,7 @@ import {
 	normalizeDecimalToken,
 } from "../helpers.js";
 import { resolveColor, isBracketedColor } from "../color.js";
-import { isMaskRadialSizeValue } from "../../merge/props.js";
+import { isMaskRadialSizeValue } from "../../merge/value-kinds.js";
 
 export const MASK_STATICS: Readonly<Record<string, UtilityResult>> = {
 	// Mask (basic)

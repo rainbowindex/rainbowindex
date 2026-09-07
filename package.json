@@ -1,6 +1,6 @@
 {
 	"name": "rainbowindex",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "CSS-first system for building and maintaining consistent user interfaces",
 	"keywords": [
 		"css",
@@ -32,18 +32,24 @@
 	"homepage": "https://rainbowindex.dev",
 	"bugs": "https://github.com/rainbowindex/rainbowindex/issues",
 	"type": "module",
-	"packageManager": "pnpm@10.12.1",
+	"packageManager": "pnpm@10.34.5",
 	"main": "./dist/index.mjs",
 	"types": "./dist/index.d.ts",
 	"style": "./dist/index.css",
 	"scripts": {
 		"build": "tsup",
+		"prepare": "pnpm build",
 		"prepublishOnly": "pnpm check",
-		"check": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:artifacts",
+		"check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm test:artifacts",
 		"test": "vitest run --exclude __tests__/cli/** --exclude __tests__/package.test.ts",
 		"test:coverage": "vitest run --coverage --exclude __tests__/cli/** --exclude __tests__/package.test.ts",
 		"test:artifacts": "pnpm build && vitest run __tests__/cli/cli.test.ts __tests__/package.test.ts",
+		"test:golden:update": "vitest run __tests__/golden -u",
 		"test:watch": "vitest",
+		"bench": "pnpm --filter @rainbowindex/bench run bench",
+		"bench:cli": "pnpm --filter @rainbowindex/bench run bench:cli",
+		"bench:parity": "pnpm --filter @rainbowindex/bench run bench:parity",
+		"examples:build": "pnpm --filter \"@rainbowindex-example/*\" run build",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome lint .",
 		"lint:fix": "biome lint --write .",
@@ -59,6 +65,7 @@
 			"default": "./dist/index.mjs"
 		},
 		"./index.css": "./dist/index.css",
+		"./tailwind.css": "./dist/tailwind.css",
 		"./editor": {
 			"types": "./dist/editor.d.ts",
 			"default": "./dist/editor.mjs"
@@ -71,6 +78,14 @@
 			"types": "./dist/oxlint.d.ts",
 			"default": "./dist/oxlint.mjs"
 		},
+		"./eslint": {
+			"types": "./dist/eslint.d.ts",
+			"default": "./dist/eslint.mjs"
+		},
+		"./recipe": {
+			"types": "./dist/recipe.d.ts",
+			"default": "./dist/recipe.mjs"
+		},
 		"./package.json": "./package.json"
 	},
 	"bin": {
@@ -78,7 +93,8 @@
 	},
 	"files": [
 		"dist",
-		"CHANGELOG.md"
+		"CHANGELOG.md",
+		"NOTICE.md"
 	],
 	"sideEffects": [
 		"**/*.css"
@@ -106,10 +122,17 @@
 		"@capsizecss/metrics": "^4.2.0",
 		"@types/node": "^25.9.1",
 		"@vitest/coverage-v8": "^4.1.0",
+		"esbuild": "^0.27.7",
+		"eslint": "^10.9.1",
+		"oxfmt": "^0.65.0",
 		"postcss": "^8.5.8",
+		"prettier": "^3.9.6",
+		"stylelint": "^17.14.1",
 		"tsup": "^8.5.1",
 		"typescript": "^6.0.3",
 		"vite": "8.0.0",
-		"vitest": "^4.0.17"
+		"vitest": "^4.0.17",
+		"vscode-css-languageservice": "^6.3.10",
+		"vscode-languageserver-textdocument": "^1.0.14"
 	}
 }

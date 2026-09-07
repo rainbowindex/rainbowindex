@@ -26,6 +26,7 @@ import {
 import {
 	findClosingBrace,
 	IDENT_KEY_RE,
+	legacySyntaxWarning,
 	parseKeyValueBody,
 	scanEntries,
 	topLevelIndexOf,
@@ -323,6 +324,12 @@ interface SlotBody {
 	legacyMetrics: FontEntry[];
 }
 
+/** `url("/a.woff2")` → `/a.woff2`; anything else keeps its quotes stripped. */
+function unwrapURL(value: string): string {
+	const match = /^url\(\s*(.*?)\s*\)$/i.exec(value.trim());
+	return stripQuotes(match ? match[1] : value);
+}
+
 const LEGACY_METRICS_KEYS = new Set([
 	"metricsFallback",
 	"sizeAdjust",
@@ -341,6 +348,23 @@ function parseSlotBody(body: string, slot: string, warnings?: string[]): SlotBod
 			continue;
 		}
 		if (entry.fragment) {
+			// The canonical face: `face { src: url(…); style: italic; }`.
+			if (entry.value === "face" && entry.block !== undefined) {
+				let src = "";
+				const own: FontEntry[] = [];
+				for (const [k, v] of parseKeyValueBody(entry.block, warnings, "font").entries) {
+					if (k === "src") src = unwrapURL(v);
+					else own.push([k, v]);
+				}
+				if (src === "") {
+					warnings?.push(
+						`[RI-1217] @font slot "${slot}" has a \`face { … }\` block with no \`src:\` — write \`face { src: url("/fonts/…"); }\`. The entry was ignored.`,
+					);
+				} else {
+					out.faces.push({ src, entries: own });
+				}
+				continue;
+			}
 			// Legacy `@face { src: …; … }` sub-block — desugar into a face entry.
 			if (entry.value === "@face" && entry.block !== undefined) {
 				warnDeprecated(warnings, slot, "`@face { src: …; }`", "use `face: <src> { … }`");
@@ -632,6 +656,47 @@ export function parseFontBody(body: string, slot: string, warnings?: string[]): 
 }
 
 /**
+ * Read the canonical `@font` slot into the preamble-plus-body shape the
+ * rest of this file already understands.
+ *
+ * `family` and `from` are the two declarations that used to sit *before* the
+ * block, so they are lifted back out into the preamble string and everything
+ * downstream sees exactly what the old spelling produced.
+ */
+function readNestedSlot(
+	slot: string,
+	block: string,
+	warnings?: string[],
+): { preamble: string; body: string } | null {
+	let family: string | null = null;
+	let from: string | null = null;
+	const rest: string[] = [];
+	for (const entry of scanEntries(stripCSSComments(block), { newlineTerminates: false })) {
+		if (entry.block === undefined && entry.key === "family") {
+			family = entry.value;
+			continue;
+		}
+		if (entry.block === undefined && entry.key === "from") {
+			from = entry.value;
+			continue;
+		}
+		// Everything else goes back verbatim, blocks included, so `face { … }`
+		// and the option keys reach parseSlotBody unchanged.
+		rest.push(block.slice(entry.start, entry.end).trim());
+	}
+	if (family === null || family === "") {
+		warnings?.push(
+			`[RI-1221] @font slot "${slot}" has a block but no \`family:\` declaration, so it names no font. Write \`${slot} { family: "<Family>", <fallback>; }\` — or \`family: system;\` for the system stack.`,
+		);
+		return null;
+	}
+	return {
+		preamble: from === null ? family : `${family} from ${from}`,
+		body: rest.join("\n"),
+	};
+}
+
+/**
  * Parse nested @font block body into multiple FontConfigs.
  *
  * ```
@@ -647,8 +712,17 @@ export function parseNestedFontBlock(body: string, warnings?: string[]): FontSlo
 	// Slot values (`"Inter",\n  ui-sans-serif`) legally wrap across newlines
 	// to their `;`/`{`, so newlines never end an entry.
 	for (const entry of scanEntries(cleanedBody, { newlineTerminates: false })) {
-		// @font blocks support no removals; colon-less fragments are dropped.
-		if (entry.removal || entry.fragment) continue;
+		if (entry.removal) continue;
+		// The canonical slot: `sans { family: …; from: google; … }`.
+		// A colon-less entry with a block is that; one without is a stray value.
+		if (entry.fragment) {
+			if (entry.block === undefined) continue;
+			const nested = readNestedSlot(entry.value, entry.block, warnings);
+			if (nested !== null) {
+				configs.push(buildSlot(entry.value, nested.preamble, nested.body, warnings));
+			}
+			continue;
+		}
 		// An unterminated `{ … }` block yields no usable slot — stop, as before.
 		if (entry.unclosedBlock) break;
 		if (!entry.key) continue;
@@ -664,6 +738,15 @@ export function parseNestedFontBlock(body: string, warnings?: string[]): FontSlo
 		}
 
 		if (entry.block !== undefined) {
+			// RI-1046 rather than RI-1218: this is one of the four legacy
+			// spellings, and a project silences that class of thing as one code.
+			warnings?.push(
+				legacySyntaxWarning(
+					`${entry.key}: <family> { … }`,
+					`${entry.key} { family: <family>; … }`,
+					"font",
+				),
+			);
 			configs.push(buildSlot(entry.key, entry.value, entry.block, warnings));
 		} else if (entry.value) {
 			configs.push(buildSlot(entry.key, entry.value, undefined, warnings));

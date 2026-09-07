@@ -1,6 +1,15 @@
 import { relative, resolve } from "node:path";
 
-export type Subcommand = "build" | "generate-types" | "preload-fonts" | "init" | "create" | "scan";
+export type Subcommand =
+	| "build"
+	| "generate-types"
+	| "generate-snapshot"
+	| "generate-tokens"
+	| "preload-fonts"
+	| "init"
+	| "create"
+	| "migrate"
+	| "scan";
 
 export interface CLIOptions {
 	command: Subcommand;
@@ -12,6 +21,10 @@ export interface CLIOptions {
 	strict: boolean;
 	template?: string;
 	targetDir?: string;
+	/** `migrate`'s positional: which tool to migrate from. */
+	migrateSource?: string;
+	/** `migrate --write`: apply the change instead of writing a preview. */
+	write: boolean;
 	/** True if the user typed a subcommand keyword (vs falling back to `build`). */
 	subcommandExplicit: boolean;
 	/** Set when --version or --help was handled; main() should exit early. */
@@ -33,14 +46,38 @@ interface FlagSpec {
 	apply(opts: CLIOptions, value?: string): void;
 }
 
-const OUTPUT: FlagSpec = {
+const WRITE: FlagSpec = {
+	names: ["--write"],
+	describe: "Apply the migration in place (default: write a preview beside it)",
+	apply(opts) {
+		opts.write = true;
+	},
+};
+
+// `--css` and `-o` mean different things per command family, so each meaning
+// keeps its own description while sharing the one apply target. A factory
+// rather than six near-identical literals: the description is the only thing
+// that ever differs, and spelling `apply` out again is how two of them came to
+// drift from `applyCSSFile`.
+const cssInput = (describe: string): FlagSpec => ({
+	names: ["--css"],
+	valueName: "<file>",
+	describe,
+	apply(opts, value) {
+		opts.cssFile = value;
+	},
+});
+
+const output = (describe: string): FlagSpec => ({
 	names: ["-o", "--output"],
 	valueName: "<file>",
-	describe: "Output CSS file path (omit to write to stdout)",
+	describe,
 	apply(opts, value) {
 		opts.output = value;
 	},
-};
+});
+
+const OUTPUT = output("Output CSS file path (omit to write to stdout)");
 
 const WATCH: FlagSpec = {
 	names: ["--watch"],
@@ -77,39 +114,16 @@ const TEMPLATE: FlagSpec = {
 	},
 };
 
-// --css means different things per command family, so each meaning keeps its
-// own description while sharing the one apply target.
-const applyCSSFile = (opts: CLIOptions, value?: string): void => {
-	opts.cssFile = value;
-};
+const CSS_INPUT = cssInput("CSS input with directives (auto-detected if omitted)");
+const CSS_INPUT_TYPES = cssInput("CSS input with @color/@text/@utility/etc directives");
+const CSS_INPUT_FONTS = cssInput("CSS input with @font directives");
 
-const CSS_INPUT: FlagSpec = {
-	names: ["--css"],
-	valueName: "<file>",
-	describe: "CSS input with directives (auto-detected if omitted)",
-	apply: applyCSSFile,
-};
+const TOKENS_OUTPUT = output(
+	"Token module path (default: rainbowindex-tokens.ts); tokens.json lands beside it",
+);
+const SNAPSHOT_OUTPUT = output("Snapshot module path (default: rainbowindex-snapshot.ts)");
 
-const CSS_INPUT_TYPES: FlagSpec = {
-	names: ["--css"],
-	valueName: "<file>",
-	describe: "CSS input with @color/@text/@utility/etc directives",
-	apply: applyCSSFile,
-};
-
-const CSS_INPUT_FONTS: FlagSpec = {
-	names: ["--css"],
-	valueName: "<file>",
-	describe: "CSS input with @font directives",
-	apply: applyCSSFile,
-};
-
-const CSS_TARGET: FlagSpec = {
-	names: ["--css"],
-	valueName: "<file>",
-	describe: "Stylesheet path to create/patch (default: src/index.css)",
-	apply: applyCSSFile,
-};
+const CSS_TARGET = cssInput("Stylesheet path to create/patch (default: src/index.css)");
 
 /** Declarative model for one subcommand: which flags it accepts, what its
  *  positional arguments mean, and the hand-written help prose around the
@@ -121,7 +135,7 @@ interface CommandSpec {
 	/** Prose rendered between Usage and Options (init explains itself first). */
 	intro?: string;
 	flags: readonly FlagSpec[];
-	positionals: "globs" | "targetDir" | "none";
+	positionals: "globs" | "targetDir" | "migrate" | "none";
 	/** Hand-written prose rendered after the Options section. */
 	body: string;
 }
@@ -173,6 +187,27 @@ Examples:
   rainbowindex create my-app
   rainbowindex create my-app --template vue-ts`,
 	},
+	migrate: {
+		summary: "Translate a Tailwind v4 project into Rainbow Index directives",
+		usage: "  rainbowindex migrate tailwind [glob...] [options]",
+		intro: `What this does:
+  1. Finds the Tailwind CSS entry and translates its @theme into directives.
+  2. Adds @import "rainbowindex/tailwind.css" so the familiar class names
+     keep resolving, and keeps your dark-mode strategy.
+  3. Scans the globs you pass and reports every class the new theme rejects.
+  4. Writes migration-report.md with what still needs a person.`,
+		flags: [CSS_INPUT, WRITE],
+		positionals: "migrate",
+		body: `Safety:
+  Nothing is overwritten without --write. By default the translated entry is
+  written beside the original as <name>.rainbowindex.css so you can read it
+  first. With --write, the original is kept as <name>.css.tailwind.bak.
+
+Examples:
+  rainbowindex migrate tailwind
+  rainbowindex migrate tailwind "src/**/*.{ts,tsx}"
+  rainbowindex migrate tailwind --css app/globals.css --write`,
+	},
 	"generate-types": {
 		summary: "Generate TypeScript types for ri() autocomplete",
 		usage: "  rainbowindex generate-types [options]",
@@ -185,6 +220,57 @@ Examples:
 Examples:
   rainbowindex generate-types
   rainbowindex generate-types --strict --css src/styles.css`,
+	},
+	"generate-snapshot": {
+		summary: "Generate a theme snapshot module so client ri() is theme-aware",
+		usage: "  rainbowindex generate-snapshot [options]",
+		flags: [CSS_INPUT_TYPES, SNAPSHOT_OUTPUT],
+		positionals: "none",
+		body: `Why:
+  \`ri()\` asks the published theme whether \`text-lg\` is a size or a color. A
+  browser bundle runs no compile, so without a published theme it guesses, and
+  a size can be read as a color and dropped. The Vite plugin handles this on
+  its own — this command is for every other bundler.
+
+Output:
+  Writes \`rainbowindex-snapshot.ts\` to the current working directory. Import
+  it once, as early as possible in your entry point:
+
+    import "./rainbowindex-snapshot";
+
+  It also exports \`ri\` bound to that snapshot, for multi-tenant rendering.
+  Re-run it when the theme changes; unchanged input rewrites nothing.
+
+Examples:
+  rainbowindex generate-snapshot
+  rainbowindex generate-snapshot --css src/styles.css -o src/theme.ts`,
+	},
+	"generate-tokens": {
+		summary: "Generate typed token exports and a W3C Design Tokens file",
+		usage: "  rainbowindex generate-tokens [options]",
+		flags: [CSS_INPUT_TYPES, TOKENS_OUTPUT],
+		positionals: "none",
+		body: `Why:
+  A class is the right way to style an element and the wrong way to hand a
+  chart library a series color or a canvas a fill. Those need the token's
+  value. This writes the theme as data, so that code can read it without
+  re-declaring the palette in JavaScript.
+
+Output:
+  \`rainbowindex-tokens.ts\` — \`tokens.color.brand[500]\`, typed \`as const\`, so a
+  typo is a compile error and the editor completes the names. The values are
+  \`var()\` references rather than literals, so they still follow the cascade.
+
+  \`tokens.json\` beside it — the same theme in the W3C Design Tokens format,
+  with values resolved to hex, which is what Style Dictionary and Figma
+  importers read. A design tool has no cascade to resolve a \`var()\` against.
+
+  Both are sorted and derived from the CSS entry alone, so re-running on an
+  unchanged theme rewrites nothing.
+
+Examples:
+  rainbowindex generate-tokens
+  rainbowindex generate-tokens --css src/styles.css -o src/tokens.ts`,
 	},
 	scan: {
 		summary: "Show what the class scanner extracts (debugging)",
@@ -251,6 +337,7 @@ export function parseArgs(
 		watch: false,
 		minify: false,
 		strict: false,
+		write: false,
 		subcommandExplicit: false,
 		earlyExit: false,
 	};
@@ -335,9 +422,21 @@ export function parseArgs(
 			opts.targetDir = arg;
 			continue;
 		}
+		if (spec.positionals === "migrate") {
+			// The first positional names the tool; everything after it is a glob
+			// to check the migrated theme against.
+			if (opts.migrateSource === undefined) opts.migrateSource = arg;
+			else opts.globs.push(arg);
+			continue;
+		}
 		throw new Error(`Unexpected extra argument "${arg}" for ${opts.command}.`);
 	}
 
+	if (opts.command === "migrate" && opts.migrateSource === undefined) {
+		throw new Error(
+			"migrate requires a source. The only one is `tailwind`: rainbowindex migrate tailwind",
+		);
+	}
 	if (opts.command === "create" && !opts.targetDir) {
 		throw new Error("create requires a project directory. Example: rainbowindex create my-app");
 	}
@@ -411,7 +510,10 @@ Usage:
   rainbowindex <glob> [options]        Generate CSS from source files
   rainbowindex init                    Wire Rainbow Index into the current Vite app
   rainbowindex create <dir>            Scaffold a Vite app with Rainbow Index ready
+  rainbowindex migrate tailwind        Translate a Tailwind v4 project into directives
   rainbowindex generate-types          Generate TypeScript types for ri()
+  rainbowindex generate-snapshot       Generate the theme snapshot for client ri()
+  rainbowindex generate-tokens         Generate typed token exports + tokens.json
   rainbowindex preload-fonts           Generate font preload link tags
   rainbowindex scan <file...>          Show what the class scanner extracts
 

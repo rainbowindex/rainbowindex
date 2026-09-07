@@ -1,0 +1,11 @@
+@import "rainbowindex";
+@import "rainbowindex/tailwind.css";
+
+/* The default scan globs are `*.html` and `src/**`. Next.js puts its code in
+   `app/` (or `src/app/`), so say where to look — without this the stylesheet
+   compiles with none of your classes in it and nothing warns. */
+@source "./**/*.{ts,tsx}";
+
+@color {
+	brand: 0.18 330;
+}

@@ -701,6 +701,29 @@ describe("Ordering", () => {
 		);
 	});
 
+	it("every box-shadow slot and its inputs share the box-shadow group", () => {
+		// An unregistered property silently falls back to DEFAULT_PROPERTY_GROUP
+		// (500), which would scatter the ring-offset declarations ~360 groups away
+		// from the chain they belong to. Nothing else notices: they are custom
+		// properties read at use time, so the rendering survives and only rule
+		// order — the thing this table exists to make deterministic — goes wrong.
+		const boxShadow = PROPERTY_GROUPS["box-shadow"];
+		for (const property of [
+			"--ri-shadow",
+			"--ri-inset-shadow",
+			"--ri-ring-shadow",
+			"--ri-inset-ring-shadow",
+			"--ri-ring-offset-shadow",
+			"--ri-ring-color",
+			"--ri-inset-ring-color",
+			"--ri-ring-offset-color",
+			"--ri-ring-offset-width",
+			"--ri-ring-inset",
+		]) {
+			expect(PROPERTY_GROUPS[property], property).toBe(boxShadow);
+		}
+	});
+
 	it("has variant weight bands with correct spacing", () => {
 		expect(VARIANT_WEIGHTS["dark"]).toBe(0);
 		expect(VARIANT_WEIGHTS["sm"]).toBeLessThan(VARIANT_WEIGHTS["hover"]);
@@ -941,6 +964,8 @@ describe("Shared utilities", () => {
 			theme,
 			{
 				usedColorStops: new Map([["theme", new Set([500])]]),
+				usedColorNames: new Set<string>(),
+				keyframes: [] as string[],
 				usedTextSizes: new Set(["base"]),
 				usedFonts: new Set(["sans"]),
 				usedShadows: new Set(["md"]),
@@ -963,6 +988,8 @@ describe("Shared utilities", () => {
 			theme,
 			{
 				usedColorStops: new Map(),
+				usedColorNames: new Set<string>(),
+				keyframes: [] as string[],
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
 				usedShadows: new Set(),
@@ -984,6 +1011,8 @@ describe("Shared utilities", () => {
 			theme,
 			{
 				usedColorStops: new Map(),
+				usedColorNames: new Set<string>(),
+				keyframes: [] as string[],
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
 				usedShadows: new Set(),
@@ -1005,6 +1034,8 @@ describe("Shared utilities", () => {
 			theme,
 			{
 				usedColorStops: new Map(),
+				usedColorNames: new Set<string>(),
+				keyframes: [] as string[],
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
 				usedShadows: new Set(["alias"]),
@@ -1078,6 +1109,8 @@ describe("Shared utilities", () => {
 			theme,
 			{
 				usedColorStops: new Map(),
+				usedColorNames: new Set<string>(),
+				keyframes: [] as string[],
 				usedTextSizes: new Set(),
 				usedFonts: new Set(),
 				usedShadows: new Set(),
@@ -1147,6 +1180,27 @@ describe("Error codes", () => {
 		const dirs = extractDirectives(`@color { brand: nonexistent; }`);
 		const theme = resolveDirectives(dirs);
 		expect(theme.warnings.some((w) => w.includes("RI-1105"))).toBe(true);
+	});
+
+	it("RI-1109: a value naming a generative palette with no stop", () => {
+		// A generative palette emits --color-brand-<stop> and no bare
+		// --color-brand, so this reference can never resolve.
+		const theme = resolveDirectives(
+			extractDirectives(`@color { brand: 0.18 330; duo: brand / brand; }`),
+		);
+		expect(theme.warnings.some((w) => w.includes("RI-1109"))).toBe(true);
+	});
+
+	it("RI-1109: stays quiet for a stop, an explicit source, and an unknown name", () => {
+		const theme = resolveDirectives(
+			extractDirectives(
+				`@color { brand: 0.18 330; surface: oklch(0.98 0.01 250); a: brand-500/50; b: surface/50; c: var(--color-from-my-own-css); }`,
+			),
+		);
+		// An unknown name is left alone on purpose: it may be a variable the
+		// author declares in their own CSS, and warning about those would fire on
+		// working themes.
+		expect(theme.warnings.filter((w) => w.includes("RI-1109"))).toEqual([]);
 	});
 
 	it("RI-1103: invalid ! removal", () => {

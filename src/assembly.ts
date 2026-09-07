@@ -13,20 +13,26 @@ import {
 	generateAllColorVariables,
 	generateThemeOverrides,
 } from "./theme/colors.js";
+import type { FontSlot } from "./integrations/font-providers/model.js";
+// The pure emission half, not the barrel: the barrel re-exports the Google
+// client, whose metadata cache reaches node:crypto and node:fs, and
+// `rainbowindex/editor` renders stylesheets through this file.
 import {
-	type FontSlot,
 	generateFontCSS,
 	SYSTEM_STACKS,
 	type FontOutput,
-} from "./integrations/font-providers/index.js";
+} from "./integrations/font-providers/emit.js";
 import { type CompilationResult, renderCSS } from "./engine/index.js";
 import { generatePreflight } from "./css/preflight.js";
-import { COLOR_STOP_REF_RE, SHADOW_VAR_REF_RE } from "./css/token-refs.js";
+import { COLOR_STOP_REF_RE, COLOR_VAR_REF_RE, SHADOW_VAR_REF_RE } from "./css/token-refs.js";
 import { codepointCompare } from "./shared.js";
 
 /** Token usage sets extracted from CompilationResult for token layer pruning. */
 interface TokenUsage {
 	usedColorStops: Map<string, Set<number>>;
+	usedColorNames: Set<string>;
+	/** Emitted @keyframes bodies — authored CSS that can name a color. */
+	keyframes: readonly string[];
 	usedTextSizes: Set<string>;
 	usedFonts: Set<string>;
 	usedShadows: Set<string>;
@@ -37,10 +43,146 @@ interface TokenUsage {
 // Token layer generation
 // ---------------------------------------------------------------------------
 
+/**
+ * Which color tokens a compile demands, and which `@shadow` tokens go with them.
+ *
+ * Split out of `generateTokenLayer` because two places need the same answer:
+ * `:root` emits the tokens, and the `[data-theme]` override blocks decide which
+ * `--color-theme-<n>` participate in theme switching. When they computed it
+ * separately they disagreed — a `theme-282` demanded by a value got its
+ * declaration but no override block, so it silently stopped following
+ * `data-theme`.
+ */
+export interface ColorDemand {
+	/** hue → stops to emit, after force-adds and the closure. */
+	effectiveStops: Map<string, Set<number>>;
+	/** Whole token names to emit: explicit, pair, and bare-alias entries. */
+	liveNames: Set<string>;
+	/** `@shadow` tokens that will be emitted, closed over their references. */
+	shadowsToEmit: Set<string>;
+}
+
+function resolveColorDemand(theme: ResolvedTheme, usage: TokenUsage): ColorDemand {
+	// Which `@shadow` tokens will be emitted — needed up here because their
+	// values can name colors, which is a demand the color pass has to see.
+	const shadowsToEmit = resolveTransitiveShadowDeps(theme.shadows, usage.usedShadows);
+
+	// Colors — the least fixed point of demand, not a sequence of passes.
+	//
+	// A color is emitted because something asks for it, and emitting it can ask
+	// for more: an explicit value may name another color, an alias emits a
+	// `var()` at its source, and a `@shadow` token or `@keyframes` body can name
+	// a color that no class ever mentions. Each of those can chain. Running the
+	// steps in a fixed order gets it wrong in both directions — `card: accent-500`
+	// over `accent: brand` emitted a reference to a `--color-brand-500` that the
+	// alias pass had already finished with — so the loop below runs until nothing
+	// new is demanded. Every step only ever ADDS, and the sets are bounded by the
+	// theme, so it terminates.
+	//
+	// `usedColorStops` and `usedColorNames` are two readings of the same
+	// references and both are needed: a generative palette is demanded per stop
+	// (`red` + 500), while an explicit entry is keyed by its undivided name
+	// (`red-500`), and only the theme knows which of the two a given
+	// `var(--color-red-500)` meant.
+	const effectiveStops = new Map<string, Set<number>>(
+		[...usage.usedColorStops].map(([k, v]) => [k, new Set(v)]),
+	);
+	const liveNames = new Set<string>(usage.usedColorNames);
+	let demandGrew = true;
+
+	const addStops = (name: string, stops: Iterable<number>): void => {
+		let set = effectiveStops.get(name);
+		if (!set) {
+			set = new Set();
+			effectiveStops.set(name, set);
+			demandGrew = true;
+		}
+		for (const stop of stops) {
+			if (set.has(stop)) continue;
+			set.add(stop);
+			demandGrew = true;
+		}
+	};
+	const addName = (name: string): void => {
+		if (liveNames.has(name)) return;
+		liveNames.add(name);
+		demandGrew = true;
+	};
+	/** Read both shapes of color reference out of text that will be emitted. */
+	const scanForColors = (text: string): void => {
+		if (!text.includes("var(--color-")) return;
+		for (const m of text.matchAll(COLOR_VAR_REF_RE)) addName(m[1]);
+		for (const m of text.matchAll(COLOR_STOP_REF_RE)) {
+			if (m[2]) addStops(m[1], [Number(m[2])]);
+		}
+	};
+
+	// Seeds that do not depend on which colors survive. A `@shadow` value, a
+	// `@keyframes` body, and an `@register` initial value are all emitted
+	// verbatim and were scanned by nothing. Before pruning they were carried by
+	// the unconditional emit; now they have to ask.
+	for (const name of shadowsToEmit) scanForColors(theme.shadows[name] ?? "");
+	for (const body of usage.keyframes) scanForColors(body);
+	for (const registration of theme.registeredProperties) {
+		if (registration.initialValue) scanForColors(registration.initialValue);
+	}
+
+	while (demandGrew) {
+		demandGrew = false;
+		for (const [name, def] of Object.entries(theme.colors)) {
+			const stops = effectiveStops.get(name);
+			const liveByStop = stops !== undefined && stops.size > 0;
+			const liveByName = liveNames.has(name);
+			if (!liveByStop && !liveByName) continue;
+			switch (def.type) {
+				case "alias":
+					// One hop per turn; the loop walks the rest of the chain.
+					if (liveByStop) addStops(def.source, [...(stops as Set<number>)]);
+					if (liveByName) addName(def.source);
+					break;
+				case "explicit":
+					scanForColors(def.value);
+					break;
+				case "pair":
+					scanForColors(def.light);
+					scanForColors(def.dark);
+					break;
+				default:
+					// A generative palette's output is computed, not authored, so
+					// it can name no other color.
+					break;
+			}
+		}
+	}
+
+	// [data-theme] override blocks alias --color-theme-<n> to every inline
+	// generative palette (generateThemeOverrides), so each inline color must
+	// emit exactly the stops those blocks reference — otherwise switching
+	// data-theme leaves --color-theme-<n> pointing at an undefined variable.
+	//
+	// The effective stops, not the raw ones, and `generateThemeOverrides` is
+	// handed the same set. Every `--color-theme-<n>` that reaches `:root` gets
+	// an override block, and every block has its palette stop: a `theme-282`
+	// demanded by a value (`hairline: theme-282/52`) now follows `data-theme`
+	// like one demanded by a class. Reading two different sets here is what
+	// used to make that silently untrue in one direction and emit a dead
+	// palette stop in the other.
+	const themeSuffixes = effectiveStops.get("theme");
+	if (theme.colors.theme && themeSuffixes) {
+		for (const [name, def] of Object.entries(theme.colors)) {
+			if (name === "theme" || def.type !== "generative" || !def.inline) continue;
+			addStops(name, themeSuffixes);
+		}
+	}
+
+	return { effectiveStops, liveNames, shadowsToEmit };
+}
+
 export function generateTokenLayer(
 	theme: ResolvedTheme,
 	usage: TokenUsage,
 	fontOutputCache: Map<string, FontOutput>,
+	demand: ColorDemand = resolveColorDemand(theme, usage),
 ): string {
 	const vars: string[] = [];
 	vars.push(`--spacing: ${theme.spacing.base};`);
@@ -59,64 +201,14 @@ export function generateTokenLayer(
 		pushBounds(`--fluid-${name}`, range);
 	}
 
-	// Color variables (only used hue+suffix pairs)
-	// When "theme" is used and aliases another color, propagate suffixes to source
-	const effectiveStops = new Map<string, Set<number>>(
-		[...usage.usedColorStops].map(([k, v]) => [k, new Set(v)]),
+	const { effectiveStops, liveNames, shadowsToEmit } = demand;
+
+	const colorVars = generateAllColorVariables(
+		theme.colors,
+		theme.darkConfig,
+		effectiveStops,
+		liveNames,
 	);
-	const themeDef = theme.colors.theme;
-	const themeSuffixes = effectiveStops.get("theme");
-	if (themeDef && themeSuffixes && themeDef.type === "alias") {
-		let sourceSuffixes = effectiveStops.get(themeDef.source);
-		if (!sourceSuffixes) {
-			sourceSuffixes = new Set();
-			effectiveStops.set(themeDef.source, sourceSuffixes);
-		}
-		for (const s of themeSuffixes) sourceSuffixes.add(s);
-	}
-
-	// [data-theme] override blocks alias --color-theme-<n> to every inline
-	// generative palette (generateThemeOverrides), so each inline color must
-	// emit exactly the stops those blocks reference — otherwise switching
-	// data-theme leaves --color-theme-<n> pointing at an undefined variable.
-	if (themeDef && themeSuffixes) {
-		for (const [name, def] of Object.entries(theme.colors)) {
-			if (name === "theme" || def.type !== "generative" || !def.inline) continue;
-			let stops = effectiveStops.get(name);
-			if (!stops) {
-				stops = new Set();
-				effectiveStops.set(name, stops);
-			}
-			for (const s of themeSuffixes) stops.add(s);
-		}
-	}
-
-	// Explicit/pair colors emit their --color-${name}: ... declaration
-	// unconditionally, so any generative stops they reference (e.g.
-	// `background: theme-22;` → `var(--color-theme-22)`) must be force-emitted
-	// too — otherwise the var resolves to a dangling reference.
-	for (const def of Object.values(theme.colors)) {
-		const values =
-			def.type === "explicit" ? [def.value] : def.type === "pair" ? [def.light, def.dark] : null;
-		if (!values) continue;
-		for (const v of values) {
-			for (const m of v.matchAll(COLOR_STOP_REF_RE)) {
-				// The shared regex also matches stop-less refs (var(--color-paper));
-				// only hue+stop pairs participate in stop forcing.
-				if (!m[2]) continue;
-				const hue = m[1];
-				const stop = Number(m[2]);
-				let set = effectiveStops.get(hue);
-				if (!set) {
-					set = new Set();
-					effectiveStops.set(hue, set);
-				}
-				set.add(stop);
-			}
-		}
-	}
-
-	const colorVars = generateAllColorVariables(theme.colors, theme.darkConfig, effectiveStops);
 	vars.push(...colorVars);
 
 	// Text scale tokens (only used sizes, sorted by key for deterministic output)
@@ -149,7 +241,6 @@ export function generateTokenLayer(
 	// transitively pulls in every token it references (`@shadow alias: shadow-md`
 	// emits `--shadow-md` too). Without this, a referencing token would render
 	// with an undefined var.
-	const shadowsToEmit = resolveTransitiveShadowDeps(theme.shadows, usage.usedShadows);
 	for (const [name, val] of Object.entries(theme.shadows).sort(([a], [b]) =>
 		codepointCompare(a, b),
 	)) {
@@ -381,8 +472,10 @@ export function assembleSections(
 		baseSections.push(fontFaceBlocks.join("\n\n"));
 	}
 
-	// Token layer (:root)
-	const tokenLayer = generateTokenLayer(theme, compilation, fontOutputCache);
+	// Token layer (:root). The demand is computed once and shared with the
+	// [data-theme] blocks below, which have to agree with it exactly.
+	const demand = resolveColorDemand(theme, compilation);
+	const tokenLayer = generateTokenLayer(theme, compilation, fontOutputCache, demand);
 	if (tokenLayer) baseSections.push(tokenLayer);
 
 	// APCA contrast warnings — fired for stops that fail the medium-text threshold
@@ -393,10 +486,7 @@ export function assembleSections(
 	}
 
 	// [data-theme] overrides for the "theme" color (only used suffixes)
-	const themeOverrides = generateThemeOverrides(
-		theme.colors,
-		compilation.usedColorStops.get("theme"),
-	);
+	const themeOverrides = generateThemeOverrides(theme.colors, demand.effectiveStops.get("theme"));
 	if (themeOverrides.length > 0) {
 		baseSections.push(themeOverrides.join("\n\n"));
 	}

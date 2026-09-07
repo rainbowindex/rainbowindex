@@ -9,7 +9,7 @@ import { parseRemValue } from "../css/fluid.js";
 import { stripCSSComments } from "../shared.js";
 import { entryDisabled, parseEntryDisables } from "./suppress.js";
 
-import { DEFAULT_DARK_CONFIG } from "../theme/colors.js";
+import { DEFAULT_DARK_CONFIG, type DarkVariantStrategy } from "../theme/colors.js";
 import type { CornerShape, FluidConfig, FluidUnit } from "../theme/index.js";
 import {
 	DEFAULT_COLORS,
@@ -19,7 +19,7 @@ import {
 import { resolveUtility } from "../utilities/index.js";
 import { STATIC_UTILITIES } from "../utilities/metadata.js";
 import type { ParsedDirective, ResolvedTheme, WritableTheme } from "./foundation.js";
-import { IDENT_KEY_RE, scanEntries } from "./foundation.js";
+import { IDENT_KEY_RE, legacySyntaxWarning, scanEntries } from "./foundation.js";
 import {
 	extractUtilityBlocks,
 	parseAnimateBody,
@@ -88,7 +88,11 @@ function mergeWithRemovals<T>(
 	for (const key of removals) {
 		if (!Object.hasOwn(result, key) && warnings) {
 			warnings.push(
-				`[RI-1103] Invalid removal "!${key}" in @${directiveName ?? "unknown"} — key "${key}" does not exist in defaults.`,
+				// Spelling-neutral: three forms produce a removal (`key: initial`,
+				// the deprecated `!key`, and the plugin's `--ri-rm`), and naming
+				// one of them in the message sends a reader looking for text that
+				// is not in their file.
+				`[RI-1103] Invalid removal of "${key}" in @${directiveName ?? "unknown"} — it does not exist, so there is nothing to remove.`,
 			);
 		}
 		delete result[key];
@@ -200,6 +204,28 @@ function applyFluidDirective(
  * Resolve all directives into a complete theme configuration.
  */
 /**
+ * Parse the `variant:` value of a `@color dark` block.
+ *
+ * `media`, `appearance`, or `selector(<sel>)`. The selector is taken as
+ * written — anything a browser accepts is legal, and validating CSS selectors
+ * here would be a second, worse parser — but it must be non-empty, since an
+ * empty one silently disables `dark:` entirely.
+ */
+function parseDarkVariant(value: string, warnings: string[]): DarkVariantStrategy | null {
+	if (value === "media") return { kind: "media" };
+	if (value === "appearance") return { kind: "appearance" };
+	const selector = /^selector\s*\((.*)\)$/s.exec(value);
+	if (selector) {
+		const inner = selector[1].trim();
+		if (inner) return { kind: "selector", selector: inner };
+	}
+	warnings.push(
+		`[RI-1111] Invalid @color dark variant "${value}" — expected "media", "appearance", or "selector(<sel>)", as in "selector(.dark)".`,
+	);
+	return null;
+}
+
+/**
  * Validate every @color alias once the full color map is assembled: the source
  * color must exist (RI-1105) and the alias chain must not be circular (RI-1107).
  */
@@ -227,6 +253,36 @@ function validateColorAliases(theme: WritableTheme): void {
 		}
 	}
 }
+
+/**
+ * Flag a value that references a generative palette without naming a stop.
+ *
+ * A generative color emits `--color-<name>-<stop>` and nothing else, so
+ * `var(--color-brand)` can never resolve. The spelling arrives from a bare name
+ * in a value — `duo: surface / brand`, `soft: brand/50` — which reads perfectly
+ * naturally and used to be emitted as the literal text `brand`, invalid in a
+ * different way and equally silent. Only a defined generative color is flagged:
+ * a name this file does not know may still be a variable the author declares in
+ * their own CSS, and guessing about those would warn about working themes.
+ */
+function validateGenerativeColorRefs(theme: WritableTheme): void {
+	for (const [name, def] of Object.entries(theme.colors)) {
+		const values =
+			def.type === "explicit" ? [def.value] : def.type === "pair" ? [def.light, def.dark] : [];
+		for (const value of values) {
+			for (const match of value.matchAll(BARE_COLOR_VAR_RE)) {
+				const referenced = theme.colors[match[1]];
+				if (referenced?.type !== "generative") continue;
+				theme.warnings.push(
+					`[RI-1109] @color "${name}" references "${match[1]}" with no stop. "${match[1]}" is a generative palette, which defines --color-${match[1]}-<stop> and no bare --color-${match[1]}. Name a stop, as in "${match[1]}-500".`,
+				);
+			}
+		}
+	}
+}
+
+/** `var(--color-<name>)` with no numeric stop — the shape RI-1109 inspects. */
+const BARE_COLOR_VAR_RE = /var\(--color-([a-z][\w-]*?)\s*[,)]/gi;
 
 /** A @shadow value that is only another token's class name, e.g. `alias: shadow-md`. */
 const SHADOW_ALIAS_RE = /^shadow-([a-z0-9]+(?:-[a-z0-9]+)*)$/;
@@ -531,9 +587,12 @@ export function resolveDirectives(
 						} else if (k === "hue-shift") {
 							const n = Number.parseFloat(v);
 							if (!Number.isNaN(n)) theme.darkConfig.hueShift = n;
+						} else if (k === "variant") {
+							const strategy = parseDarkVariant(v, theme.warnings);
+							if (strategy) theme.darkConfig.variant = strategy;
 						} else {
 							theme.warnings.push(
-								`[RI-1104] Unknown @color dark option "${k}" — supported: mode, chroma-boost, hue-shift.`,
+								`[RI-1104] Unknown @color dark option "${k}" — supported: mode, chroma-boost, hue-shift, variant.`,
 							);
 						}
 					}
@@ -609,6 +668,11 @@ export function resolveDirectives(
 					})) {
 						if (entry.removal) {
 							removals.push(entry.key);
+							if (entry.legacyRemoval) {
+								theme.warnings.push(
+									legacySyntaxWarning(`!${entry.key};`, `${entry.key}: initial;`, "rounded"),
+								);
+							}
 							continue;
 						}
 						if (entry.fragment) continue;
@@ -675,6 +739,7 @@ export function resolveDirectives(
 				warnIgnoredModifier("animate", directive.modifier, theme.warnings);
 				const { animations: parsedAnims, removals: animRemovals } = parseAnimateBody(
 					directive.body,
+					theme.warnings,
 				);
 				// Routed through mergeWithRemovals like every sibling so a removal of a
 				// missing animation warns RI-1103 instead of failing silently.
@@ -688,7 +753,7 @@ export function resolveDirectives(
 				break;
 			}
 			case "fluid": {
-				const parsed = parseFluidBody(directive.body);
+				const parsed = parseFluidBody(directive.body, theme.warnings);
 				const targetName = directive.modifier?.trim();
 				if (!targetName) {
 					applyFluidDirective(theme.fluid, parsed, "@fluid", theme.warnings, {
@@ -805,6 +870,7 @@ export function resolveDirectives(
 	// Aliases reference the full color map, which is only complete after every
 	// @color directive has merged — validate once here, not per directive.
 	validateColorAliases(theme);
+	validateGenerativeColorRefs(theme);
 	resolveShadowAliases(theme);
 
 	// Dedup font slots (last definition wins) across all @font directives so a

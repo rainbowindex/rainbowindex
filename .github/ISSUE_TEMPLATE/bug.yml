@@ -1,0 +1,89 @@
+name: Bug report
+description: Something Rainbow Index emits, warns, or refuses is wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A reproduction beats a description. The four fields below — CSS entry,
+        class string, emitted CSS, and the `RI-` code — are usually enough to
+        turn a report into a failing test.
+
+        For a security issue, stop here and use
+        [private reporting](https://github.com/rainbowindex/rainbowindex/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: css-entry
+    attributes:
+      label: CSS entry
+      description: >
+        The smallest CSS that reproduces it — the `@import "rainbowindex"` line
+        plus whichever directives matter.
+      render: css
+      placeholder: |
+        @import "rainbowindex";
+
+        @color {
+          brand: oklch(0.62 0.19 264);
+        }
+    validations:
+      required: true
+
+  - type: input
+    id: class-string
+    attributes:
+      label: Class string
+      description: The classes you wrote, exactly as they appear in your source.
+      placeholder: text-lg hover:bg-brand/50
+    validations:
+      required: true
+
+  - type: textarea
+    id: emitted
+    attributes:
+      label: Emitted CSS
+      description: >
+        What came out, and what you expected instead. Paste the relevant rules,
+        not the whole stylesheet.
+      render: css
+    validations:
+      required: true
+
+  - type: input
+    id: code
+    attributes:
+      label: Diagnostic code
+      description: >
+        The `RI-NNNN` code, if a warning or error was printed. Leave blank if
+        the compile was silent.
+      placeholder: RI-1504
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: How is Rainbow Index invoked?
+      options:
+        - Vite plugin
+        - PostCSS plugin
+        - CLI
+        - compileProject / Node API
+        - rainbowindex/editor
+        - ri() at runtime
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`rainbowindex --version`, plus your Node version."
+      placeholder: rainbowindex 0.6.0, Node 24.0.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Framework, bundler, minimal repo link — whatever helps.

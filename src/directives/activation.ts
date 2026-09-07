@@ -217,21 +217,53 @@ function readURLImportTarget(
 	return { target: target || null, nextIndex: i };
 }
 
-function scanImportTarget(src: string, paramsStart: number): string | null {
+/**
+ * Read an `@import` prelude's target, starting just past the at-rule name.
+ *
+ * `nextIndex` lands just past the target token, so a caller can tell a bare
+ * `@import "a.css";` from a conditional `@import "a.css" screen;` by looking
+ * at what follows — which is how the import inliner decides what it may
+ * safely replace.
+ */
+export function readImportTarget(
+	src: string,
+	paramsStart: number,
+): { target: string | null; nextIndex: number } {
 	let i = paramsStart;
 	while (i < src.length && WS_RE.test(src[i])) i++;
-	if (i >= src.length) return null;
+	if (i >= src.length) return { target: null, nextIndex: i };
 	if (src[i] === '"' || src[i] === "'") {
-		return readQuotedImportTarget(src, i).target;
+		return readQuotedImportTarget(src, i);
 	}
-	return readURLImportTarget(src, i).target;
+	return readURLImportTarget(src, i);
 }
 
-/** Import specifiers that activate RainbowIndex. Single source for the
- *  activation scan here, the PostCSS import matcher, and the strip regex. */
-export const RI_IMPORT_SPECIFIERS: readonly string[] = Object.freeze([
+function scanImportTarget(src: string, paramsStart: number): string | null {
+	return readImportTarget(src, paramsStart).target;
+}
+
+/**
+ * The activation imports that are *only* markers: they name the package to say
+ * "compile this file" and carry no directives of their own. The import inliner
+ * has nothing to read in them, so it leaves the entry's copy alone and drops a
+ * nested one rather than resolving either.
+ */
+export const RI_MARKER_IMPORT_SPECIFIERS: readonly string[] = Object.freeze([
 	"rainbowindex",
 	"rainbowindex/index.css",
+]);
+
+/** Import specifiers that activate RainbowIndex. Single source for the
+ *  activation scan here, the PostCSS import matcher, and the strip regex.
+ *
+ *  The preset is on the list because a stylesheet whose only Rainbow Index
+ *  content is `@import "rainbowindex/tailwind.css"` is unmistakably asking to
+ *  be compiled. It is deliberately *not* in the marker list above: unlike the
+ *  two markers it is a real stylesheet full of directives, and the inliner has
+ *  to resolve and read it like any other package preset. */
+export const RI_IMPORT_SPECIFIERS: readonly string[] = Object.freeze([
+	...RI_MARKER_IMPORT_SPECIFIERS,
+	"rainbowindex/tailwind.css",
 ]);
 
 /** Regex-escaped alternation of RI_IMPORT_SPECIFIERS for embedding in patterns. */

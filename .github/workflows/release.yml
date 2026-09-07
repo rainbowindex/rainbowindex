@@ -13,8 +13,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The same gate CI runs on every push and PR. `release` needs it, so a version
+  # bump whose tests fail never reaches the GitHub release or either registry.
+  check:
+    runs-on: ubuntu-latest
+    env:
+      RI_OFFLINE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check
+        run: pnpm check
+
   release:
     runs-on: ubuntu-latest
+    needs: check
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -118,9 +144,10 @@ jobs:
         if: steps.existing.outputs.exists == 'false'
         run: pnpm install --frozen-lockfile
 
-      # Publish with the npm CLI: trusted publishing needs npm >= 11.5.1
-      # (bundled with Node 24), while the pnpm version pinned in packageManager
-      # predates pnpm's OIDC support.
+      # Publish with the npm CLI (>= 11.5.1, bundled with Node 24). pnpm 10.34
+      # can do OIDC too, but npm's implementation is the reference one and this
+      # path is proven for this package; revisit only if pnpm gains something
+      # npm lacks. `npm publish` still runs prepublishOnly -> `pnpm check`.
       - name: Publish to npm
         if: steps.existing.outputs.exists == 'false'
         env:
@@ -184,8 +211,15 @@ jobs:
 
       # GitHub Packages only accepts names scoped to the repository owner, so
       # the tarball goes out as @rainbowindex/rainbowindex while npm keeps the
-      # unscoped name. Renaming after install keeps --frozen-lockfile honest;
-      # nothing in the build or test suite reads the package's own name.
+      # unscoped name. Renaming after install keeps --frozen-lockfile honest.
+      #
+      # `npm publish` below re-runs the whole suite through prepublishOnly, and
+      # runs it under *this* name — so nothing in the build or tests may depend
+      # on the package being called `rainbowindex`. In particular a bare
+      # `rainbowindex/...` specifier inside the repo resolves through Node's
+      # self-reference, which matches on package.json's `name` and stops
+      # resolving here. Reach the package through a linked
+      # node_modules/rainbowindex instead, as `__tests__/package.test.ts` does.
       - name: Scope the package name for GitHub Packages
         if: steps.existing.outputs.exists == 'false'
         run: npm pkg set name="@rainbowindex/rainbowindex"

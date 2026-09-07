@@ -10,7 +10,7 @@ import type { CSSDeclaration, UtilityNestedBlock } from "../../utilities/helpers
 import { resolveVariant, type VariantWrapper } from "../../engine/index.js";
 import { computeSortKey } from "../../engine/ordering.js";
 import { applyVariantWrappers, splitSelectorList } from "../../engine/variants.js";
-import { expandVariantGroups } from "../../scanner/class-extraction.js";
+import { expandApplyBodyGroups } from "../../scanner/class-extraction.js";
 import type { ResolvedTheme } from "../../directives/foundation.js";
 
 interface ResolvedDecl {
@@ -223,7 +223,7 @@ export function processApply(
 		const groupRoots = new Set<Rule>();
 		root.walkAtRules("apply", (atRule) => {
 			applyNodes.push(atRule);
-			const params = expandVariantGroups(atRule.params, warnings, cssPath);
+			const params = expandApplyBodyGroups(atRule.params, warnings, cssPath);
 			const classNames = params.trim().split(/\s+/).filter(Boolean);
 			classListByNode.set(atRule, classNames);
 			if (classNames.includes("group")) {
@@ -488,9 +488,7 @@ function expandApply(
 				bucket.nestedSelector,
 				bucket.nestedBlocks,
 			);
-			if (node) {
-				docRoot().append(node);
-			}
+			for (const branch of node) docRoot().append(branch);
 		} else if (hasGroupVariants) {
 			// Non-group variant that is a peer of group variants in the same @apply.
 			// Emit at document root with fully-resolved selector so both group and
@@ -503,9 +501,7 @@ function expandApply(
 				bucket.nestedSelector,
 				bucket.nestedBlocks,
 			);
-			if (node) {
-				docRoot().append(node);
-			}
+			for (const branch of node) docRoot().append(branch);
 		} else {
 			// Regular variant: insert as sibling of parent rule
 			const node = buildVariantNode(
@@ -516,9 +512,11 @@ function expandApply(
 				bucket.nestedSelector,
 				bucket.nestedBlocks,
 			);
-			if (node) {
-				parentContainer.insertAfter(insertAfter, node);
-				insertAfter = node;
+			// Each branch lands after the previous one, so source order is the
+			// order applyVariantWrappers produced.
+			for (const branch of node) {
+				parentContainer.insertAfter(insertAfter, branch);
+				insertAfter = branch;
 			}
 		}
 	}
@@ -766,14 +764,36 @@ function buildVariantNode(
 	sourceNode: Node,
 	nestedSelector: string | undefined,
 	nestedBlocks: NestedBlockEntry[],
-): ChildNode | null {
-	if (decls.length === 0 && nestedBlocks.length === 0) return null;
+): ChildNode[] {
+	if (decls.length === 0 && nestedBlocks.length === 0) return [];
 
 	// Wrapper folding (suffix per branch, at-rule order, starting-style) is the
 	// engine's cascade model — shared so @apply output can't diverge from the
-	// same utility compiled standalone.
-	const { selector, atRules, startingStyle } = applyVariantWrappers(baseSelector, wrappers);
+	// same utility compiled standalone. A wrapper with an `alternate` fans out
+	// into more than one branch, and each branch becomes its own node.
+	return applyVariantWrappers(baseSelector, wrappers).map(({ selector, atRules, startingStyle }) =>
+		buildBranchNode(
+			selector,
+			atRules,
+			startingStyle,
+			decls,
+			sourceNode,
+			nestedSelector,
+			nestedBlocks,
+		),
+	);
+}
 
+/** One branch of {@link buildVariantNode}: a rule, wrapped in its at-rules. */
+function buildBranchNode(
+	selector: string,
+	atRules: string[],
+	startingStyle: boolean,
+	decls: Array<{ decl: CSSDeclaration; important: boolean }>,
+	sourceNode: Node,
+	nestedSelector: string | undefined,
+	nestedBlocks: NestedBlockEntry[],
+): ChildNode {
 	const rule = applySource(postcss.rule({ selector }), sourceNode);
 	let declTarget = rule;
 	if (nestedSelector) {

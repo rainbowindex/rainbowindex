@@ -403,6 +403,44 @@ describe("layout utilities", () => {
 		const r = resolveUtility("basis", "1/2", false, theme);
 		expect(r!.declarations[0]).toEqual({ property: "flex-basis", value: "50%" });
 	});
+	it("basis-px → flex-basis: 1px, like every other spacing consumer", () => {
+		// `px` is part of the spacing grammar `spacingLookup` owns; resolveBasis
+		// used to gate that call behind a decimals-only regex, so `basis-px` was
+		// the one spacing value with no rule while `w-px`/`m-px`/`gap-px` all
+		// worked. Found by the Tailwind class-surface parity sweep.
+		const r = resolveUtility("basis", "px", false, theme);
+		expect(r!.declarations[0]).toEqual({ property: "flex-basis", value: "1px" });
+	});
+	it("an empty arbitrary value is not a value", () => {
+		// `@apply` and `safelist()` reach the resolver without passing the
+		// scanner, so the emptiness check has to live here too — otherwise
+		// `p-[]` emits the empty declaration `padding: ;`.
+		for (const cls of ["p-[]", "gap-[]", "basis-[]", "w-[]", "text-[]"]) {
+			expect(resolveUtility(cls, null, false, theme), cls).toBeNull();
+		}
+	});
+
+	it("an arbitrary value that does not close its delimiters is not a value", () => {
+		// `p-[--x:(]` emitted `padding: --x:(;`, which no CSS parser can read —
+		// so one such class anywhere in a scanned file failed the whole
+		// stylesheet rather than just itself. Same reason as the empty bracket
+		// above, one step further.
+		for (const cls of ["p-[--x:(]", "w-[calc(1px]", "m-[a)]", "gap-[[1px]", "p-['abc]"]) {
+			expect(resolveUtility(cls, null, false, theme), cls).toBeNull();
+		}
+	});
+
+	it("still accepts delimiters that do close, including inside quotes", () => {
+		for (const cls of ["w-[calc(1px_+_2px)]", "w-[var(--a,_calc(1px))]", "w-[calc((1px))]"]) {
+			expect(resolveUtility(cls, null, false, theme), cls).not.toBeNull();
+		}
+	});
+
+	it("basis- still rejects what the spacing grammar rejects", () => {
+		for (const value of ["auto-ish", "1.2.3", "-4", "nope"]) {
+			expect(resolveUtility("basis", value, false, theme), value).toBeNull();
+		}
+	});
 
 	// Safe alignment variants
 	it.each([

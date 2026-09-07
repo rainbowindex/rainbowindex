@@ -1,0 +1,4 @@
+{
+	"mode": "project",
+	"note": "A CSS comment that names directives with their at-signs used to end the strip pass: the comment's `@color` matched a pattern that ran forward to the *real* `@color {` opener, and skipping that false match stepped over the block it had swallowed, so every directive after the comment leaked into the emitted stylesheet as invalid CSS. Fixed in src/css/strip.ts by resuming the scan at the end of the comment. This fixture pins the fix: the tail of expected.css is the comment and nothing else."
+}

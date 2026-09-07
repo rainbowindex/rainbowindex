@@ -5,6 +5,7 @@
 
 import {
 	type UtilityResult,
+	fractionValue,
 	single,
 	multi,
 	extractArbitrary,
@@ -18,8 +19,16 @@ import {
 const TRANSFORM_COMPOSED =
 	"var(--ri-rotate-x, rotateX(0)) var(--ri-rotate-y, rotateY(0)) var(--ri-rotate-z, rotateZ(0)) var(--ri-skew-x, skewX(0)) var(--ri-skew-y, skewY(0))";
 
+// The three-axis `translate` shorthand. `translate-3d` emits it with no axis of
+// its own, the way `transform` emits TRANSFORM_COMPOSED — it opts the element
+// into the Z axis so a later `translate-z-*` composes instead of replacing.
+const TRANSLATE_XYZ = "var(--ri-translate-x, 0) var(--ri-translate-y, 0) var(--ri-translate-z, 0)";
+
 export const TRANSFORM_STATICS: Readonly<Record<string, UtilityResult>> = {
-	// Transform
+	// Transform. Bare `transform` and `transform-cpu` are the same declaration —
+	// upstream emits them byte-identically; `-cpu` is the v3-era spelling kept
+	// as the explicit opposite of `-gpu`. Do not "dedupe" the pair away.
+	transform: single("transform", TRANSFORM_COMPOSED),
 	"transform-none": single("transform", "none"),
 	"transform-gpu": single("transform", `translateZ(0) ${TRANSFORM_COMPOSED}`),
 	"transform-cpu": single("transform", TRANSFORM_COMPOSED),
@@ -37,6 +46,7 @@ export const TRANSFORM_STATICS: Readonly<Record<string, UtilityResult>> = {
 
 	// Translate reset
 	"translate-none": single("translate", "none"),
+	"translate-3d": single("translate", TRANSLATE_XYZ),
 
 	// Rotate reset
 	"rotate-none": single("rotate", "none"),
@@ -81,18 +91,10 @@ export function resolveTranslate(full: string, negative: boolean): UtilityResult
 				)
 			: null;
 	}
-	// translate-z-{n}: sets only the Z axis
+	// translate-z-{n}: sets only the Z axis, lengths only
 	if (full.startsWith("translate-z-")) {
-		const val = resolveTransformValue(full.slice(12), negative);
-		return val
-			? multi(
-					["--ri-translate-z", val],
-					[
-						"translate",
-						"var(--ri-translate-x, 0) var(--ri-translate-y, 0) var(--ri-translate-z, 0)",
-					],
-				)
-			: null;
+		const val = resolveTransformValue(full.slice(12), negative, false);
+		return val ? multi(["--ri-translate-z", val], ["translate", TRANSLATE_XYZ]) : null;
 	}
 	// translate-{n}: shorthand sets both x and y
 	if (full.startsWith("translate-")) {
@@ -264,9 +266,30 @@ export function resolveSkew(full: string, negative: boolean): UtilityResult | nu
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveTransformValue(name: string, negative: boolean): string | null {
-	if (name === "full") return negative ? "-100%" : "100%";
-	if (name === "1/2") return negative ? "-50%" : "50%";
+/**
+ * A translate value: a percentage of the element's own size, an arbitrary
+ * value, or a step on the spacing scale.
+ *
+ * `percentOk` is false on the Z axis. `--ri-translate-z` is registered
+ * `syntax: "<length>"` (see `src/engine/support-blocks.ts`), so a percentage
+ * there is invalid at computed-value time and the browser silently substitutes
+ * the registered `0px` — `translate-z-full` used to compile to a rule that
+ * could not do anything. Tailwind gives the Z axis no percentage values either.
+ *
+ * The fraction table is the shared one, so `translate-x-1/3` and `w-1/3` agree
+ * on what a third is. Only `1/2` was handled before, which left the other 25
+ * fractions — 150 classes with their negatives — resolving to nothing.
+ */
+function resolveTransformValue(name: string, negative: boolean, percentOk = true): string | null {
+	if (percentOk) {
+		if (name === "full") return negative ? "-100%" : "100%";
+		const fraction = fractionValue(name);
+		if (fraction !== null) {
+			// A precomputed percentage negates by sign; a calc() has to be wrapped.
+			if (!negative) return fraction;
+			return fraction.startsWith("calc(") ? `calc(${fraction} * -1)` : `-${fraction}`;
+		}
+	}
 	const arb = extractArbitrary(name);
 	if (arb !== null) return negative ? `calc(${arb} * -1)` : arb;
 	// px / 0 / spacing-scale decimals share the canonical spacing grammar.

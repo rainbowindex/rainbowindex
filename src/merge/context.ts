@@ -36,8 +36,6 @@ let _colorNames: ReadonlySet<string> = new Set();
  * Frozen snapshot of compilation state for SSR-safe ri() instances.
  * Created by finalizeCompilationContext() and consumed by createRi().
  */
-export type { CustomFunctionalEntry };
-
 export interface CompilationSnapshot {
 	readonly customStaticProps: Readonly<Record<string, string[]>>;
 	/** Longest root first, so `glow-outer-*` wins over `glow-*` for `glow-outer-4`. */
@@ -239,11 +237,14 @@ export function snapshotCompilationContext(ctx: CompilationContext): Compilation
 }
 
 /**
- * Snapshot compilation context into module-level state that ri() reads from.
- * Called at the end of compile() to atomically publish the new state.
+ * Publish a snapshot as the module-level state the default ri() reads.
+ *
+ * Split out of finalizeCompilationContext so a client bundle — which never runs
+ * a compile — can reach the same state through hydrateSnapshot(). Everything
+ * assigned here is already frozen-by-convention: the snapshot's arrays and Sets
+ * are the compile's own copies, never the mutable context's.
  */
-export function finalizeCompilationContext(ctx: CompilationContext): CompilationSnapshot {
-	const snapshot = snapshotCompilationContext(ctx);
+export function publishSnapshot(snapshot: CompilationSnapshot): void {
 	_customStaticProps = snapshot.customStaticProps;
 	_customFunctionalProps = snapshot.customFunctionalProps;
 	_textSizes = snapshot.textSizes;
@@ -252,5 +253,102 @@ export function finalizeCompilationContext(ctx: CompilationContext): Compilation
 	// Clear global ri() cache — conflict resolution rules may have changed
 	defaultRiCache.clear();
 	_latestSnapshot = snapshot;
+}
+
+/**
+ * Snapshot compilation context into module-level state that ri() reads from.
+ * Called at the end of compile() to atomically publish the new state.
+ */
+export function finalizeCompilationContext(ctx: CompilationContext): CompilationSnapshot {
+	const snapshot = snapshotCompilationContext(ctx);
+	publishSnapshot(snapshot);
 	return snapshot;
+}
+
+// ---------------------------------------------------------------------------
+// Wire format — a snapshot that survives JSON
+// ---------------------------------------------------------------------------
+
+/**
+ * A CompilationSnapshot with its Sets flattened to sorted arrays.
+ *
+ * A snapshot is built on the server and read on the client, so it has to cross
+ * a boundary that only carries JSON. `JSON.stringify` turns a Set into `{}`,
+ * silently — the class merge would then run against an empty theme and drop
+ * every project-defined size, weight, font slot, and color. Sorting is for
+ * build determinism: the same theme must produce byte-identical output, or the
+ * emitted module churns on every build.
+ */
+export interface SerializedSnapshot {
+	/** See {@link SNAPSHOT_FORMAT}. */
+	format: typeof SNAPSHOT_FORMAT;
+	customStaticProps: Readonly<Record<string, string[]>>;
+	customFunctionalProps: readonly CustomFunctionalEntry[];
+	textSizes: readonly string[];
+	fontFamilies: readonly string[];
+	colorNames: readonly string[];
+}
+
+/**
+ * The wire shape's version. Bump it when a change would make a module written
+ * by an older version unreadable.
+ *
+ * This is the whole of the runtime validation. Producer and consumer are two
+ * functions in this file, joined by one `JSON.stringify`, so the only way the
+ * shapes can disagree is a *stale generated module* — one committed or cached
+ * from an older release. That is one failure with one fix, and checking a
+ * number catches it; checking every field of every array, as this used to,
+ * caught nothing else and left the declared type unenforced.
+ */
+export const SNAPSHOT_FORMAT = 1;
+
+export function serializeSnapshot(snapshot: CompilationSnapshot): SerializedSnapshot {
+	return {
+		format: SNAPSHOT_FORMAT,
+		customStaticProps: Object.fromEntries(
+			Object.entries(snapshot.customStaticProps)
+				.map(([k, v]): [string, string[]] => [k, [...v]])
+				.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+		),
+		// Already tuples, and already ordered longest-root-first — an order the
+		// resolver depends on, so it is preserved rather than sorted.
+		customFunctionalProps: snapshot.customFunctionalProps.map(
+			([root, props]): CustomFunctionalEntry => [root, [...props]],
+		),
+		textSizes: [...snapshot.textSizes].sort(),
+		fontFamilies: [...snapshot.fontFamilies].sort(),
+		colorNames: [...snapshot.colorNames].sort(),
+	};
+}
+
+/**
+ * Rebuild a snapshot from its wire form.
+ *
+ * A wrong or missing {@link SNAPSHOT_FORMAT} means a generated module written
+ * by another release. That warns and yields the built-in defaults rather than
+ * throwing, because throwing here happens at import time inside someone's
+ * client bundle; the warning says which command puts it right.
+ */
+export function hydrateSnapshot(data: SerializedSnapshot): CompilationSnapshot {
+	if (data?.format !== SNAPSHOT_FORMAT) {
+		devWarn(
+			`[RI-2007] The generated theme snapshot was written for format ${String(data?.format)}, but this version of rainbowindex reads format ${SNAPSHOT_FORMAT}. Its theme was ignored, so \`ri()\` will guess at project-defined sizes and colours. Re-run \`rainbowindex generate-snapshot\`, or update the plugin that generates it.`,
+		);
+		return {
+			customStaticProps: {},
+			customFunctionalProps: [],
+			textSizes: new Set(),
+			// The three built-in slots are always live: an absent list means "no
+			// snapshot said otherwise", not "no font slots exist".
+			fontFamilies: new Set(DEFAULT_FONT_FAMILIES),
+			colorNames: new Set(),
+		};
+	}
+	return {
+		customStaticProps: data.customStaticProps,
+		customFunctionalProps: data.customFunctionalProps,
+		textSizes: new Set(data.textSizes),
+		fontFamilies: new Set(data.fontFamilies),
+		colorNames: new Set(data.colorNames),
+	};
 }

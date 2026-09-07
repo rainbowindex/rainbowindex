@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/rainbowindex/rainbowindex/discussions
+    about: Usage questions and open-ended ideas belong in Discussions.
+  - name: Security vulnerability
+    url: https://github.com/rainbowindex/rainbowindex/security/advisories/new
+    about: Report privately — never in a public issue.
+  - name: Documentation
+    url: https://github.com/rainbowindex/rainbowindex/blob/main/docs/README.md
+    about: Check the docs before filing.

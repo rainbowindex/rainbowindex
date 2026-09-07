@@ -1,0 +1,355 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400..700;1,400..700&display=swap");
+
+@layer base, components, utilities;
+
+@layer base {
+  @property --glow {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+
+  @font-face {
+    font-family: "Inter Fallback";
+    src: local("Arial");
+    size-adjust: 107.1194%;
+    ascent-override: 90.4365%;
+    descent-override: 22.518%;
+    line-gap-override: 0%;
+  }
+
+  @font-face {
+    font-family: "Satoshi";
+    src: url("/fonts/Satoshi.woff2") format("woff2");
+    font-weight: 300 900;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: "Satoshi";
+    src: url("/fonts/Satoshi-Italic.woff2") format("woff2");
+    font-weight: 300 900;
+    font-style: italic;
+    font-display: swap;
+  }
+
+  :root {
+    --spacing: 0.25rem;
+    --fluid-min: 20rem;
+    --fluid-max: 80rem;
+    --fluid-text-min: 20rem;
+    --fluid-text-max: 80rem;
+    --fluid-spacing-min: 20rem;
+    --fluid-spacing-max: 80rem;
+    --fluid-compact-min: 20rem;
+    --fluid-compact-max: 48rem;
+    --color-paper: light-dark(oklch(1 0 0), oklch(0 0 0));
+    --color-ink: light-dark(oklch(0 0 0), oklch(1 0 0));
+    --color-theme-282: light-dark(oklch(0.821 0 0), oklch(0.47 0 -4));
+    --color-brand-500: light-dark(oklch(0.663 0.209 329.365), oklch(0.663 0.2239 325.365));
+    --color-brand-700: light-dark(oklch(0.488 0.1479 329.369), oklch(0.809 0.1629 325.369));
+    --color-punchy-282: light-dark(oklch(0.821 0.1006 29.295), oklch(0.47 0.1356 35.295));
+    --color-punchy-500: light-dark(oklch(0.663 0.2241 29.365), oklch(0.663 0.2269 35.364999999999995));
+    --color-surface: light-dark(oklch(0.98 0.01 260), oklch(0.15 0.01 260));
+    --color-accent-500: var(--color-brand-500);
+    --color-hairline: color-mix(in oklab, var(--color-theme-282) 52%, transparent);
+    --text-body: 1rem;
+    --text-body-leading: 1.5;
+    --text-display: 4rem;
+    --text-display-leading: 1.05;
+    --font-sans: "Inter", "Inter Fallback", ui-sans-serif, sans-serif;
+    --font-display: "Satoshi", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --shadow-md: 0 4px 8px oklch(0 0 0 / 0.15);
+    --rounded-roof: 24px;
+    --animate-shimmer: 2s linear infinite;
+  }
+
+  [data-theme="punchy"] {
+    --color-theme-282: var(--color-punchy-282);
+  }
+
+  @keyframes shimmer {
+    from {
+    	background-position: 200% 0;
+    }
+    to {
+    	background-position: -200% 0;
+    }
+  }
+
+  /* preflight: box-sizing */
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  /* preflight: margins */
+  body, h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre, ol, ul, menu {
+    margin: 0;
+  }
+
+  /* preflight: borders */
+  *, *::before, *::after {
+    border-width: 0;
+    border-style: solid;
+    border-color: inherit;
+  }
+
+  /* preflight: root-defaults */
+  :root {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+  }
+  body {
+    line-height: inherit;
+    font-family: var(--font-sans);
+  }
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
+    font-size: 1em;
+  }
+
+  /* preflight: font-smoothing */
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* preflight: font-inherit */
+  button, input, optgroup, select, textarea {
+    font-family: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    font-size: 100%;
+    font-weight: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+  }
+
+  /* preflight: heading-sizes */
+  h1, h2, h3, h4, h5, h6 {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  /* preflight: link-reset */
+  a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+
+  /* preflight: media-block */
+  img, svg, video, canvas, audio, iframe, embed, object {
+    display: block;
+    max-inline-size: 100%;
+  }
+  img, video {
+    block-size: auto;
+  }
+
+  /* preflight: list-reset */
+  ol, ul, menu {
+    list-style: none;
+    padding: 0;
+  }
+
+  /* preflight: table-reset */
+  table {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+
+  /* preflight: hr-reset */
+  hr {
+    block-size: 0;
+    border-top-width: 1px;
+    color: inherit;
+  }
+
+  /* preflight: focus-visible */
+  :focus-visible {
+    outline-width: 2px;
+    outline-style: solid;
+    outline-offset: 2px;
+    outline-color: currentColor;
+  }
+
+  /* preflight: dialog-reset */
+  dialog {
+    padding: 0;
+  }
+  dialog::backdrop {
+    background-color: oklch(0 0 0 / 0.5);
+  }
+
+  /* preflight: summary-reset */
+  summary {
+    display: list-item;
+    cursor: pointer;
+  }
+
+  /* preflight: interpolate-size */
+  @supports (interpolate-size: allow-keywords) {
+    :root {
+      interpolate-size: allow-keywords;
+    }
+  }
+
+  /* preflight: overflow-wrap */
+  body {
+    overflow-wrap: break-word;
+  }
+
+  /* preflight: color-scheme */
+  html {
+    color-scheme: light dark;
+  }
+  html[data-appearance="dark"] {
+    color-scheme: dark;
+  }
+  html[data-appearance="light"] {
+    color-scheme: light;
+  }
+}
+
+@layer utilities {
+  .z-modal {
+    z-index: 100;
+  }
+
+  .rounded-roof-minus-2 {
+    border-radius: calc(var(--rounded-roof) - 2 * var(--spacing));
+  }
+
+  .border-hairline {
+    border-color: var(--color-hairline);
+  }
+
+  .card {
+    background: var(--color-surface);
+    border-radius: var(--rounded-roof);
+  }
+
+  .bg-clear {
+    background-color: transparent;
+  }
+
+  .p-fluid-4 {
+    padding: clamp(1rem, calc(1rem + 1.5rem * ((100vw - var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))) / calc(var(--fluid-scope-max, var(--fluid-spacing-max, var(--fluid-max))) - var(--fluid-scope-min, var(--fluid-spacing-min, var(--fluid-min)))))), 2.5rem);
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  .font-sans {
+    font-family: var(--font-sans);
+  }
+
+  .text-body {
+    font-size: var(--text-body);
+    line-height: var(--text-body-leading);
+  }
+
+  .text-display {
+    font-size: var(--text-display);
+    line-height: var(--text-display-leading);
+  }
+
+  .font-black {
+    font-weight: 900;
+  }
+
+  .font-regular {
+    font-weight: 400;
+  }
+
+  .text-accent-500 {
+    color: var(--color-accent-500);
+  }
+
+  .text-surface {
+    color: var(--color-surface);
+  }
+
+  .leading-snug {
+    line-height: 1.375;
+  }
+
+  .tracking-wide {
+    letter-spacing: 0.025em;
+  }
+
+  .opacity-muted {
+    opacity: 65%;
+  }
+
+  .shadow-card {
+    --ri-shadow: var(--shadow-md);
+    box-shadow: var(--ri-inset-shadow, 0 0 #0000), var(--ri-inset-ring-shadow, 0 0 #0000), var(--ri-ring-offset-shadow, 0 0 #0000), var(--ri-ring-shadow, 0 0 #0000), var(--ri-shadow, 0 0 #0000);
+  }
+
+  .blur-sm {
+    --ri-blur: blur(4px);
+    filter: var(--ri-blur, ) var(--ri-brightness, ) var(--ri-contrast, ) var(--ri-grayscale, ) var(--ri-hue-rotate, ) var(--ri-invert, ) var(--ri-saturate, ) var(--ri-sepia, ) var(--ri-drop-shadow, );
+  }
+
+  .duration-slow {
+    transition-duration: 400ms;
+    animation-duration: 400ms;
+  }
+
+  .ease-swift {
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .animate-shimmer {
+    animation: var(--animate-shimmer);
+  }
+
+  .tab-size-4 {
+    tab-size: 4;
+  }
+
+  @media (min-width: 40rem) {
+  .sm\:text-fluid-display {
+    font-size: clamp(var(--text-body), calc(1rem + 3rem * ((100vw - var(--fluid-scope-min, var(--fluid-text-min, var(--fluid-min)))) / calc(var(--fluid-scope-max, var(--fluid-text-max, var(--fluid-max))) - var(--fluid-scope-min, var(--fluid-text-min, var(--fluid-min)))))), var(--text-display));
+    line-height: var(--text-display-leading);
+  }
+  }
+
+
+  @media (min-width: 64rem) {
+  .lg\:text-punchy-500 {
+    color: var(--color-punchy-500);
+  }
+  }
+
+
+  @media (any-hover: hover) {
+  .any-hover\:text-brand-700 {
+    color: var(--color-brand-700);
+  }
+  }
+
+
+  .hocus\:underline:hover, .hocus\:underline:focus {
+    text-decoration-line: underline;
+  }
+}
+
+/*
+ * Every theme directive at least once: token scales, utility blocks, aliases,
+ * fluid ranges, and both font kinds. Fonts resolve through an identity
+ * resolver in the runner, so nothing here reaches the network.
+ *
+ * This comment deliberately names no directive with its at-sign — see the
+ * directive-strip-comment fixture for why.
+ */

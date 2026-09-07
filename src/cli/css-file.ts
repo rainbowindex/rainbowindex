@@ -10,6 +10,8 @@ import {
 } from "../directives/index.js";
 
 import { CSS_ENTRY_CANDIDATES } from "../project/css-entry.js";
+import { inlineDirectiveImports } from "../project/imports.js";
+import { createNodeImportResolver } from "../project/resolve-import.js";
 
 export { CSS_ENTRY_CANDIDATES as CSS_CANDIDATES } from "../project/css-entry.js";
 
@@ -57,21 +59,44 @@ async function readCSSFileAsync(cssFile: string): Promise<string> {
  * Resolve and read the CSS input for a subcommand. An explicit `--css` path
  * that does not exist is an error (RI-1605); failed auto-detection silently
  * yields an empty source so directive-less builds still work.
+ *
+ * `@import` of a local file or a package stylesheet is inlined here, so every
+ * subcommand — `build`, `generate-types`, `preload-fonts` — reads the same
+ * directives. `imports` lists the files that were pulled in, for the watcher.
  */
 export async function loadProjectCSS(
 	opts: { cssFile?: string },
 	cwd: string,
-): Promise<{ css: string; cssFile: string | null }> {
+): Promise<{ css: string; cssFile: string | null; imports: string[]; warnings: string[] }> {
+	const load = async (
+		cssFile: string,
+	): Promise<{
+		css: string;
+		cssFile: string;
+		imports: string[];
+		warnings: string[];
+	}> => {
+		const inlined = inlineDirectiveImports(await readCSSFileAsync(cssFile), {
+			resolve: createNodeImportResolver({ cwd }),
+			from: cssFile,
+		});
+		return {
+			css: inlined.css,
+			cssFile,
+			imports: inlined.files,
+			warnings: inlined.warnings,
+		};
+	};
 	if (opts.cssFile) {
 		const cssFile = resolve(cwd, opts.cssFile);
 		if (!existsSync(cssFile)) {
 			throw new Error(`[RI-1605] CSS input file not found: ${cssFile}`);
 		}
-		return { css: await readCSSFileAsync(cssFile), cssFile };
+		return load(cssFile);
 	}
 	const cssFile = await findCSSFileAsync(cwd);
-	if (!cssFile) return { css: "", cssFile: null };
-	return { css: await readCSSFileAsync(cssFile), cssFile };
+	if (!cssFile) return { css: "", cssFile: null, imports: [], warnings: [] };
+	return load(cssFile);
 }
 
 /**
@@ -83,8 +108,8 @@ export async function loadProjectTheme(
 	opts: { cssFile?: string },
 	cwd: string,
 ): Promise<ResolvedTheme> {
-	const { css } = await loadProjectCSS(opts, cwd);
-	const parseWarnings: string[] = [];
+	const { css, warnings } = await loadProjectCSS(opts, cwd);
+	const parseWarnings: string[] = [...warnings];
 	const directives = extractDirectives(css, parseWarnings);
 	const theme = resolveDirectives(directives);
 	for (const w of parseWarnings) console.error(w);

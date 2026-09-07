@@ -131,3 +131,28 @@ describe("analyzeMerge — output parity with ri()", () => {
 		}
 	});
 });
+
+describe("ring-inset yields to a theme color of the same name", () => {
+	// `ring-inset` compiles to nothing by default, so the merger claims a flag
+	// nothing else wants. But a project is free to write `@color { inset: … }`,
+	// and then `ring-inset` really does compile — to `--ri-ring-color` — and has
+	// to merge as the color it is. The color test therefore runs first.
+	const themed = createThemeSnapshot(
+		analyzeProjectCSS("@color { inset: 0.2 250; brand: 0.2 25; }").theme,
+	);
+	const themedRi = createRi(themed);
+	const plainRi = createRi(createThemeSnapshot(analyzeProjectCSS("").theme));
+
+	test("with the color defined, it conflicts with another ring color", () => {
+		expect(themedRi("ring-inset ring-brand")).toBe("ring-brand");
+		expect(themedRi("ring-brand ring-inset")).toBe("ring-inset");
+		// A width is still independent of a color.
+		expect(themedRi("ring-2 ring-inset")).toBe("ring-2 ring-inset");
+	});
+
+	test("without it, the keyword claims only its own flag", () => {
+		expect(plainRi("ring-2 ring-inset")).toBe("ring-2 ring-inset");
+		expect(plainRi("ring-blue-500 ring-inset")).toBe("ring-blue-500 ring-inset");
+		expect(plainRi("ring-inset ring-inset")).toBe("ring-inset");
+	});
+});

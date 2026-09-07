@@ -32,7 +32,10 @@ afterEach(() => {
 
 describe("default discovery constants", () => {
 	test("uses shared source and CSS defaults", () => {
-		expect(DEFAULT_PATTERNS).toEqual(["*.html", "src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}"]);
+		expect(DEFAULT_PATTERNS).toEqual([
+			"*.html",
+			"src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte,astro}",
+		]);
 		expect(CSS_CANDIDATES).toEqual([
 			"src/index.css",
 			"src/style.css",
@@ -47,7 +50,10 @@ describe("default discovery constants", () => {
 		]);
 		expect(isSourceFile("/tmp/src/App.tsx")).toBe(true);
 		expect(isSourceFile("/tmp/src/App.vue")).toBe(true);
-		expect(isSourceFile("/tmp/src/page.astro")).toBe(false);
+		// `.astro` is a source file: this is what makes the dev server recompile
+		// on save rather than waiting for the CSS entry to change.
+		expect(isSourceFile("/tmp/src/page.astro")).toBe(true);
+		expect(isSourceFile("/tmp/src/index.php")).toBe(false);
 	});
 });
 

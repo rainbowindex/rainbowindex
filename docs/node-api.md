@@ -48,12 +48,38 @@ Options:
 | `classNames` | `Iterable<string>` | none | Class names to compile directly. |
 | `resolveFonts` | function | Google resolver | Replace it to avoid network requests. |
 | `processCssFunctions` | `boolean` | `true` | Resolve Rainbow Index CSS functions in the user CSS. |
+| `cssPath` | `string` | none | Path of the CSS entry. Supplying it turns on `@import` inlining, rooted at the entry's directory. |
+| `resolveImport` | function \| `null` | filesystem when `cssPath` is set | How an `@import` specifier becomes a file. `null` leaves every import untouched. |
 
 The result: `{ css, sections, userCSS, classNames, theme, directives, warnings }`. The `css` field is a lazy getter. Read fields directly instead of spreading the object.
 
+### `@import` inlining
+
+Without `cssPath`, a bare CSS string has no base a relative specifier could
+resolve against, so imports pass through untouched — the behavior this function
+has always had. Give it a path and directives in imported files are read, and
+their CSS is emitted once, in import order:
+
+```ts
+await compileProject({
+	css: '@import "rainbowindex";\n@import "./tokens.css";',
+	cssPath: "/app/src/index.css",
+	classNames: ["bg-brand-500"],
+});
+```
+
+Supply `resolveImport` to read from somewhere other than the filesystem — an
+in-memory map, a virtual file system, a bundler's resolver. It takes
+`(specifier, from)` and returns `{ path, content }` or `null`; `path` is the
+identity used for cycle detection, so the same file must always yield the same
+string. `inlineDirectiveImports` and `createNodeImportResolver` are exported for
+callers that want to run the step themselves. The rules — what is left alone,
+the caps, the codes — are in [cli.md](cli.md#import).
+
 Notes:
 
-- There is no `cwd` option and no file scan.
+- There is no `cwd` option and no file scan. `@import` resolution is the one
+  exception, and only once `cssPath` or `resolveImport` asks for it.
 - The result is not a compilation context. Do not pass it to `finalizeCompilationContext`. For a merge snapshot, use `createThemeSnapshot(result.theme)` from `rainbowindex/editor`.
 - One exception to "no files": with a Google font slot, the default font resolver fetches metadata over the network and reads and writes the cache at `node_modules/.cache/rainbowindex/google.json`. `RI_OFFLINE=1` still reads that cache. Pass your own `resolveFonts` for zero filesystem and network access.
 
@@ -113,6 +139,11 @@ Browser bundles get a client-safe entry: `ri`, `createRi`, `safelist`, the conte
 
 | Code | Meaning |
 | --- | --- |
+| `RI-1041` | An `@import` did not resolve. |
+| `RI-1042` | A circular `@import`. |
+| `RI-1043` | An `@import` chain nests more than 8 deep. |
+| `RI-1044` | The inlined `@import` files exceed 5 MB. |
+| `RI-1045` | A conditional `@import`; its directives are not read. |
 | `RI-1301` | `registerCustomUtility` got an empty name. |
 | `RI-1302` | `registerCustomUtility` got no properties. |
 | `RI-2003` | The default export was called in a browser bundle. |

@@ -536,7 +536,10 @@ describe("RI-1108 — options block ignored on non-generative colors", () => {
 
 	it("does not warn for generative values with option blocks", () => {
 		const warnings: string[] = [];
-		const { colors } = parseColorBody("brand: 0.18 330 { dark: fixed; };", warnings);
+		// The canonical spelling. The legacy `brand: 0.18 330 { … }` still parses
+		// to the same definition and says so once — covered in
+		// `canonical-syntax.test.ts`.
+		const { colors } = parseColorBody("brand { ramp: 0.18 330; dark: fixed; }", warnings);
 		expect(colors["brand"]).toEqual({
 			type: "generative",
 			chroma: 0.18,

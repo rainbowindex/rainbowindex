@@ -49,7 +49,9 @@ describe("rainbowindex/editor entry", () => {
 			"twJoin",
 			"twMerge",
 		]);
-		expect(VARIANT_HELPER_NAMES).toEqual(["cva", "tv"]);
+		// `recipe` is this package's own; the other two are the third-party
+		// helpers whose config objects have the same shape.
+		expect(VARIANT_HELPER_NAMES).toEqual(["cva", "tv", "recipe"]);
 		expect(Object.isFrozen(CLASS_HELPER_NAMES)).toBe(true);
 		expect(Object.isFrozen(VARIANT_HELPER_NAMES)).toBe(true);
 	});

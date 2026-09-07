@@ -20,6 +20,8 @@ import { resolveGoogleFonts } from "../integrations/font-providers/index.js";
 import { collectProjectClasses } from "../scanner/sources.js";
 import { validateGlobPattern } from "../scanner/glob-utils.js";
 import { pushWarningsDeduped } from "../warnings.js";
+import { inlineDirectiveImports, type ImportResolver } from "./imports.js";
+import { createNodeImportResolver } from "./resolve-import.js";
 import {
 	analyzeProjectCSSMemo,
 	type FinalizeProjectResult,
@@ -41,12 +43,37 @@ export interface CompileScannedProjectOptions {
 	 */
 	onInvalidPattern: (error: string) => string | undefined;
 	resolveFonts?: FontResolver;
+	/**
+	 * How `@import` specifiers become files. Defaults to the filesystem rooted
+	 * at `cwd`; pass `null` to leave every import untouched, which is what a
+	 * surface that already inlined them (Vite) wants.
+	 */
+	resolveImport?: ImportResolver | null;
 }
 
 export async function compileScannedProject(
 	options: CompileScannedProjectOptions,
 ): Promise<{ compiled: FinalizeProjectResult; warningSeen: Set<string> }> {
-	const analysis = analyzeProjectCSSMemo(options.css);
+	// Imports are inlined before analysis so directives in an imported file are
+	// read. The PostCSS plugin builds its output from the AST and ignores
+	// `userCSS`, so this cannot duplicate anything there; the CLI and the
+	// headless path emit the inlined user CSS once, in import order.
+	const resolveImport =
+		options.resolveImport === undefined
+			? createNodeImportResolver({ cwd: options.cwd })
+			: options.resolveImport;
+	const inlined =
+		resolveImport === null
+			? { css: options.css, warnings: [] as string[] }
+			: inlineDirectiveImports(options.css, { resolve: resolveImport, from: options.cssPath });
+
+	const analysis = analyzeProjectCSSMemo(inlined.css);
+	pushWarningsDeduped(
+		analysis.warnings,
+		inlined.warnings,
+		analysis.warningSeen,
+		analysis.suppressed,
+	);
 
 	// Kick off the font-metadata fetch (network, up to a 10s timeout) before the
 	// filesystem scan — its only input is the pre-scan theme, so cold builds pay
@@ -90,7 +117,7 @@ export async function compileScannedProject(
 	);
 
 	const compiled = await finalizeProjectCompilation({
-		css: options.css,
+		css: inlined.css,
 		cssPath: options.cssPath,
 		classNames,
 		authoredClassNames: authored,

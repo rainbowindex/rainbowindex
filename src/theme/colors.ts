@@ -249,11 +249,39 @@ export interface ColorStop {
 	h: number;
 }
 
+/**
+ * How `dark:` and `light:` decide they apply.
+ *
+ * The point of the choice is that it has to agree with when the *tokens* flip.
+ * Tokens use `light-dark()`, which follows `color-scheme`, which the shipped
+ * preflight drives from `html[data-appearance]` on top of the OS preference. A
+ * strategy that disagrees with that gives a build two theme switches that
+ * disagree, which is what this replaced.
+ *
+ * - `media` — `@media (prefers-color-scheme: dark)`. The OS preference alone.
+ *   The historical behaviour, and the default.
+ * - `appearance` — matches exactly when `light-dark()` flips under the shipped
+ *   preflight: an explicit `html[data-appearance="dark"]`, or the OS preference
+ *   where no attribute has overridden it. Needs two rules; see `alternate` on
+ *   {@link VariantWrapper}.
+ * - `selector` — a class or any selector you toggle yourself, the strategy
+ *   Tailwind projects arrive with. The OS preference is ignored, as it is
+ *   there.
+ */
+export type DarkVariantStrategy =
+	| { readonly kind: "media" }
+	| { readonly kind: "appearance" }
+	| { readonly kind: "selector"; readonly selector: string };
+
 export interface DarkModeConfig {
 	mode: "auto" | "off";
 	chromaBoost: number;
 	hueShift: number;
+	variant: DarkVariantStrategy;
 }
+
+/** The default strategy, shared and frozen — it is replaced, never mutated. */
+const DEFAULT_DARK_VARIANT: DarkVariantStrategy = Object.freeze({ kind: "media" as const });
 
 export const DEFAULT_DARK_CONFIG: DarkModeConfig = {
 	mode: "auto",
@@ -261,6 +289,7 @@ export const DEFAULT_DARK_CONFIG: DarkModeConfig = {
 	// Raise it via `@color dark { chroma-boost }` for punchier dark-mode colors.
 	chromaBoost: 0,
 	hueShift: 0,
+	variant: DEFAULT_DARK_VARIANT,
 };
 
 // ---------------------------------------------------------------------------
@@ -629,6 +658,35 @@ export function checkPaletteContrast(
 }
 
 /**
+ * Follow an alias chain to the definition it ultimately names.
+ *
+ * `accent: mid; mid: brand;` resolves `accent` to `brand`'s definition, which
+ * is what decides whether the alias emits per-stop variables or a single
+ * stop-less one. Returns null for a source that does not exist (RI-1105 has
+ * already warned) or for a cycle (RI-1107 likewise) — in both cases there is
+ * no definition to read, and emitting nothing beats emitting a reference to a
+ * variable that will never exist.
+ *
+ * The `visited` set makes this safe on the cyclic input RI-1107 only warns
+ * about: the colors stay in the theme, so every consumer has to survive them.
+ */
+function resolveAliasTarget(
+	colors: Record<string, ColorDefinition>,
+	source: string,
+): { name: string; def: ColorDefinition } | null {
+	const visited = new Set<string>();
+	let current = source;
+	while (!visited.has(current)) {
+		visited.add(current);
+		const def = colors[current];
+		if (!def) return null;
+		if (def.type !== "alias") return { name: current, def };
+		current = def.source;
+	}
+	return null;
+}
+
+/**
  * Generate all color CSS variables for used color stops.
  * Only emits variables for suffixes actually used in the source.
  *
@@ -640,6 +698,15 @@ export function generateAllColorVariables(
 	colors: Record<string, ColorDefinition> = DEFAULT_COLORS,
 	darkConfig: DarkModeConfig = DEFAULT_DARK_CONFIG,
 	usedColorStops?: Map<string, Set<number>>,
+	/**
+	 * Whole token names referenced anywhere, which is what prunes the entries a
+	 * stop map cannot describe: explicit values, pairs, and aliases over them.
+	 *
+	 * Omitted means "emit them all", the behaviour every caller had before
+	 * pruning existed. `assembly.ts` passes the reachability closure it builds,
+	 * so an entry kept alive only by another entry's value survives.
+	 */
+	usedColorNames?: ReadonlySet<string>,
 ): string[] {
 	const allVars: string[] = [];
 
@@ -657,11 +724,13 @@ export function generateAllColorVariables(
 			}
 			case "explicit": {
 				// Single explicit value — no stops, just one variable
+				if (usedColorNames && !usedColorNames.has(name)) break;
 				allVars.push(`--color-${name}: ${def.value};`);
 				break;
 			}
 			case "pair": {
 				// Light/dark pair — emit light-dark()
+				if (usedColorNames && !usedColorNames.has(name)) break;
 				if (darkConfig.mode === "off") {
 					allVars.push(`--color-${name}: ${def.light};`);
 				} else {
@@ -670,16 +739,34 @@ export function generateAllColorVariables(
 				break;
 			}
 			case "alias": {
-				// Alias — reference another color's variables via var()
-				const source = colors[def.source];
-				if (source && source.type === "generative") {
+				// Alias — reference another color's variables via var().
+				//
+				// Which shape depends on where the chain ENDS, not on what this
+				// alias points at directly: `accent: mid; mid: brand;` is still a
+				// per-stop alias, because `brand` is generative. Reading only the
+				// immediate source used to emit a stop-less `--color-accent:
+				// var(--color-mid)` here, which no utility ever reads — every
+				// color utility asks for `--color-accent-<stop>`.
+				//
+				// The var() still names the immediate source, so the emitted CSS
+				// mirrors the chain the author wrote and stays debuggable.
+				const target = resolveAliasTarget(colors, def.source);
+				if (target === null) break;
+				if (target.def.type === "generative") {
 					const suffixes = usedColorStops?.get(name);
 					if (!suffixes || suffixes.size === 0) break;
 					const sorted = [...suffixes].sort((a, b) => a - b);
 					for (const suffix of sorted) {
 						allVars.push(`--color-${name}-${suffix}: var(--color-${def.source}-${suffix});`);
 					}
-				} else if (source) {
+				} else if (target.def.type === "keyword") {
+					// A keyword emits no variable of its own — it is inlined at
+					// every use — so `var(--color-<keyword>)` would never resolve.
+					// Inline the value here for the same reason.
+					if (usedColorNames && !usedColorNames.has(name)) break;
+					allVars.push(`--color-${name}: ${target.def.value};`);
+				} else {
+					if (usedColorNames && !usedColorNames.has(name)) break;
 					allVars.push(`--color-${name}: var(--color-${def.source});`);
 				}
 				break;

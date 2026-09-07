@@ -17,7 +17,7 @@ import { discoverPackageSafelistSources } from "./package-discovery.js";
 // excluded below.
 export const DEFAULT_PATTERNS = Object.freeze([
 	"*.html",
-	"src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte}",
+	"src/**/*.{html,js,jsx,ts,tsx,mdx,vue,svelte,astro}",
 ]);
 
 export const DEFAULT_EXCLUDES = Object.freeze([

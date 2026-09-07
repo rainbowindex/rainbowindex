@@ -23,34 +23,35 @@ The plugin function takes no options. To pass options to the PostCSS plugin, cre
 
 ## What the plugin does
 
-The plugin is a thin layer. All CSS generation happens in the PostCSS plugin. The Vite plugin has five jobs:
+The plugin is a thin layer. All CSS generation happens in the PostCSS plugin. The Vite plugin has six jobs:
 
 1. **PostCSS injection.** If no `postcss.config.{js,mjs,ts,cjs}` file exists at the Vite root, the plugin injects the PostCSS plugin with default options. If one of those four files exists, the plugin injects nothing. Your file must then register the PostCSS plugin itself.
 2. **CSS entry discovery.** When the dev server starts, the plugin looks for CSS files that activate Rainbow Index. If it finds none, it warns with `[RI-1602]` and points you to `rainbowindex init`.
 3. **Directive rewrites.** Some directive-body syntax is not valid standard CSS. The plugin rewrites those bodies before PostCSS parses the file. It also expands variant groups inside `@apply`, because a raw `{` breaks the CSS parse. User CSS outside directive bodies is not touched.
 4. **Hot updates.** When a source file changes, the plugin sends the tracked CSS files through PostCSS again. New utility classes appear without a full page reload.
-5. **Formatter patterns.** The plugin adds every activated CSS file to `fmt.ignorePatterns`, so the Vite+ formatter skips files whose directive syntax it cannot parse. See [vite-plus.md](vite-plus.md).
+5. **Theme snapshot for the client.** The plugin serves a virtual module holding your compiled theme and prepends an import of it to every module that imports `rainbowindex`. ES imports evaluate in order, so the theme is published before your code runs, and `ri()` resolves your project's text sizes, weights, font slots, and color names in the browser with no code of yours. Editing the CSS entry republishes it over hot update. See [class-merge.md](class-merge.md).
+6. **Formatter patterns.** The plugin adds every activated CSS file to `fmt.ignorePatterns`, so the Vite+ formatter skips files whose directive syntax it cannot parse. See [vite-plus.md](vite-plus.md).
 
 ## Activation
 
 A CSS file activates Rainbow Index when it contains one of these, outside comments and strings:
 
 - A Rainbow Index directive, for example `@color { ... }`. An `@import` is not required.
-- `@import "rainbowindex"` or `@import "rainbowindex/index.css"`.
+- `@import "rainbowindex"`, `@import "rainbowindex/index.css"`, or `@import "rainbowindex/tailwind.css"`.
 
 A CSS file without activation passes through unchanged.
 
 ## Dev versus build
 
-The PostCSS injection, the directive rewrites, and the formatter patterns run in both dev and build. Production builds compile the same CSS as the dev server.
+The PostCSS injection, the directive rewrites, the theme snapshot, and the formatter patterns run in both dev and build. Production builds compile the same CSS as the dev server, and client, SSR, and production bundles all get the snapshot.
 
 The entry discovery, the `[RI-1602]` warning, and hot updates run only on the dev server.
 
 ## Hot update details
 
 - A change in a tracked CSS file re-reads the file and checks the activation again.
-- A change in a source file with extension `html`, `js`, `jsx`, `ts`, `tsx`, `md`, `mdx`, `vue`, or `svelte` recompiles the tracked CSS.
-- Other extensions do not recompile the CSS. Class names in a `.astro` or `.php` file do not appear in dev until you edit the CSS itself.
+- A change in a source file with extension `html`, `js`, `jsx`, `ts`, `tsx`, `md`, `mdx`, `vue`, `svelte`, or `astro` recompiles the tracked CSS.
+- Other extensions do not recompile the CSS. Class names in a `.php` file do not appear in dev until you edit the CSS itself.
 
 ## Misuse guard
 

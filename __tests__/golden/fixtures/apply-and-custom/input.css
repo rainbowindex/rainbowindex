@@ -1,0 +1,43 @@
+@import "rainbowindex";
+
+@source "sources/**/*.html";
+
+@color {
+	brand: 0.18 330;
+	hairline: theme-282/52;
+}
+
+@text {
+	body: 1rem, 1.5;
+}
+
+@rounded {
+	roof: 24px;
+}
+
+@custom hocus (&:hover, &:focus);
+
+@custom any-hover {
+	@media (any-hover: hover) {
+		@slot;
+	}
+}
+
+@utility card {
+	@apply rounded-roof p-4;
+	background: var(--color-surface);
+}
+
+.panel {
+	@apply flex gap-2 text-body bg-brand-500;
+	border: 1px solid var(--color-hairline);
+}
+
+.panel:hover {
+	@a text-brand-900;
+}
+
+.quiet {
+	/* ri-disable RI-1106 */
+	@apply text-brand-100;
+}

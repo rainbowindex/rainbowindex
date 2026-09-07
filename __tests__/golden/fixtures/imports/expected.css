@@ -1,0 +1,205 @@
+:root {
+  --spacing: 0.25rem;
+  --color-paper: light-dark(oklch(1 0 0), oklch(0 0 0));
+  --color-ink: light-dark(oklch(0 0 0), oklch(1 0 0));
+  --color-brand-500: light-dark(oklch(0.663 0.209 329.365), oklch(0.663 0.209 329.365));
+  --text-body: 1rem;
+  --text-body-leading: 1.5;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --rounded-roof: 24px;
+}
+
+/* preflight: box-sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* preflight: margins */
+body, h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre, ol, ul, menu {
+  margin: 0;
+}
+
+/* preflight: borders */
+*, *::before, *::after {
+  border-width: 0;
+  border-style: solid;
+  border-color: inherit;
+}
+
+/* preflight: root-defaults */
+:root {
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+}
+body {
+  line-height: inherit;
+  font-family: var(--font-sans);
+}
+code, kbd, samp, pre {
+  font-family: var(--font-mono);
+  font-size: 1em;
+}
+
+/* preflight: font-smoothing */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* preflight: font-inherit */
+button, input, optgroup, select, textarea {
+  font-family: inherit;
+  font-feature-settings: inherit;
+  font-variation-settings: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+/* preflight: heading-sizes */
+h1, h2, h3, h4, h5, h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+/* preflight: link-reset */
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/* preflight: media-block */
+img, svg, video, canvas, audio, iframe, embed, object {
+  display: block;
+  max-inline-size: 100%;
+}
+img, video {
+  block-size: auto;
+}
+
+/* preflight: list-reset */
+ol, ul, menu {
+  list-style: none;
+  padding: 0;
+}
+
+/* preflight: table-reset */
+table {
+  text-indent: 0;
+  border-color: inherit;
+  border-collapse: collapse;
+}
+
+/* preflight: hr-reset */
+hr {
+  block-size: 0;
+  border-top-width: 1px;
+  color: inherit;
+}
+
+/* preflight: button-reset */
+button, [role="button"] {
+  cursor: pointer;
+  padding: 0;
+}
+button {
+  background-color: transparent;
+  background-image: none;
+}
+
+/* preflight: input-reset */
+input::placeholder, textarea::placeholder {
+  opacity: 1;
+  color: color-mix(in oklab, currentColor 48%, transparent);
+}
+input:where([type="button"], [type="reset"], [type="submit"]) {
+  -webkit-appearance: button;
+  appearance: button;
+}
+
+/* preflight: textarea-reset */
+textarea {
+  resize: vertical;
+}
+
+/* preflight: fieldset-reset */
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+legend {
+  padding: 0;
+}
+
+/* preflight: focus-visible */
+:focus-visible {
+  outline-width: 2px;
+  outline-style: solid;
+  outline-offset: 2px;
+  outline-color: currentColor;
+}
+
+/* preflight: dialog-reset */
+dialog {
+  padding: 0;
+}
+dialog::backdrop {
+  background-color: oklch(0 0 0 / 0.5);
+}
+
+/* preflight: summary-reset */
+summary {
+  display: list-item;
+  cursor: pointer;
+}
+
+/* preflight: interpolate-size */
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+}
+
+/* preflight: overflow-wrap */
+body {
+  overflow-wrap: break-word;
+}
+
+/* preflight: color-scheme */
+html {
+  color-scheme: light dark;
+}
+html[data-appearance="dark"] {
+  color-scheme: dark;
+}
+html[data-appearance="light"] {
+  color-scheme: light;
+}
+
+.rounded-roof {
+  border-radius: 24px;
+}
+
+.bg-brand-500 {
+  background-color: var(--color-brand-500);
+}
+
+.text-body {
+  font-size: var(--text-body);
+  line-height: var(--text-body-leading);
+}
+
+.panel {
+	border-radius: var(--rounded-roof);
+}
+
+@import url("https://example.com/vendor.css");
+@import "./imports/tokens.css" screen;
+
+.entry-rule {
+	color: var(--color-brand-500);
+}

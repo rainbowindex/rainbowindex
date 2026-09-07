@@ -2,7 +2,7 @@
 
 [Vite+](https://viteplus.dev) is one CLI (`vp`) over Vite, Vitest, Oxlint, Oxfmt, Rolldown, and tsdown. Rainbow Index works with it, with one adjustment that the Vite plugin makes for you.
 
-## The problem: the formatter cannot parse directives
+## The problem: four deprecated forms the formatter cannot parse
 
 `vp fmt` and `vp check` format CSS with [Oxfmt](https://oxc.rs/docs/guide/usage/formatter.html), which parses CSS strictly. Four Rainbow Index forms are not valid CSS, so the parse stops on the first one it meets:
 
@@ -11,15 +11,17 @@
 | A block after a declaration | `sans: "Sans" { … }` | `@font`, `@animate` |
 | A removal | `!brand;` | `@color` and every key-value scale |
 | A bare keyword | `parabolic;`, `inline;` | `@fluid`, `@color` option blocks |
-| A variant group | `@a hover:{px-2 py-1};` | `@apply` and its aliases |
+| A variant group | `@a hover:{px-2 py-1};` | `@apply` and its aliases — write `@a hover:(px-2 py-1);` |
 
 The failure is not a warning. `vp check` reports `Syntax error: component value is expected` and exits before it can lint or type check.
 
-This is the same syntax the plugin rewrites before PostCSS reads a file — see [vite-plugin.md](vite-plugin.md). PostCSS cannot parse these forms either.
+This is the same syntax the plugin rewrites before PostCSS reads a file — see [vite-plugin.md](vite-plugin.md). PostCSS cannot parse three of the four forms either.
 
-## The fix: the plugin hides those files from the formatter
+All four have been replaced with spellings every CSS parser accepts. Both are accepted; the old ones warn `RI-1046` and go at 1.0. **Write the canonical forms and this page's workaround does not apply to your project at all.**
 
-The Vite plugin scans the project at config time, finds every CSS file that [activates Rainbow Index](vite-plugin.md#activation), and adds those paths to `fmt.ignorePatterns`. Vite+ reads its `fmt` block from the resolved Vite configuration, so a plugin can contribute to it. Nothing else changes: every other file still gets formatted, and your own `fmt` settings are kept — Vite merges the two lists.
+## Until you migrate: the plugin hides those files from the formatter
+
+The Vite plugin scans the project at config time and adds to `fmt.ignorePatterns` only the stylesheets that actually use one of those four forms. A stylesheet written the canonical way is hidden from nothing, which is the point: a project that has migrated has no unformatted files. Vite+ reads its `fmt` block from the resolved Vite configuration, so a plugin can contribute to it. Nothing else changes: every other file still gets formatted, and your own `fmt` settings are kept — Vite merges the two lists.
 
 ```ts
 // vite.config.ts — nothing to add
@@ -50,19 +52,9 @@ export default defineConfig({
 
 ## Lint rules
 
-The package ships an Oxlint plugin with one rule. `prefer-ri` reports an import of `clsx`, `classnames`, or `tailwind-merge`. Each one merges classes against a Tailwind utility table, so it resolves conflicts against the wrong utility set and never sees your theme. `ri()` does both jobs against the compiled theme.
-
-```ts
-// vite.config.ts
-export default defineConfig({
-	lint: {
-		jsPlugins: [{ name: "rainbowindex", specifier: "rainbowindex/oxlint" }],
-		rules: { "rainbowindex/prefer-ri": "error" },
-	},
-});
-```
-
-The rule is off until you enable it. The plugin has no dependencies and works with ESLint-compatible hosts that accept the same plugin shape.
+Three rules ship with the package — one Oxlint-only, two that read your
+compiled theme and work in Oxlint and ESLint alike. They have their own page:
+[lint.md](lint.md).
 
 ## Limits
 
