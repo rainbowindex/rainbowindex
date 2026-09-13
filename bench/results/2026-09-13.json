@@ -1,0 +1,274 @@
+{
+	"date": "2026-09-13",
+	"sizes": [
+		"1k",
+		"10k"
+	],
+	"coldRuns": 3,
+	"engines": [
+		{
+			"id": "rainbowindex",
+			"label": "rainbowindex",
+			"version": "0.7.0"
+		},
+		{
+			"id": "tailwind",
+			"label": "Tailwind CSS",
+			"version": "4.3.3"
+		},
+		{
+			"id": "unocss",
+			"label": "UnoCSS",
+			"version": "66.8.1"
+		}
+	],
+	"rows": [
+		{
+			"engine": "rainbowindex",
+			"label": "rainbowindex",
+			"version": "0.7.0",
+			"size": "1k",
+			"phase": "cold",
+			"coldMs": 244.12868300000002,
+			"files": 1000,
+			"sourceBytes": 1337223,
+			"candidates": 6405,
+			"cssBytes": 410758,
+			"minifiedBytes": 312428,
+			"covered": 4502,
+			"coverageOf": 4502,
+			"maxRssKb": 140996,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 101.25285696875007,
+					"medianMs": 98.05989349999982,
+					"p99Ms": 116.79613996999977,
+					"samples": 64,
+					"rmeMs": 1.4333464344335147
+				},
+				"rebuild-incremental": {
+					"meanMs": 99.40946962500014,
+					"medianMs": 98.04170500000055,
+					"p99Ms": 112.29152033000064,
+					"samples": 64,
+					"rmeMs": 0.952953947677249
+				},
+				"scan": {
+					"meanMs": 90.34139095312507,
+					"medianMs": 90.4281045000007,
+					"p99Ms": 92.7723622299985,
+					"samples": 64,
+					"rmeMs": 0.3062143087187986
+				}
+			},
+			"warmMaxRssKb": 361652
+		},
+		{
+			"engine": "tailwind",
+			"label": "Tailwind CSS",
+			"version": "4.3.3",
+			"size": "1k",
+			"phase": "cold",
+			"coldMs": 206.856898,
+			"files": 1000,
+			"sourceBytes": 1337223,
+			"candidates": 4656,
+			"cssBytes": 434152,
+			"minifiedBytes": 333424,
+			"covered": 4502,
+			"coverageOf": 4502,
+			"maxRssKb": 153380,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 10.780125035714303,
+					"medianMs": 10.71389049999982,
+					"p99Ms": 11.747825460000096,
+					"samples": 140,
+					"rmeMs": 0.6719202658800456
+				},
+				"rebuild-incremental": {
+					"meanMs": 28.48536478124999,
+					"medianMs": 26.55075399999987,
+					"p99Ms": 40.429810819999744,
+					"samples": 64,
+					"rmeMs": 3.2501957803381645
+				},
+				"scan": {
+					"meanMs": 10.50079884615384,
+					"medianMs": 10.488932999999633,
+					"p99Ms": 11.010005119999951,
+					"samples": 143,
+					"rmeMs": 0.3110594524865224
+				}
+			},
+			"warmMaxRssKb": 530576
+		},
+		{
+			"engine": "unocss",
+			"label": "UnoCSS",
+			"version": "66.8.1",
+			"size": "1k",
+			"phase": "cold",
+			"coldMs": 575.326179,
+			"files": 1000,
+			"sourceBytes": 1337223,
+			"candidates": 4502,
+			"cssBytes": 387774,
+			"minifiedBytes": 344358,
+			"covered": 4502,
+			"coverageOf": 4502,
+			"maxRssKb": 264940,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 82.58269590625,
+					"medianMs": 81.61236000000008,
+					"p99Ms": 95.42390810999957,
+					"samples": 64,
+					"rmeMs": 1.1902401829318447
+				},
+				"rebuild-incremental": {
+					"meanMs": 81.92827525000003,
+					"medianMs": 81.75523649999923,
+					"p99Ms": 94.38039294999953,
+					"samples": 64,
+					"rmeMs": 0.8499689024035396
+				},
+				"scan": {
+					"meanMs": 58.27435296875013,
+					"medianMs": 58.23996949999946,
+					"p99Ms": 59.430597789998686,
+					"samples": 64,
+					"rmeMs": 0.15217118242701355
+				}
+			},
+			"warmMaxRssKb": 345828
+		},
+		{
+			"engine": "rainbowindex",
+			"label": "rainbowindex",
+			"version": "0.7.0",
+			"size": "10k",
+			"phase": "cold",
+			"coldMs": 1641.4280290000002,
+			"files": 10000,
+			"sourceBytes": 13372257,
+			"candidates": 31561,
+			"cssBytes": 1352798,
+			"minifiedBytes": 1005466,
+			"covered": 13507,
+			"coverageOf": 13507,
+			"maxRssKb": 324304,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 934.5985503437505,
+					"medianMs": 920.7713319999966,
+					"p99Ms": 1000.5711974799996,
+					"samples": 64,
+					"rmeMs": 0.6250917976230117
+				},
+				"rebuild-incremental": {
+					"meanMs": 926.0259002187478,
+					"medianMs": 918.9498080000049,
+					"p99Ms": 992.3580348700017,
+					"samples": 64,
+					"rmeMs": 0.47899983898923043
+				},
+				"scan": {
+					"meanMs": 893.4027426249999,
+					"medianMs": 884.015679499993,
+					"p99Ms": 942.2767322700037,
+					"samples": 64,
+					"rmeMs": 0.5767349499593624
+				}
+			},
+			"warmMaxRssKb": 560504
+		},
+		{
+			"engine": "tailwind",
+			"label": "Tailwind CSS",
+			"version": "4.3.3",
+			"size": "10k",
+			"phase": "cold",
+			"coldMs": 866.146661,
+			"files": 10000,
+			"sourceBytes": 13372257,
+			"candidates": 15002,
+			"cssBytes": 1392139,
+			"minifiedBytes": 1054402,
+			"covered": 13507,
+			"coverageOf": 13507,
+			"maxRssKb": 344540,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 95.35821179687497,
+					"medianMs": 94.49644149999949,
+					"p99Ms": 107.18136465000003,
+					"samples": 64,
+					"rmeMs": 0.8034054417811725
+				},
+				"rebuild-incremental": {
+					"meanMs": 177.05891778125007,
+					"medianMs": 174.9900099999977,
+					"p99Ms": 222.21980836999995,
+					"samples": 64,
+					"rmeMs": 1.6854644000362276
+				},
+				"scan": {
+					"meanMs": 94.48300879687518,
+					"medianMs": 93.2962875000012,
+					"p99Ms": 106.51073371999969,
+					"samples": 64,
+					"rmeMs": 1.072288086718853
+				}
+			},
+			"warmMaxRssKb": 984080
+		},
+		{
+			"engine": "unocss",
+			"label": "UnoCSS",
+			"version": "66.8.1",
+			"size": "10k",
+			"phase": "cold",
+			"coldMs": 2481.873113,
+			"files": 10000,
+			"sourceBytes": 13372257,
+			"candidates": 13507,
+			"cssBytes": 1204620,
+			"minifiedBytes": 1051111,
+			"covered": 13507,
+			"coverageOf": 13507,
+			"maxRssKb": 398132,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 737.000447609374,
+					"medianMs": 726.570216499993,
+					"p99Ms": 778.0256012200012,
+					"samples": 64,
+					"rmeMs": 0.6284787324078547
+				},
+				"rebuild-incremental": {
+					"meanMs": 734.6475619843744,
+					"medianMs": 731.3973179999957,
+					"p99Ms": 774.4338047300057,
+					"samples": 64,
+					"rmeMs": 0.40038861442634316
+				},
+				"scan": {
+					"meanMs": 585.1186397968755,
+					"medianMs": 584.9336515000032,
+					"p99Ms": 588.832811150001,
+					"samples": 64,
+					"rmeMs": 0.05879857447045225
+				}
+			},
+			"warmMaxRssKb": 551932
+		}
+	],
+	"env": {
+		"node": "24.20.0",
+		"platform": "linux",
+		"arch": "x64",
+		"cpu": "Intel(R) Xeon(R) 6973P-C",
+		"cpus": 4
+	}
+}
