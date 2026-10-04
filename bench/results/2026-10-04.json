@@ -1,0 +1,274 @@
+{
+	"date": "2026-10-04",
+	"sizes": [
+		"1k",
+		"10k"
+	],
+	"coldRuns": 3,
+	"engines": [
+		{
+			"id": "rainbowindex",
+			"label": "rainbowindex",
+			"version": "0.7.0"
+		},
+		{
+			"id": "tailwind",
+			"label": "Tailwind CSS",
+			"version": "4.3.3"
+		},
+		{
+			"id": "unocss",
+			"label": "UnoCSS",
+			"version": "66.8.1"
+		}
+	],
+	"rows": [
+		{
+			"engine": "rainbowindex",
+			"label": "rainbowindex",
+			"version": "0.7.0",
+			"size": "1k",
+			"phase": "cold",
+			"coldMs": 279.036268,
+			"files": 1000,
+			"sourceBytes": 1337223,
+			"candidates": 6405,
+			"cssBytes": 410758,
+			"minifiedBytes": 312428,
+			"covered": 4502,
+			"coverageOf": 4502,
+			"maxRssKb": 141312,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 121.41123837500018,
+					"medianMs": 120.7401875000005,
+					"p99Ms": 129.41760968000003,
+					"samples": 64,
+					"rmeMs": 0.629342527221239
+				},
+				"rebuild-incremental": {
+					"meanMs": 121.79801542187505,
+					"medianMs": 120.00056349999977,
+					"p99Ms": 137.0520703900003,
+					"samples": 64,
+					"rmeMs": 0.9898005664639541
+				},
+				"scan": {
+					"meanMs": 108.59169318749962,
+					"medianMs": 107.64016449999872,
+					"p99Ms": 118.32962690999884,
+					"samples": 64,
+					"rmeMs": 0.7848927448726473
+				}
+			},
+			"warmMaxRssKb": 359016
+		},
+		{
+			"engine": "tailwind",
+			"label": "Tailwind CSS",
+			"version": "4.3.3",
+			"size": "1k",
+			"phase": "cold",
+			"coldMs": 219.979576,
+			"files": 1000,
+			"sourceBytes": 1337223,
+			"candidates": 4656,
+			"cssBytes": 434152,
+			"minifiedBytes": 333424,
+			"covered": 4502,
+			"coverageOf": 4502,
+			"maxRssKb": 154980,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 13.462862982142873,
+					"medianMs": 13.292395499999884,
+					"p99Ms": 15.074740880000167,
+					"samples": 112,
+					"rmeMs": 0.810496332088979
+				},
+				"rebuild-incremental": {
+					"meanMs": 33.76153871874995,
+					"medianMs": 34.282959000000346,
+					"p99Ms": 47.07723079999985,
+					"samples": 64,
+					"rmeMs": 3.016093404779394
+				},
+				"scan": {
+					"meanMs": 13.042727491379265,
+					"medianMs": 12.964236999999684,
+					"p99Ms": 14.475880949999828,
+					"samples": 116,
+					"rmeMs": 0.8221186282270787
+				}
+			},
+			"warmMaxRssKb": 511256
+		},
+		{
+			"engine": "unocss",
+			"label": "UnoCSS",
+			"version": "66.8.1",
+			"size": "1k",
+			"phase": "cold",
+			"coldMs": 622.944266,
+			"files": 1000,
+			"sourceBytes": 1337223,
+			"candidates": 4502,
+			"cssBytes": 387774,
+			"minifiedBytes": 344358,
+			"covered": 4502,
+			"coverageOf": 4502,
+			"maxRssKb": 268992,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 88.92344182812504,
+					"medianMs": 88.27360599999975,
+					"p99Ms": 97.21145523000062,
+					"samples": 64,
+					"rmeMs": 0.7198476514396889
+				},
+				"rebuild-incremental": {
+					"meanMs": 90.78360418749999,
+					"medianMs": 89.58462249999957,
+					"p99Ms": 103.06809770000012,
+					"samples": 64,
+					"rmeMs": 1.088014084130319
+				},
+				"scan": {
+					"meanMs": 66.72925275000031,
+					"medianMs": 66.10162050000145,
+					"p99Ms": 74.07419677000196,
+					"samples": 64,
+					"rmeMs": 0.868670413161238
+				}
+			},
+			"warmMaxRssKb": 352616
+		},
+		{
+			"engine": "rainbowindex",
+			"label": "rainbowindex",
+			"version": "0.7.0",
+			"size": "10k",
+			"phase": "cold",
+			"coldMs": 1888.041332,
+			"files": 10000,
+			"sourceBytes": 13372257,
+			"candidates": 31561,
+			"cssBytes": 1352798,
+			"minifiedBytes": 1005466,
+			"covered": 13507,
+			"coverageOf": 13507,
+			"maxRssKb": 312728,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 1161.3825111874983,
+					"medianMs": 1159.8649484999914,
+					"p99Ms": 1196.8839501000016,
+					"samples": 64,
+					"rmeMs": 0.29139527637718265
+				},
+				"rebuild-incremental": {
+					"meanMs": 1153.7657827656242,
+					"medianMs": 1152.3388515000115,
+					"p99Ms": 1195.6759951700215,
+					"samples": 64,
+					"rmeMs": 0.29962626022037653
+				},
+				"scan": {
+					"meanMs": 1046.9171163281262,
+					"medianMs": 1043.6267294999852,
+					"p99Ms": 1103.0307798000151,
+					"samples": 64,
+					"rmeMs": 0.3788554354987221
+				}
+			},
+			"warmMaxRssKb": 555204
+		},
+		{
+			"engine": "tailwind",
+			"label": "Tailwind CSS",
+			"version": "4.3.3",
+			"size": "10k",
+			"phase": "cold",
+			"coldMs": 874.296383,
+			"files": 10000,
+			"sourceBytes": 13372257,
+			"candidates": 15002,
+			"cssBytes": 1392139,
+			"minifiedBytes": 1054402,
+			"covered": 13507,
+			"coverageOf": 13507,
+			"maxRssKb": 329896,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 113.03991445312504,
+					"medianMs": 112.52316949999931,
+					"p99Ms": 122.10485457000064,
+					"samples": 64,
+					"rmeMs": 0.6209421279972326
+				},
+				"rebuild-incremental": {
+					"meanMs": 202.05834995312492,
+					"medianMs": 201.1276480000015,
+					"p99Ms": 237.49501038999875,
+					"samples": 64,
+					"rmeMs": 1.3861758144300087
+				},
+				"scan": {
+					"meanMs": 113.44852568749955,
+					"medianMs": 112.55710049999834,
+					"p99Ms": 127.51864975999905,
+					"samples": 64,
+					"rmeMs": 0.9522175807742355
+				}
+			},
+			"warmMaxRssKb": 962176
+		},
+		{
+			"engine": "unocss",
+			"label": "UnoCSS",
+			"version": "66.8.1",
+			"size": "10k",
+			"phase": "cold",
+			"coldMs": 2535.765485,
+			"files": 10000,
+			"sourceBytes": 13372257,
+			"candidates": 13507,
+			"cssBytes": 1204620,
+			"minifiedBytes": 1051111,
+			"covered": 13507,
+			"coverageOf": 13507,
+			"maxRssKb": 378204,
+			"tasks": {
+				"rebuild-unchanged": {
+					"meanMs": 830.3204690156251,
+					"medianMs": 827.8406175000018,
+					"p99Ms": 862.4741974600046,
+					"samples": 64,
+					"rmeMs": 0.30990018646905165
+				},
+				"rebuild-incremental": {
+					"meanMs": 823.3069597968748,
+					"medianMs": 820.9292019999993,
+					"p99Ms": 852.8674218600064,
+					"samples": 64,
+					"rmeMs": 0.38869067848123673
+				},
+				"scan": {
+					"meanMs": 667.9113327656204,
+					"medianMs": 666.0483674999996,
+					"p99Ms": 703.4154739899988,
+					"samples": 64,
+					"rmeMs": 0.4177973249127464
+				}
+			},
+			"warmMaxRssKb": 551736
+		}
+	],
+	"env": {
+		"node": "24.21.0",
+		"platform": "linux",
+		"arch": "x64",
+		"cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+		"cpus": 4
+	}
+}
