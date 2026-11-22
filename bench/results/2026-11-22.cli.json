@@ -1,0 +1,31 @@
+{
+	"date": "2026-11-22",
+	"runs": 5,
+	"method": "hyperfine",
+	"rows": [
+		{
+			"size": "1k",
+			"engine": "rainbowindex",
+			"label": "rainbowindex",
+			"ms": 300.42365942000004,
+			"method": "hyperfine-mean",
+			"outputBytes": 410758
+		},
+		{
+			"size": "1k",
+			"engine": "tailwind",
+			"label": "Tailwind CSS",
+			"ms": 263.04251768000006,
+			"method": "hyperfine-mean",
+			"outputBytes": 434152
+		},
+		{
+			"size": "1k",
+			"engine": "unocss",
+			"label": "UnoCSS",
+			"ms": 669.0706651400001,
+			"method": "hyperfine-mean",
+			"outputBytes": 387774
+		}
+	]
+}
